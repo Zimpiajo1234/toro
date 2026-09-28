@@ -1,0 +1,30 @@
+{
+  "id": "rincon-tranquilo",
+  "order": 3,
+  "name": "Rincón tranquilo",
+  "size": { "width": 9, "depth": 7 },
+  "forklift": { "x": 4, "z": 4, "heading": 0 },
+  "boxes": [
+    { "id": "b1", "color": "yellow", "x": 7, "z": 1 },
+    { "id": "b2", "color": "mint", "x": 7, "z": 5 },
+    { "id": "b3", "color": "blue", "x": 4, "z": 6 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "blue", "x": 1, "z": 2 },
+    { "id": "z2", "color": "mint", "x": 1, "z": 3 },
+    { "id": "z3", "color": "yellow", "x": 1, "z": 4 }
+  ],
+  "shelves": [
+    { "x": 4, "z": 3, "w": 3, "d": 1 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 6 }
+    ],
+    "windows": [
+      { "wall": "west", "at": 2, "width": 3 },
+      { "wall": "north", "at": 5, "width": 2 }
+    ]
+  }
+}

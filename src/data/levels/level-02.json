@@ -1,0 +1,26 @@
+{
+  "id": "dos-colores",
+  "order": 2,
+  "name": "Dos colores",
+  "size": { "width": 8, "depth": 6 },
+  "forklift": { "x": 1, "z": 2, "heading": 90 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "x": 3, "z": 1 },
+    { "id": "b2", "color": "mint", "x": 3, "z": 4 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "mint", "x": 6, "z": 1 },
+    { "id": "z2", "color": "blue", "x": 6, "z": 4 }
+  ],
+  "shelves": [],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 5 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 3, "width": 2 },
+      { "wall": "west", "at": 2, "width": 2 }
+    ]
+  }
+}

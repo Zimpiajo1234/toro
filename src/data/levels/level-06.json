@@ -1,0 +1,35 @@
+{
+  "id": "un-toque-de-coral",
+  "order": 6,
+  "name": "Un toque de coral",
+  "size": { "width": 11, "depth": 8 },
+  "forklift": { "x": 5, "z": 3, "heading": 0 },
+  "boxes": [
+    { "id": "b1", "color": "coral", "x": 1, "z": 6 },
+    { "id": "b2", "color": "yellow", "x": 4, "z": 6 },
+    { "id": "b3", "color": "mint", "x": 7, "z": 6 },
+    { "id": "b4", "color": "coral", "x": 9, "z": 6 },
+    { "id": "b5", "color": "blue", "x": 6, "z": 7 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "blue", "x": 3, "z": 1 },
+    { "id": "z2", "color": "mint", "x": 4, "z": 1 },
+    { "id": "z3", "color": "yellow", "x": 5, "z": 1 },
+    { "id": "z4", "color": "coral", "x": 6, "z": 1 },
+    { "id": "z5", "color": "coral", "x": 7, "z": 1 }
+  ],
+  "shelves": [
+    { "x": 1, "z": 4, "w": 3, "d": 1 },
+    { "x": 7, "z": 4, "w": 3, "d": 1 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 10, "z": 0 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 4, "width": 3 },
+      { "wall": "west", "at": 5, "width": 2 }
+    ]
+  }
+}

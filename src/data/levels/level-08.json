@@ -1,0 +1,40 @@
+{
+  "id": "una-cosa-lleva-a-otra",
+  "order": 8,
+  "name": "Una cosa lleva a otra",
+  "size": { "width": 12, "depth": 9 },
+  "forklift": { "x": 6, "z": 3, "heading": 180 },
+  "boxes": [
+    { "id": "b1", "color": "mint", "x": 3, "z": 2 },
+    { "id": "b2", "color": "coral", "x": 4, "z": 2 },
+    { "id": "b3", "color": "coral", "x": 5, "z": 2 },
+    { "id": "b4", "color": "yellow", "x": 10, "z": 5 },
+    { "id": "b5", "color": "blue", "x": 4, "z": 7 },
+    { "id": "b6", "color": "mint", "x": 7, "z": 7 },
+    { "id": "b7", "color": "blue", "x": 9, "z": 8 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "yellow", "x": 3, "z": 2 },
+    { "id": "z2", "color": "mint", "x": 4, "z": 2 },
+    { "id": "z3", "color": "mint", "x": 5, "z": 2 },
+    { "id": "z4", "color": "coral", "x": 6, "z": 2 },
+    { "id": "z5", "color": "coral", "x": 7, "z": 2 },
+    { "id": "z6", "color": "blue", "x": 1, "z": 5 },
+    { "id": "z7", "color": "blue", "x": 1, "z": 6 }
+  ],
+  "shelves": [
+    { "x": 2, "z": 0, "w": 2, "d": 1, "tiers": 3 },
+    { "x": 8, "z": 0, "w": 2, "d": 1, "tiers": 3 },
+    { "x": 3, "z": 5, "w": 5, "d": 1 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 11, "z": 0 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 4, "width": 4 },
+      { "wall": "west", "at": 5, "width": 2 }
+    ]
+  }
+}

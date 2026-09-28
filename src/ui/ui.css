@@ -1,0 +1,948 @@
+/* ==========================================================================
+   Toro — DOM overlay (title, HUD, control hint, completion card)
+   Colors come from the theme through custom properties set in App.tsx (--ui-*).
+   Motion: opacity + ≤ 8 px translate, 300–600 ms; enters ease out, exits ease in-out (they melt
+   away instead of cutting out). Reduced motion → opacity only.
+   ========================================================================== */
+
+.ui-overlay {
+  --ui-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Exits: symmetric in-out, so a fade loses its opacity evenly (ease-out would drop ⅔ in the first 20%). */
+  --ui-ease-leave: cubic-bezier(0.45, 0, 0.55, 1);
+  --ui-enter-ms: 520ms;
+  --ui-rise: 8px;
+  --ui-gap: clamp(14px, 2.4vw, 28px);
+  --ui-radius: 20px;
+  --ui-blur: blur(16px) saturate(1.15);
+  --ui-elevation: 0 1px 2px var(--ui-shadow), 0 10px 30px -8px var(--ui-shadow);
+  /* Derived tones (fallbacks first; refined below where color-mix is supported).
+     --ui-accent-strong fills the primary button under a white label, so it must stay ≥ 4.5:1 against
+     --ui-accent-text: a theme can give it directly as --ui-accent-deep (set by the app shell). */
+  --ui-accent-strong: var(--ui-accent-deep, var(--ui-accent));
+  --ui-accent-hover: var(--ui-accent-strong);
+  --ui-accent-soft: var(--ui-panel);
+  --ui-tile: transparent;
+  --ui-quiet-hover: var(--ui-panel);
+  --ui-border-strong: var(--ui-panel-border);
+  --ui-panel-faint: transparent;
+
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  color: var(--ui-text);
+  font-family: 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .ui-overlay {
+    /* Same hue, deeper (a computed shade, never drawn as black) when the theme gives no ui.accentDeep. */
+    --ui-accent-strong: var(--ui-accent-deep, color-mix(in oklab, var(--ui-accent) 72%, black));
+    --ui-accent-hover: color-mix(in srgb, var(--ui-accent-strong) 90%, var(--ui-text));
+    --ui-accent-soft: color-mix(in srgb, var(--ui-accent) 24%, transparent);
+    --ui-tile: color-mix(in srgb, var(--ui-panel-border) 24%, transparent);
+    --ui-quiet-hover: color-mix(in srgb, var(--ui-panel-border) 32%, transparent);
+    --ui-border-strong: color-mix(in srgb, var(--ui-panel-border), var(--ui-text) 26%);
+    --ui-panel-faint: color-mix(in srgb, var(--ui-panel) 45%, transparent);
+  }
+}
+
+.ui-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- Enter / leave --------------------------------------------------
+   Animations live on the visible pieces, never on the layer: an ancestor with
+   opacity < 1 would cut the panels' backdrop-filter off from the scene. Enter
+   uses `backwards` so static opacity (e.g. the dimmed HUD) applies afterwards. */
+
+.ui-enter {
+  animation: ui-enter var(--ui-enter-ms) var(--ui-ease) backwards;
+  animation-delay: var(--ui-delay, 0ms);
+}
+.ui-enter--d1 { --ui-delay: 90ms; }
+.ui-enter--d2 { --ui-delay: 180ms; }
+.ui-enter--d3 { --ui-delay: 270ms; }
+.ui-enter--d4 { --ui-delay: 420ms; }
+
+.is-leaving .ui-enter {
+  animation: ui-leave var(--ui-leave-ms, 360ms) var(--ui-ease-leave) forwards;
+}
+
+.ui-swap {
+  display: inline-block;
+  animation: ui-swap 360ms var(--ui-ease) backwards;
+}
+
+@keyframes ui-enter {
+  from {
+    opacity: 0;
+    translate: 0 var(--ui-rise);
+  }
+}
+/* Drifts up a little on its way out; bottom-anchored pieces set --ui-leave-shift to settle down instead. */
+@keyframes ui-leave {
+  to {
+    opacity: 0;
+    translate: 0 var(--ui-leave-shift, calc(var(--ui-rise) * -0.5));
+  }
+}
+@keyframes ui-swap {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+}
+
+/* ---------- Surfaces ------------------------------------------------------ */
+
+.ui-panel,
+.hud-pill {
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-panel-border);
+  box-shadow: var(--ui-elevation);
+  -webkit-backdrop-filter: var(--ui-blur);
+  backdrop-filter: var(--ui-blur);
+}
+
+.ui-panel {
+  border-radius: var(--ui-radius);
+}
+
+/* ---------- Buttons ------------------------------------------------------- */
+
+/* :where() keeps the reset at zero specificity so component classes win. */
+:where(.ui-overlay) button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+:where(.ui-overlay) button:disabled {
+  cursor: default;
+}
+:where(.ui-overlay) button:focus {
+  outline: none;
+}
+/* Text tone, not the pastel accent: ≥ 6:1 on panels and ≥ 3:1 over the scene (keyboard-driven game,
+   and the title and card autofocus their primary button, so the ring must always be findable). */
+:where(.ui-overlay) button:focus-visible {
+  outline: 2.5px solid var(--ui-text);
+  outline-offset: 3px;
+}
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 0 30px;
+  border-radius: 999px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  transition:
+    translate 260ms var(--ui-ease),
+    background-color 260ms var(--ui-ease),
+    box-shadow 260ms var(--ui-ease),
+    color 260ms var(--ui-ease);
+}
+
+.ui-btn--primary {
+  background: var(--ui-accent-strong);
+  color: var(--ui-accent-text);
+  text-shadow: 0 1px 1px var(--ui-shadow);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 2px 4px var(--ui-shadow),
+    0 10px 22px -10px var(--ui-accent-strong);
+}
+.ui-btn--primary:hover {
+  background: var(--ui-accent-hover);
+}
+
+.ui-btn--quiet {
+  min-height: 42px;
+  padding: 0 22px;
+  color: var(--ui-text-soft);
+  font-size: 15px;
+  font-weight: 700;
+}
+.ui-btn--quiet:hover {
+  color: var(--ui-text);
+  background: var(--ui-quiet-hover);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui-btn--primary:hover {
+    translate: 0 -1px;
+  }
+  .ui-btn:active {
+    translate: 0 1px;
+  }
+}
+
+/* ---------- Keycaps ------------------------------------------------------- */
+
+.keycap {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-panel-border);
+  box-shadow: 0 2px 0 var(--ui-panel-border);
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  translate: 0 -1px;
+}
+.keycap--wide {
+  padding: 0 10px;
+}
+
+/* ---------- HUD ----------------------------------------------------------- */
+
+.hud__corner {
+  position: absolute;
+  top: max(var(--ui-gap), env(safe-area-inset-top, 0px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hud__corner--start {
+  left: max(var(--ui-gap), env(safe-area-inset-left, 0px));
+}
+.hud__corner--end {
+  right: max(var(--ui-gap), env(safe-area-inset-right, 0px));
+}
+
+.hud-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border-radius: 999px;
+  transition:
+    opacity 500ms var(--ui-ease),
+    background-color 240ms var(--ui-ease),
+    border-color 240ms var(--ui-ease),
+    box-shadow 240ms var(--ui-ease),
+    color 240ms var(--ui-ease);
+}
+
+.hud-round {
+  width: 44px;
+}
+
+.hud-level {
+  padding: 0 18px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.hud-restart {
+  color: var(--ui-text-soft);
+}
+.hud-restart:hover {
+  color: var(--ui-text);
+}
+
+/* Hold-to-restart (R held once a box was moved): a soft accent disc grows from the centre until the level
+   restarts, so the wait reads as progress, never as a key that did nothing. */
+.hud-restart {
+  position: relative;
+  isolation: isolate;
+}
+.hud-restart::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  opacity: 0;
+  scale: var(--ui-hold, 0);
+  transition:
+    opacity 220ms var(--ui-ease),
+    scale 120ms linear;
+}
+.hud-restart.is-holding {
+  color: var(--ui-text);
+}
+.hud-restart.is-holding::before {
+  opacity: 0.6;
+}
+.hud-restart__icon {
+  width: 20px;
+  height: 20px;
+  transition: rotate 480ms var(--ui-ease);
+}
+
+.hud-timer {
+  min-width: 80px;
+  padding: 0 18px;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.hud-timer__value {
+  transition: opacity 400ms var(--ui-ease);
+}
+.hud-timer.is-idle .hud-timer__value {
+  opacity: 0.8;
+}
+
+/* Clickable: the edge firms up on hover / focus, like a button (click hides it). */
+.hud-timer:not(.is-hidden):hover,
+.hud-timer:not(.is-hidden):focus-visible {
+  border-color: var(--ui-border-strong);
+}
+
+/* Hidden timer: a small quiet clock glyph on a faint disc — discreet, yet findable again (≥ 3:1). */
+.hud-timer.is-hidden {
+  min-width: 0;
+  padding: 0;
+  color: var(--ui-text);
+  opacity: 0.7;
+  background: var(--ui-panel-faint);
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.hud-timer.is-hidden:hover,
+.hud-timer.is-hidden:focus-visible {
+  opacity: 1;
+  background: var(--ui-panel);
+  border-color: var(--ui-panel-border);
+}
+.hud-timer__icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* Pills sit over the scene: a panel halo keeps the focus ring readable over any box or shelf. */
+.hud-pill:focus-visible {
+  box-shadow:
+    0 0 0 6px var(--ui-panel),
+    var(--ui-elevation);
+}
+
+/* Completion card up: the HUD steps back, gently. Dim each surface, not the group (see backdrop note). */
+.hud.is-dimmed .hud-pill {
+  opacity: 0.62;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hud-restart:hover .hud-restart__icon {
+    rotate: -40deg;
+  }
+}
+
+/* ---------- Control hint -------------------------------------------------- */
+
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: max(clamp(18px, 5vh, 44px), env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 10px 18px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-panel-border);
+  box-shadow: var(--ui-elevation);
+  -webkit-backdrop-filter: var(--ui-blur);
+  backdrop-filter: var(--ui-blur);
+  color: var(--ui-text-soft);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.hint__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.hint__keys {
+  display: inline-flex;
+  gap: 3px;
+}
+.hint__sep {
+  opacity: 0.6;
+}
+
+/* ---------- Sound notice (M pressed in a level) ---------------------------- */
+
+/* Brief top-center pill in the HUD's style; it fades away on its own (the HUD stays three items). */
+.notice {
+  position: absolute;
+  top: max(var(--ui-gap), env(safe-area-inset-top, 0px));
+  left: 50%;
+  margin: 0;
+  padding: 0 18px;
+  transform: translateX(-50%);
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.notice__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.notice__icon {
+  width: 18px;
+  height: 18px;
+  color: var(--ui-text-soft);
+}
+
+/* Screen-reader only (live announcements). */
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Title screen -------------------------------------------------- */
+
+.title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: clamp(28px, 9vh, 96px) 20px max(clamp(16px, 4vh, 36px), env(safe-area-inset-bottom, 0px));
+  text-align: center;
+}
+
+/* Soft cream light at top and bottom so text reads over the diorama without a hard panel. */
+.title__veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(75% 42% at 50% 0%, var(--ui-panel) 0%, transparent 72%),
+    radial-gradient(75% 38% at 50% 100%, var(--ui-panel) 0%, transparent 72%);
+}
+
+.title__head,
+.title__bottom {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.title__wordmark {
+  margin: 0;
+  /* Bounded by height too: on laptop windows a width-only size ate the diorama band. */
+  font-size: clamp(56px, min(10vw, 15vh), 124px);
+  font-weight: 800;
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  color: var(--ui-text);
+  text-shadow: 0 2px 28px var(--ui-panel);
+}
+
+.title__subtitle {
+  margin: 14px 0 0;
+  font-size: clamp(16px, 1.5vw, 20px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ui-text-soft);
+}
+
+.title__bottom {
+  gap: 16px;
+}
+
+.title__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px 14px;
+}
+
+.title__start {
+  min-width: 200px;
+}
+
+.title__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  margin: 0;
+  color: var(--ui-text-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+.title__footer .keycap {
+  min-width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.title__sep {
+  opacity: 0.6;
+}
+.title__footer-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  vertical-align: -3px;
+}
+
+/* Mark: tiny line-art forklift. The headlight "eye" blinks now and then, like the real one. */
+.toro-mark {
+  width: 68px;
+  height: 51px;
+  margin-bottom: 8px;
+}
+.toro-mark__line {
+  fill: none;
+  stroke: var(--ui-text-soft);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.toro-mark__body {
+  fill: var(--ui-panel);
+  stroke: var(--ui-text-soft);
+  stroke-width: 2.4;
+}
+.toro-mark__box {
+  fill: var(--ui-accent);
+}
+.toro-mark__tape {
+  fill: none;
+  stroke: var(--ui-accent-strong);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+.toro-mark__wheel {
+  fill: var(--ui-text-soft);
+}
+.toro-mark__hub {
+  fill: var(--ui-panel);
+}
+.toro-mark__eye {
+  fill: var(--ui-text);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toro-mark__eye {
+    animation: toro-blink 6.5s ease-in-out 2s infinite;
+  }
+}
+@keyframes toro-blink {
+  0%,
+  94%,
+  100% {
+    scale: 1 1;
+  }
+  96.5% {
+    scale: 1 0.15;
+  }
+}
+
+/* ---------- Level dots ---------------------------------------------------- */
+
+.level-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  max-width: 340px;
+}
+
+.level-dot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+
+.level-dot__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--ui-text-soft);
+  transition:
+    scale 260ms var(--ui-ease),
+    opacity 260ms var(--ui-ease),
+    background-color 260ms var(--ui-ease);
+}
+.level-dot.is-done .level-dot__dot {
+  background: var(--ui-accent);
+  box-shadow: inset 0 0 0 2px var(--ui-accent-strong);
+  opacity: 1;
+}
+.level-dot.is-current .level-dot__dot {
+  scale: 1.25;
+  opacity: 1;
+}
+.level-dot.is-locked .level-dot__dot {
+  width: 6px;
+  height: 6px;
+  background: var(--ui-text-soft);
+  box-shadow: none;
+  opacity: 0.28;
+}
+.level-dot:not(:disabled):hover .level-dot__dot,
+.level-dot:focus-visible .level-dot__dot {
+  scale: 1.4;
+  opacity: 1;
+}
+
+/* Caption under the dots: hovered / focused level, else the one "Continuar" leads to. */
+.level-caption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  margin: -4px 0 0;
+  color: var(--ui-text-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.level-caption__time {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--ui-panel-border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Completion card -----------------------------------------------
+   The freshly tidied warehouse is the reward: a compact card anchored at the bottom center, never over
+   the middle of the diorama (it may only overlap the near floor edge). Rises in, settles down on exit. */
+
+.card-layer {
+  --ui-leave-shift: calc(var(--ui-rise) * 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 16px max(clamp(14px, 4.4vh, 28px), env(safe-area-inset-bottom, 0px));
+}
+
+.card {
+  width: min(420px, 100%);
+  padding: 20px 22px 16px;
+  text-align: center;
+}
+
+.card__eyebrow {
+  margin: 0;
+  color: var(--ui-text-soft);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.card__title {
+  margin: 4px 0 0;
+  font-size: clamp(22px, 2.4vw, 28px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.card__line {
+  margin: 4px 0 0;
+  color: var(--ui-text-soft);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.card__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+.card__stat {
+  padding: 8px 8px 7px;
+  border-radius: 12px;
+  background: var(--ui-tile);
+}
+.card__stat dt {
+  color: var(--ui-text-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.card__stat dd {
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.005em;
+}
+
+.card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 5px 13px 5px 10px;
+  border-radius: 999px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.card__badge-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--ui-accent-strong);
+}
+
+/* One row keeps the card low: the primary action leads and takes the room, "Repetir" stays quiet. */
+.card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+}
+.card__actions .ui-btn--primary {
+  flex: 1 1 auto;
+}
+
+/* ---------- Unsupported (no WebGL 2 / caught crash) ----------------------- */
+
+.unsupported-layer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.unsupported .card__line {
+  margin-top: 8px;
+}
+
+/* ---------- Small windows ------------------------------------------------- */
+
+@media (max-width: 560px) {
+  .ui-overlay {
+    --ui-radius: 16px;
+  }
+  .hud-pill {
+    height: 40px;
+  }
+  .hud-round {
+    width: 40px;
+  }
+  .hud-level {
+    padding: 0 14px;
+  }
+  .hud-timer {
+    min-width: 70px;
+    padding: 0 14px;
+    font-size: 16px;
+  }
+  .hint {
+    border-radius: 18px;
+    font-size: 12.5px;
+  }
+  .hint__sep {
+    display: none;
+  }
+  .card {
+    padding: 18px 16px 12px;
+  }
+  .card__stat dd {
+    font-size: 20px;
+  }
+  .notice {
+    top: calc(max(var(--ui-gap), env(safe-area-inset-top, 0px)) + 52px);
+  }
+}
+
+/* Laptop-height windows (1366×768 or 1280×720 minus browser chrome): a tighter header, menu and card
+   keep ~40% of the height clear for the diorama. The mark shrinks rather than disappears. */
+@media (max-height: 720px) {
+  .title {
+    padding-top: clamp(16px, 5vh, 96px);
+  }
+  .toro-mark {
+    width: auto;
+    height: clamp(30px, 5vh, 51px);
+    aspect-ratio: 64 / 48;
+    margin-bottom: 6px;
+  }
+  .title__veil {
+    background:
+      radial-gradient(75% 30% at 50% 0%, var(--ui-panel) 0%, transparent 72%),
+      radial-gradient(75% 26% at 50% 100%, var(--ui-panel) 0%, transparent 72%);
+  }
+  .title__subtitle {
+    margin-top: 8px;
+  }
+  .title__bottom {
+    gap: 12px;
+  }
+  .title__panel {
+    padding: 12px 18px 10px;
+    gap: 10px;
+  }
+  .card {
+    padding: 16px 18px 12px;
+  }
+  .card__title {
+    margin-top: 2px;
+    font-size: clamp(20px, 2.2vw, 24px);
+  }
+  .card__stats {
+    margin-top: 10px;
+  }
+  .card__stat {
+    padding: 6px 8px 5px;
+  }
+  .card__stat dd {
+    margin-top: 1px;
+    font-size: 20px;
+  }
+  .card__badge {
+    margin-top: 8px;
+  }
+  .card__actions {
+    margin-top: 12px;
+  }
+}
+
+@media (max-height: 620px) {
+  .toro-mark {
+    display: none;
+  }
+}
+
+/* Short windows (e.g. 800×450): stats read on one line and the card stays in the lower third. */
+@media (max-height: 560px) {
+  .title__wordmark {
+    font-size: clamp(48px, 14vh, 80px);
+  }
+  .card-layer {
+    padding-bottom: max(clamp(10px, 3vh, 16px), env(safe-area-inset-bottom, 0px));
+  }
+  .card {
+    padding: 12px 16px 10px;
+  }
+  .card__eyebrow {
+    font-size: 11px;
+  }
+  .card__title {
+    font-size: 19px;
+  }
+  .card__line {
+    margin-top: 2px;
+    font-size: 13px;
+  }
+  .card__stats {
+    margin-top: 8px;
+  }
+  .card__stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    padding: 5px 8px;
+  }
+  .card__stat dt {
+    font-size: 11.5px;
+  }
+  .card__stat dd {
+    margin: 0;
+    font-size: 17px;
+  }
+  .card__badge {
+    margin-top: 6px;
+    padding: 4px 12px 4px 9px;
+    font-size: 12px;
+  }
+  .card__actions {
+    margin-top: 8px;
+  }
+  .card__actions .ui-btn {
+    min-height: 38px;
+  }
+}
+
+/* ---------- Windows High Contrast (forced colors) -------------------------
+   Dots are drawn with background + inset shadow, both dropped in forced colors: redraw them with
+   system colors. Buttons get the boundary their fill used to give them. */
+
+@media (forced-colors: active) {
+  .ui-btn {
+    border: 2px solid ButtonText;
+  }
+  .level-dot__dot {
+    forced-color-adjust: none;
+    border: 2px solid ButtonText;
+    background: Canvas;
+    box-shadow: none;
+    opacity: 1;
+  }
+  .level-dot.is-done .level-dot__dot {
+    background: Highlight;
+  }
+  /* "Current" is told apart by a heavier ring, not by fill (the fill means "done"). */
+  .level-dot.is-current .level-dot__dot {
+    border-width: 3px;
+  }
+  .level-dot.is-locked .level-dot__dot {
+    border: 0;
+    background: GrayText;
+    opacity: 1;
+  }
+}
+
+/* ---------- Reduced motion: fades only, no travel ------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-overlay {
+    --ui-rise: 0px;
+    --ui-enter-ms: 260ms;
+  }
+  .ui-enter {
+    animation-delay: 0ms;
+  }
+  .ui-swap {
+    animation: none;
+  }
+}

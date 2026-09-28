@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Toro · Prueba de audio</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --bg: #f3ece1;
+        --panel: rgba(250, 246, 239, 0.9);
+        --border: rgba(210, 196, 175, 0.7);
+        --text: #5c534a;
+        --soft: #8f857a;
+        --accent: #8fb3da;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 16px 48px;
+        font-family: Nunito, system-ui, sans-serif;
+        color: var(--text);
+        background: linear-gradient(var(--bg), #eadfce) fixed;
+      }
+      main { max-width: 860px; margin: 0 auto; display: grid; gap: 16px; }
+      h1 { margin: 0; font-size: 22px; font-weight: 800; }
+      p.sub { margin: 4px 0 0; color: var(--soft); font-size: 14px; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 14px 16px;
+        box-shadow: 0 6px 18px rgba(120, 100, 75, 0.1);
+      }
+      h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft); }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      button {
+        font: inherit;
+        font-weight: 700;
+        font-size: 14px;
+        color: var(--text);
+        background: #fffaf2;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      button:hover { background: #fff; }
+      button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+      button[aria-pressed='true'] { background: #dce8f5; }
+      label { font-size: 14px; display: flex; gap: 8px; align-items: center; }
+      input[type='range'] { width: 180px; }
+      pre {
+        margin: 0;
+        font: 13px/1.5 ui-monospace, Consolas, monospace;
+        white-space: pre-wrap;
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Toro · Prueba de audio</h1>
+        <p class="sub">Página de desarrollo (no forma parte del build). Pulsa «Activar audio» y escucha cada capa.</p>
+      </header>
+
+      <section>
+        <h2>Motor de audio</h2>
+        <div class="row">
+          <button class="primary" id="unlock">Activar audio</button>
+          <button id="mute" aria-pressed="false">Silencio</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Escena musical</h2>
+        <div class="row" id="scenes">
+          <button data-scene="title" aria-pressed="true">Título</button>
+          <button data-scene="playing" aria-pressed="false">Jugando</button>
+          <button data-scene="complete" aria-pressed="false">Completado</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Efectos</h2>
+        <div class="row">
+          <button id="pickup">Recoger caja</button>
+          <button id="drop">Dejar en el suelo</button>
+          <button id="dropCorrect">Dejar en su zona (1/5)</button>
+          <button id="released">Zona liberada</button>
+          <button id="idle">Acción sin efecto</button>
+          <button id="complete">Nivel completado</button>
+          <button id="click">Clic de interfaz</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Motor eléctrico</h2>
+        <div class="row">
+          <label>Velocidad <input id="speed" type="range" min="0" max="1" step="0.01" value="0" /></label>
+          <label>Horquilla <input id="fork" type="range" min="0" max="1" step="0.01" value="0" /></label>
+          <button id="drive" aria-pressed="false">Conducción simulada</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Estado</h2>
+        <pre id="info">—</pre>
+      </section>
+
+      <section>
+        <h2>Análisis offline</h2>
+        <div class="row">
+          <button id="analyse">Renderizar 40 s y medir</button>
+          <button id="playRender" disabled>Escuchar render</button>
+        </div>
+        <pre id="report"></pre>
+      </section>
+    </main>
+    <script type="module" src="./audioPreview.ts"></script>
+  </body>
+</html>

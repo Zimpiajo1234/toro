@@ -1,0 +1,48 @@
+{
+  "forklift": {
+    "maxSpeed": 2.3,
+    "acceleration": 3.2,
+    "deceleration": 4.2,
+    "reverseSpeed": 1.2,
+    "turnRate": 3.4,
+    "turnAcceleration": 11,
+    "driveTurnRate": 2.2,
+    "headingAssistDeg": 8,
+    "bodyRadius": 0.42,
+    "forkReach": 0.92,
+    "pickupRadius": 0.8,
+    "pickupAngleDeg": 65,
+    "carriedBoxRadius": 0.46,
+    "forkLiftSpeed": 2.2,
+    "wheelRadius": 0.15
+  },
+  "box": {
+    "size": 0.78,
+    "dropLandSec": 0.26
+  },
+  "snap": {
+    "zoneMagnetRadius": 0.9
+  },
+  "camera": {
+    "pitchDeg": 38,
+    "yawDeg": 45,
+    "padding": 1.15,
+    "rotateDurationSec": 0.9
+  },
+  "audio": {
+    "master": 0.8,
+    "music": 0.22,
+    "sfx": 0.55,
+    "motor": 0.1
+  },
+  "controls": {
+    "keyboardMapping": "vehicle",
+    "stickMapping": "screen"
+  },
+  "flow": {
+    "completeDelaySec": 1.6,
+    "confirmGraceSec": 0.45,
+    "restartHoldSec": 0.55,
+    "hintLevels": 1
+  }
+}

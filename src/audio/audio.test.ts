@@ -1,0 +1,294 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC } from './AudioEngine';
+import type { AudioGraph } from './graph';
+import { PadInstrument } from './instruments/pad';
+import { completionArpeggio, midiToFreq } from './music/harmony';
+import { biquadQ, filter } from './nodes';
+import { centsToRatio, chance, mulberry32, pick, range, vary, weightedIndex } from './random';
+import { SfxPlayer } from './sfx';
+import { FakeAudioContext, FakeBiquad, FakeEventTarget, FakeGain, FakeOscillator, type FakeParam } from './testing/fakeAudio';
+import { VoicePool, type Voice } from './voices';
+
+describe('random helpers', () => {
+  it('mulberry32 is deterministic and uniform-ish', () => {
+    const a = mulberry32(123);
+    const b = mulberry32(123);
+    let sum = 0;
+    for (let i = 0; i < 2000; i++) {
+      const v = a();
+      expect(v).toBe(b());
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+      sum += v;
+    }
+    expect(sum / 2000).toBeGreaterThan(0.45);
+    expect(sum / 2000).toBeLessThan(0.55);
+  });
+
+  it('vary / range / pick / chance stay within bounds', () => {
+    const rng = mulberry32(1);
+    for (let i = 0; i < 500; i++) {
+      const v = vary(rng, 100, 0.05);
+      expect(v).toBeGreaterThanOrEqual(95);
+      expect(v).toBeLessThanOrEqual(105);
+      const r = range(rng, 2, 3);
+      expect(r).toBeGreaterThanOrEqual(2);
+      expect(r).toBeLessThan(3);
+      expect(['a', 'b', 'c']).toContain(pick(rng, ['a', 'b', 'c']));
+    }
+    expect(chance(rng, 0)).toBe(false);
+    expect(chance(rng, 1)).toBe(true);
+    expect(centsToRatio(1200)).toBeCloseTo(2, 9);
+  });
+
+  it('weightedIndex follows weights and ignores zero weights', () => {
+    const rng = mulberry32(2);
+    const counts = [0, 0, 0];
+    for (let i = 0; i < 3000; i++) counts[weightedIndex(rng, [1, 0, 3])]++;
+    expect(counts[1]).toBe(0);
+    expect(counts[2]).toBeGreaterThan(counts[0] * 2);
+    expect(weightedIndex(rng, [0, 0])).toBe(0);
+  });
+});
+
+describe('VoicePool', () => {
+  it('bounds polyphony by releasing the oldest voice', () => {
+    const released: number[] = [];
+    const make = (id: number): Voice => ({ release: () => released.push(id) });
+    const pool = new VoicePool(3);
+    const voices = [0, 1, 2, 3, 4].map(make);
+    voices.forEach((v) => pool.add(v, 0));
+    expect(pool.size).toBe(3);
+    expect(released).toEqual([0, 1]);
+    pool.remove(voices[3]);
+    pool.remove(voices[0]); // already gone: no-op
+    expect(pool.size).toBe(2);
+    pool.releaseAll(1);
+    expect(released).toEqual([0, 1, 2, 4]);
+    expect(pool.size).toBe(0);
+  });
+});
+
+describe('AudioEngine without Web Audio', () => {
+  it('is a silent no-op that never throws', async () => {
+    const engine = new AudioEngine();
+    expect(engine.isMuted()).toBe(false);
+    engine.setMuted(true);
+    expect(engine.isMuted()).toBe(true);
+    await expect(engine.unlock()).resolves.toBeUndefined();
+    await expect(engine.unlock()).resolves.toBeUndefined();
+    engine.setScene('playing');
+    engine.setMotor(0.5, 0.2);
+    engine.setMotor(Number.NaN, -1);
+    engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null });
+    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', correct: true, satisfiedCount: 1, total: 2 });
+    engine.handleEvent({ type: 'levelComplete' });
+    engine.uiClick();
+    expect(engine.getDebugInfo().state).toBe('unavailable');
+    engine.setMuted(false);
+    expect(engine.isMuted()).toBe(false);
+    engine.dispose();
+    engine.dispose();
+    engine.uiClick();
+    await expect(engine.unlock()).resolves.toBeUndefined();
+  });
+});
+
+describe('filter()', () => {
+  it('writes low/high-pass Q in dB, so a linear q keeps its textbook meaning (no resonant bump)', () => {
+    const ctx = new FakeAudioContext().asContext();
+    expect(filter(ctx, 'lowpass', 10000, Math.SQRT1_2).Q.value).toBeCloseTo(-3.01, 2);
+    expect(filter(ctx, 'lowpass', 3000, 0.5).Q.value).toBeCloseTo(-6.02, 2);
+    expect(filter(ctx, 'highpass', 6200, 0.5).Q.value).toBeCloseTo(-6.02, 2);
+    expect(filter(ctx, 'bandpass', 1150, 3.2).Q.value).toBe(3.2);
+    expect(filter(ctx, 'peaking', 210, 0.9).Q.value).toBe(0.9);
+    expect(Number.isFinite(biquadQ('lowpass', 0))).toBe(true);
+  });
+});
+
+describe('PadInstrument sub-bass', () => {
+  const bassEnvelope = (ctx: FakeAudioContext, midi: number): FakeParam => {
+    const f = midiToFreq(midi);
+    const sub = ctx.ofKind(FakeOscillator).find((o) => Math.abs(o.frequency.value - f) < 1e-9);
+    return (sub?.outputs[0] as FakeGain).gain;
+  };
+  const releases = (env: FakeParam) => env.events.filter((e) => e.kind === 'target' && e.value === 0);
+
+  it('attacks quickly and hands over before the chord releases in monophonic mode', () => {
+    const ctx = new FakeAudioContext();
+    const pad = new PadInstrument(ctx.asContext(), ctx.createGain() as unknown as AudioNode, mulberry32(3));
+    pad.play([57, 64, 67], 45, 1, 3.68, 1, { bassOverlap: 0.25 });
+    const env = bassEnvelope(ctx, 45);
+    expect(env.events.find((e) => e.kind === 'linear')?.time).toBeCloseTo(1.2, 9);
+    const [release] = releases(env);
+    expect(release.time).toBeCloseTo(1 + 3.68 - 0.25, 9);
+    expect(release.tau).toBeLessThanOrEqual(0.15);
+  });
+
+  it('keeps its long tail with the chord otherwise', () => {
+    const ctx = new FakeAudioContext();
+    const pad = new PadInstrument(ctx.asContext(), ctx.createGain() as unknown as AudioNode, mulberry32(3));
+    pad.play([48, 59, 62, 64], 36, 1, 3, 0.9, { release: 1.3 });
+    const env = bassEnvelope(ctx, 36);
+    expect(env.events.find((e) => e.kind === 'linear')?.time).toBeCloseTo(1.35, 9);
+    const [release] = releases(env);
+    expect(release.time).toBeCloseTo(4, 9);
+    expect(release.tau).toBe(0.5);
+  });
+});
+
+describe('SfxPlayer', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function setup() {
+    const ctx = new FakeAudioContext();
+    const noise = ctx.createBuffer(1, 16000, 8000) as unknown as AudioBuffer;
+    const sfx = new SfxPlayer(ctx.asContext(), ctx.createGain() as unknown as AudioNode, noise, mulberry32(4));
+    return { ctx, sfx };
+  }
+
+  it('drop reaches small speakers: energy above 200 Hz and a softer sub body', () => {
+    const { ctx, sfx } = setup();
+    sfx.drop(0, null);
+    const oscs = ctx.ofKind(FakeOscillator);
+    expect(oscs.some((o) => o.frequency.value > 200)).toBe(true);
+    const bands = ctx.ofKind(FakeBiquad).filter((b) => b.type === 'bandpass');
+    expect(bands.some((b) => b.frequency.value > 500 && b.frequency.value < 700)).toBe(true);
+    const sub = oscs.find((o) => o.frequency.value < 130);
+    const lp = sub?.outputs[0] as FakeBiquad;
+    const env = lp.outputs[0] as FakeGain;
+    const peak = env.gain.events.find((e) => e.kind === 'linear')?.value ?? 1;
+    expect(peak).toBeLessThanOrEqual(0.32);
+  });
+
+  it('starts the level-complete swell on the given downbeat and hands its bass over when it ends', () => {
+    const { sfx } = setup();
+    const play = vi.spyOn(PadInstrument.prototype, 'play');
+    sfx.levelComplete(0.5, completionArpeggio(5), 2.4, [53, 64, 67, 69], 41, 3.43);
+    expect(play).toHaveBeenCalledTimes(1);
+    const [midis, bass, t0, duration, , options] = play.mock.calls[0];
+    expect(midis).toEqual([53, 64, 67, 69]);
+    expect(bass).toBe(41);
+    expect(t0).toBe(2.4);
+    expect(duration).toBe(3.43);
+    expect(options?.bassOverlap).toBe(0);
+  });
+});
+
+describe('AudioEngine lifecycle (fake Web Audio)', () => {
+  let win: FakeEventTarget;
+  let doc: FakeEventTarget;
+
+  class SlowStartContext extends FakeAudioContext {
+    override resumeMode: 'instant' | 'manual' = 'manual';
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeAudioContext.instances.length = 0;
+    win = new FakeEventTarget();
+    doc = new FakeEventTarget();
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('document', doc);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const setVisibility = (state: DocumentVisibilityState) => {
+    doc.visibilityState = state;
+    doc.dispatch('visibilitychange');
+  };
+
+  /** Advances the fake audio clock together with the timers (25 ms scheduler ticks). */
+  const play = async (ctx: FakeAudioContext, until: number) => {
+    while (ctx.currentTime < until) {
+      ctx.currentTime += 0.025;
+      await vi.advanceTimersByTimeAsync(25);
+    }
+  };
+
+  it('does not re-arm gesture listeners when disposed while an unlock is pending', async () => {
+    vi.stubGlobal('AudioContext', SlowStartContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const engine = new AudioEngine();
+    const unlocking = engine.unlock();
+    expect(win.count()).toBe(3);
+    engine.dispose();
+    expect(win.count()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await unlocking;
+    expect(win.count()).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('stays asleep when the tab is hidden again while a resume is still pending', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    const wake = (engine as unknown as { rt: { graph: AudioGraph } }).rt.graph.wake.gain as unknown as FakeParam;
+    expect(ctx.state).toBe('running');
+
+    setVisibility('hidden');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(ctx.state).toBe('suspended');
+
+    ctx.resumeMode = 'manual'; // e.g. a Bluetooth output that takes a while to wake up
+    setVisibility('visible');
+    setVisibility('hidden');
+    await vi.advanceTimersByTimeAsync(200); // the suspend timer fires while the resume is still pending
+    ctx.finishResume();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(ctx.state).toBe('suspended');
+    expect(wake.last()?.value).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('lands the drop thump (and its chime) with the box, box.dropLandSec after the event', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', correct: true, satisfiedCount: 1, total: 2 });
+    expect(drop).toHaveBeenCalledTimes(1);
+    expect(drop.mock.calls[0][0]).toBeCloseTo(ctx.currentTime + DROP_LAND_SEC, 9);
+    expect(drop.mock.calls[0][1]).not.toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('plays the level-complete arpeggio after the final landing chime and starts the swell on the downbeat the music resolves on', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const levelComplete = vi.spyOn(SfxPlayer.prototype, 'levelComplete');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    engine.handleEvent({ type: 'levelComplete' });
+    expect(levelComplete).toHaveBeenCalledTimes(1);
+    const [at, , swellAt] = levelComplete.mock.calls[0];
+    // After the box lands (thump + chime), on the next 8th (≤ 0.43 s at 70 BPM).
+    expect(at).toBeGreaterThanOrEqual(ctx.currentTime + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC - 1e-9);
+    expect(at).toBeLessThanOrEqual(ctx.currentTime + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC + 0.5);
+    expect(swellAt).toBeGreaterThan(ctx.currentTime + 0.2);
+    await play(ctx, swellAt - 0.3);
+    expect(engine.getDebugInfo().progressionId).not.toBe('resolve');
+    await play(ctx, swellAt + 0.05);
+    expect(engine.getDebugInfo().progressionId).toBe('resolve');
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+});

@@ -1,0 +1,43 @@
+{
+  "id": "tarde-de-lavanda",
+  "order": 9,
+  "name": "Tarde de lavanda",
+  "size": { "width": 12, "depth": 10 },
+  "forklift": { "x": 6, "z": 2, "heading": 180 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "x": 6, "z": 1 },
+    { "id": "b2", "color": "lavender", "x": 1, "z": 2 },
+    { "id": "b3", "color": "mint", "x": 10, "z": 2 },
+    { "id": "b4", "color": "coral", "x": 1, "z": 8 },
+    { "id": "b5", "color": "lavender", "x": 10, "z": 8 },
+    { "id": "b6", "color": "mint", "x": 3, "z": 9 },
+    { "id": "b7", "color": "coral", "x": 7, "z": 9 },
+    { "id": "b8", "color": "yellow", "x": 9, "z": 9 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "lavender", "x": 4, "z": 4 },
+    { "id": "z2", "color": "mint", "x": 5, "z": 4 },
+    { "id": "z3", "color": "blue", "x": 6, "z": 4 },
+    { "id": "z4", "color": "coral", "x": 7, "z": 4 },
+    { "id": "z5", "color": "coral", "x": 4, "z": 6 },
+    { "id": "z6", "color": "yellow", "x": 5, "z": 6 },
+    { "id": "z7", "color": "lavender", "x": 6, "z": 6 },
+    { "id": "z8", "color": "mint", "x": 7, "z": 6 }
+  ],
+  "shelves": [
+    { "x": 2, "z": 0, "w": 3, "d": 1, "tiers": 3 },
+    { "x": 7, "z": 0, "w": 3, "d": 1, "tiers": 3 },
+    { "x": 1, "z": 5, "w": 1, "d": 2 },
+    { "x": 10, "z": 5, "w": 1, "d": 2 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 9 }
+    ],
+    "windows": [
+      { "wall": "west", "at": 2, "width": 2 },
+      { "wall": "west", "at": 7, "width": 2 }
+    ]
+  }
+}

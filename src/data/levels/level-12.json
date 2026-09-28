@@ -1,0 +1,48 @@
+{
+  "id": "el-gran-almacen",
+  "order": 12,
+  "name": "El gran almacén",
+  "size": { "width": 14, "depth": 11 },
+  "forklift": { "x": 7, "z": 1, "heading": 0 },
+  "boxes": [
+    { "id": "b1", "color": "coral", "x": 5, "z": 1 },
+    { "id": "b2", "color": "blue", "x": 11, "z": 1 },
+    { "id": "b3", "color": "lavender", "x": 1, "z": 3 },
+    { "id": "b4", "color": "blue", "x": 4, "z": 4 },
+    { "id": "b5", "color": "coral", "x": 8, "z": 4 },
+    { "id": "b6", "color": "mint", "x": 11, "z": 4 },
+    { "id": "b7", "color": "yellow", "x": 1, "z": 8 },
+    { "id": "b8", "color": "mint", "x": 9, "z": 8 },
+    { "id": "b9", "color": "yellow", "x": 5, "z": 9 },
+    { "id": "b10", "color": "lavender", "x": 12, "z": 9 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "blue", "x": 1, "z": 1 },
+    { "id": "z2", "color": "mint", "x": 2, "z": 1 },
+    { "id": "z3", "color": "yellow", "x": 3, "z": 1 },
+    { "id": "z4", "color": "coral", "x": 4, "z": 1 },
+    { "id": "z5", "color": "lavender", "x": 5, "z": 1 },
+    { "id": "z6", "color": "lavender", "x": 8, "z": 1 },
+    { "id": "z7", "color": "coral", "x": 9, "z": 1 },
+    { "id": "z8", "color": "yellow", "x": 10, "z": 1 },
+    { "id": "z9", "color": "mint", "x": 11, "z": 1 },
+    { "id": "z10", "color": "blue", "x": 12, "z": 1 }
+  ],
+  "shelves": [
+    { "x": 3, "z": 4, "w": 1, "d": 4 },
+    { "x": 6, "z": 4, "w": 2, "d": 4 },
+    { "x": 10, "z": 4, "w": 1, "d": 4 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 13, "z": 0 },
+      { "x": 0, "z": 10 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 2, "width": 3 },
+      { "wall": "north", "at": 9, "width": 3 },
+      { "wall": "west", "at": 7, "width": 2 }
+    ]
+  }
+}

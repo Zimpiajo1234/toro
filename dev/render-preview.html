@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Toro · vista previa del render (dev)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        font-family: 'Nunito', system-ui, sans-serif;
+      }
+      body {
+        background: radial-gradient(120% 90% at 50% 35%, var(--bg-top, #f6f0e6) 0%, var(--bg-bottom, #eadfce) 100%);
+        color: #5c534a;
+      }
+      #stage {
+        position: fixed;
+        inset: 0;
+      }
+      #hud {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 12px;
+        background: rgba(250, 246, 239, 0.8);
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="hud"></div>
+    <script type="module" src="./renderPreview.ts"></script>
+  </body>
+</html>

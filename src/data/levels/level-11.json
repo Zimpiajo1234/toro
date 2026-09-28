@@ -1,0 +1,45 @@
+{
+  "id": "pasillos-de-luz",
+  "order": 11,
+  "name": "Pasillos de luz",
+  "size": { "width": 13, "depth": 11 },
+  "forklift": { "x": 7, "z": 9, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "yellow", "x": 6, "z": 0 },
+    { "id": "b2", "color": "coral", "x": 6, "z": 3 },
+    { "id": "b3", "color": "lavender", "x": 9, "z": 3 },
+    { "id": "b4", "color": "mint", "x": 2, "z": 4 },
+    { "id": "b5", "color": "mint", "x": 6, "z": 6 },
+    { "id": "b6", "color": "yellow", "x": 9, "z": 6 },
+    { "id": "b7", "color": "blue", "x": 2, "z": 8 },
+    { "id": "b8", "color": "coral", "x": 10, "z": 8 },
+    { "id": "b9", "color": "blue", "x": 6, "z": 10 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "blue", "x": 1, "z": 1 },
+    { "id": "z2", "color": "coral", "x": 11, "z": 1 },
+    { "id": "z3", "color": "mint", "x": 1, "z": 3 },
+    { "id": "z4", "color": "yellow", "x": 11, "z": 3 },
+    { "id": "z5", "color": "lavender", "x": 1, "z": 5 },
+    { "id": "z6", "color": "blue", "x": 11, "z": 5 },
+    { "id": "z7", "color": "yellow", "x": 1, "z": 7 },
+    { "id": "z8", "color": "mint", "x": 11, "z": 7 },
+    { "id": "z9", "color": "coral", "x": 1, "z": 9 }
+  ],
+  "shelves": [
+    { "x": 4, "z": 2, "w": 5, "d": 1 },
+    { "x": 4, "z": 5, "w": 5, "d": 1 },
+    { "x": 4, "z": 8, "w": 5, "d": 1 }
+  ],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 12, "z": 10 }
+    ],
+    "windows": [
+      { "wall": "west", "at": 2, "width": 2 },
+      { "wall": "west", "at": 6, "width": 2 },
+      { "wall": "north", "at": 5, "width": 3 }
+    ]
+  }
+}
