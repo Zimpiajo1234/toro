@@ -11,6 +11,9 @@ const RING_OPACITY = 0.5;
 const RING_GROWTH = 0.45;
 /** Halo opacity per unit of glow. */
 const HALO_GAIN = 1.5;
+/** Recipe step the carried box would fill: breathes with the pad (same rhythm), a bit brighter as it is small. */
+const STEP_GLOW = 0.16;
+const STEP_PULSE = 0.1;
 
 export interface ZoneGeometries {
   pad: BufferGeometry;
@@ -30,12 +33,19 @@ export class ZoneView {
   private readonly ring: Mesh;
   private readonly halo: Mesh;
   private satisfied: boolean;
+  /** Boxes on the pad last frame: a release with more boxes than before came from a box stacked on top. */
+  private stackLength: number;
+  /** Seconds the satisfied glow is still held after such a release (it eases off when that box lands). */
+  private releaseHold = 0;
   private glow: number;
   private celebrateFrom = 0;
   private breathe = 0;
   private readonly celebrate = new OneShot(1.1);
   private readonly ringAnim = new OneShot(0.8);
   private readonly wave = new OneShot(0.75);
+  /** Stack zones: glow material of each recipe step (bottom → top) and its breathe envelope. */
+  private readonly stepMaterials: MeshStandardMaterial[] = [];
+  private readonly stepBreathe: number[] = [];
 
   constructor(
     state: ZoneState,
@@ -60,12 +70,27 @@ export class ZoneView {
     this.halo.visible = false;
     this.group.add(this.halo, this.pad, this.ring);
     this.satisfied = state.satisfied;
+    this.stackLength = state.stack.length;
     this.glow = state.satisfied ? GLOW_REST : 0;
     this.padMaterial.emissiveIntensity = this.glow;
   }
 
   playWave(delay: number): void {
     this.wave.start(delay);
+  }
+
+  /**
+   * Stack zones: the recipe marker (cream base + one mesh per step, bottom → top, each with its own glow
+   * material). While the carried box is the one the zone takes next, its step breathes with the pad.
+   */
+  addRecipe(base: Mesh, steps: readonly Mesh<BufferGeometry, MeshStandardMaterial>[]): void {
+    this.group.add(base);
+    for (const step of steps) {
+      this.group.add(step);
+      this.stepMaterials.push(step.material);
+      this.stepBreathe.push(0);
+      step.material.emissiveIntensity = 0;
+    }
   }
 
   sync(state: ZoneState, carriedColor: ColorId | null, time: number, dt: number): void {
@@ -77,8 +102,13 @@ export class ZoneView {
         this.ringAnim.start(this.landDelay);
       } else {
         this.celebrate.stop();
+        // Stacked on top: the zone lets go as that box lands (with the audio's release tick), not while it glides.
+        this.releaseHold = state.stack.length > this.stackLength ? this.landDelay : 0;
       }
     }
+    if (this.satisfied) this.releaseHold = 0;
+    this.stackLength = state.stack.length;
+    if (this.releaseHold > 0) this.releaseHold = Math.max(0, this.releaseHold - dt);
 
     if (this.celebrate.step(dt)) {
       const p = this.celebrate.p;
@@ -86,14 +116,20 @@ export class ZoneView {
         p < RISE_SHARE
           ? lerp(this.celebrateFrom, GLOW_PEAK, easeOutCubic(p / RISE_SHARE))
           : lerp(GLOW_PEAK, GLOW_REST, easeInOutSine((p - RISE_SHARE) / (1 - RISE_SHARE)));
-    } else if (!this.celebrate.active) {
+    } else if (!this.celebrate.active && this.releaseHold <= 0) {
       this.glow = damp(this.glow, this.satisfied ? GLOW_REST : 0, this.satisfied ? 4 : 2.2, dt);
     }
 
-    // Teach the goal without words: free zones of the carried color breathe softly.
-    const invite = carriedColor === this.color && state.occupiedBy === null ? 1 : 0;
+    // Teach the goal without words: zones that take the carried color next breathe softly.
+    const invite = carriedColor !== null && carriedColor === state.next ? 1 : 0;
     this.breathe = damp(this.breathe, invite, 3, dt);
     const breatheGlow = this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
+    // …and so does the recipe step that box would fill (its own envelope: no jump when the next step changes).
+    const nextStep = invite ? state.stack.length : -1;
+    for (let i = 0; i < this.stepMaterials.length; i++) {
+      this.stepBreathe[i] = damp(this.stepBreathe[i], i === nextStep ? 1 : 0, 3, dt);
+      this.stepMaterials[i].emissiveIntensity = this.stepBreathe[i] * (STEP_GLOW + STEP_PULSE * Math.sin(time * 2.3));
+    }
 
     const wave = this.wave.step(dt) ? bump(this.wave.p) : 0;
     const glow = this.glow + breatheGlow + wave * 0.28;

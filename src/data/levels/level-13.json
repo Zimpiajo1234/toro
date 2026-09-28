@@ -1,0 +1,21 @@
+{
+  "id": "una-encima",
+  "order": 13,
+  "name": "Una encima de otra",
+  "stackLimit": 2,
+  "size": { "width": 7, "depth": 6 },
+  "forklift": { "x": 5, "z": 2, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "x": 1, "z": 2 },
+    { "id": "b2", "color": "mint", "x": 3, "z": 2 }
+  ],
+  "zones": [{ "id": "z1", "color": "blue", "x": 1, "z": 2, "recipe": ["blue", "mint"] }],
+  "shelves": [],
+  "decor": {
+    "plants": [
+      { "x": 6, "z": 0 },
+      { "x": 0, "z": 5 }
+    ],
+    "windows": [{ "wall": "north", "at": 2, "width": 3 }]
+  }
+}

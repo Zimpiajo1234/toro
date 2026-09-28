@@ -5,7 +5,7 @@ import { BOX_SETTLE_SPEED, circleRectContact, CollisionWorld, createContact, poi
 const BOUNDS: Rect = { minX: -5, minZ: -5, maxX: 5, maxZ: 5 };
 
 function box(id: string, x: number, z: number, carried = false): BoxState {
-  return { id, color: 'blue', kind: 'standard', pos: { x, z }, cell: null, carried, zoneId: null, correct: false };
+  return { id, color: 'blue', kind: 'standard', pos: { x, z }, cell: null, level: 0, carried, zoneId: null, correct: false };
 }
 
 describe('circleRectContact', () => {
@@ -170,5 +170,29 @@ describe('CollisionWorld settling boxes', () => {
     // No overlap → nothing to soften.
     expect(world.softenBox(0, touching - 0.1, 0, 0.42)).toBe(0);
     expect(world.boxInset(0)).toBe(0);
+  });
+});
+
+describe('CollisionWorld passable stack bases', () => {
+  it('only the carried load passes over a passable base; the body and plain queries still collide', () => {
+    const world = new CollisionWorld(BOUNDS, [], 0.78);
+    world.setBoxes([box('a', 1, 0), box('b', -2, 0)]);
+    expect(world.isPassable(0)).toBe(false);
+    world.setPassable(0, true);
+    expect(world.isPassable(0)).toBe(true);
+    expect(world.isPassable(1)).toBe(false);
+    const hit = createContact();
+    expect(world.deepestContact(1, 0, 0.46, hit, true)).toBe(0);
+    expect(world.deepestContact(1, 0, 0.46, hit)).toBeGreaterThan(0);
+    expect(world.clearance(1, 0, null, true)).toBeGreaterThan(0);
+    expect(world.clearance(1, 0)).toBeLessThan(0);
+    world.setPassable(0, false);
+    expect(world.deepestContact(1, 0, 0.46, hit, true)).toBeGreaterThan(0);
+    // Out-of-range indices are ignored; a new box list starts with nothing passable.
+    world.setPassable(5, true);
+    expect(world.isPassable(5)).toBe(false);
+    world.setPassable(0, true);
+    world.setBoxes([box('a', 1, 0)]);
+    expect(world.isPassable(0)).toBe(false);
   });
 });

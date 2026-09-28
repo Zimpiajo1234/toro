@@ -23,6 +23,61 @@ export function buildZoneGeometry(palette: ZonePalette, glyph: GlyphShape): Buff
   return parts.build();
 }
 
+/**
+ * Recipe marker measurements (cell units): square colored steps of side `size` (each `taper` narrower than the one
+ * below) and height `step`, parted by cream spacers `gap` high, on a cream plinth slightly wider than the first step.
+ * Centered on two opposite pad corners (±corner, ∓corner): clear of the box on the pad (half 0.39), of a box on the
+ * diagonal neighbour (from 0.61) and of a forklift docked along an axis (half-width ≤ 0.29).
+ */
+export const RECIPE_MARKER = { corner: 0.5, size: 0.16, step: 0.085, gap: 0.02, taper: 0.1, plinth: 0.025, plinthSize: 0.18 } as const;
+
+/** Corners holding a recipe column: the sides of the pad at the default 45° view (one stays in view at any yaw). */
+const RECIPE_CORNERS = [
+  [RECIPE_MARKER.corner, -RECIPE_MARKER.corner],
+  [-RECIPE_MARKER.corner, RECIPE_MARKER.corner],
+] as const;
+
+export interface RecipeGeometry {
+  /** Plinths and spacers (neutral cream) of both columns. */
+  base: BufferGeometry;
+  /** One geometry per recipe step, bottom → top (both columns), so the next step can glow on its own. */
+  steps: BufferGeometry[];
+}
+
+/** Bottom height of recipe step `i` (world y, pad origin on the floor). */
+export function recipeStepY(i: number): number {
+  const { plinth, step, gap } = RECIPE_MARKER;
+  return plinth + i * (step + gap);
+}
+
+/**
+ * Recipe of a stack zone, drawn without text: a mini stack of colored steps, bottom → top, standing on the floor at
+ * two opposite pad corners, so one of them shows from every view and stays visible while the stack grows. The cream
+ * plinth and spacers keep the first step apart from the same-colored pad rim and every step apart from the next.
+ * `colors` = box base colors, bottom first; `spacer` = the neutral cream.
+ */
+export function buildRecipeGeometry(colors: readonly string[], spacer: string): RecipeGeometry {
+  const { size, step, gap, taper, plinth, plinthSize } = RECIPE_MARKER;
+  const base = new PartList();
+  const steps = colors.map(() => new PartList());
+  for (const [cx, cz] of RECIPE_CORNERS) {
+    const h = plinthSize / 2;
+    base.block(spacer, cx - h, cx + h, 0, plinth, cz - h, cz + h);
+    colors.forEach((color, i) => {
+      // Each step is a touch narrower than the one below: reads as "stacked", bottom → top.
+      const half = (size / 2) * (1 - taper * i);
+      const y0 = recipeStepY(i);
+      steps[i].block(color, cx - half, cx + half, y0, y0 + step, cz - half, cz + half);
+      // Spacer under the next step, flush with it.
+      if (i + 1 < colors.length) {
+        const next = (size / 2) * (1 - taper * (i + 1));
+        base.block(spacer, cx - next, cx + next, y0 + step, y0 + step + gap, cz - next, cz + next);
+      }
+    });
+  }
+  return { base: base.build(), steps: steps.map((s) => s.build()) };
+}
+
 /** Thin rounded-square outline on the floor (celebration ring, drop preview). */
 export function buildOutlineGeometry(half: number, thickness: number, radius: number): BufferGeometry {
   return flatShapeGeometry(roundedRingShape(half, thickness, radius, 4), 0, 4);

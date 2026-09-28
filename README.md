@@ -31,6 +31,13 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | T | Mostrar / ocultar tiempo |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
+| U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
+| RePág / AvPág · las dos teclas a la derecha de la P ([ / ] en teclado inglés; también con AltGr) | Solo en Modo prueba: nivel anterior / siguiente (al instante; si ya has movido una caja, mantén pulsada la tecla un momento, como R) |
+
+**Modo prueba** (ajuste guardado, apagado por defecto): abre todos los niveles desde el título sin tocar el progreso
+real; al apagarlo vuelven los candados de siempre. Los tiempos se guardan con normalidad en los niveles ya
+desbloqueados; un nivel abierto solo por el Modo prueba no guarda tiempo (guardarlo desbloquearía el siguiente) y
+la tarjeta final lo dice: solo "Tiempo" y "Modo prueba · este tiempo no se guarda".
 
 Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), Start (continuar),
 Back (reiniciar), Y (repetir en la tarjeta final).
@@ -58,9 +65,18 @@ src/
 
 Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md).
 
+## Apilar (niveles 13–18)
+
+Cualquier caja apoyada admite otra encima, hasta `stackLimit` por nivel (máx. `stack.maxHeight` = 3 en
+`gameConfig.json`; los niveles 1–12 no apilan). Sin teclas nuevas: Espacio coge la caja de arriba de la pila de enfrente y deja encima de la
+pila de destino si cabe. Una zona con `recipe` (colores de abajo arriba) se cumple cuando su pila coincide
+exactamente; la receta se dibuja en la zona como una mini pila de escalones de color. Reglas completas: [docs/STACKING.md](docs/STACKING.md).
+
 ## Ampliar
 
 - **Nuevo nivel:** añadir `src/data/levels/level-XX.json` (esquema `LevelData`, validado al cargar y en tests).
+  Pilas: `"recipe": ["blue", "mint"]` en una zona (su `color` = el primero); cajas con la misma `x, z` empiezan
+  apiladas en el orden de la lista (la primera en el suelo); `"stackLimit"` opcional.
 - **Nuevo tema visual:** crear `src/themes/<id>.ts` que exporte un `Theme`, añadirlo al mapa `THEMES` de `themes/index.ts` y poner `"theme": "<id>"` en el nivel. El tema cubre la escena 3D, el fondo y los tokens de la UI; un id sin registrar hace fallar `src/integration/themes.test.ts`.
 - **Nuevo tipo de caja:** añadir el id a `BOX_KINDS` (`core/types.ts`) y su constructor de malla en el registro de cajas de `render/`.
 - **Ranking local:** `ProgressStore.getRanking(levelId)` ya guarda el top‑5 por nivel.

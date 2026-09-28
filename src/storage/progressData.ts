@@ -10,9 +10,11 @@ export const RANKING_SIZE = 5;
 export interface Settings {
   muted: boolean;
   showTimer: boolean;
+  /** "Modo prueba": every level can be started from the title (unlock progress itself is never changed). */
+  testMode: boolean;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: true };
+export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: true, testMode: false };
 
 /**
  * In-memory model. The best time of a level is always `rankings.get(id)[0]`.
@@ -107,9 +109,11 @@ export function parseProgress(json: string | null): ProgressModel {
   if (isValidIndex(raw.lastLevel)) progress.lastLevel = raw.lastLevel;
   if (typeof raw.lastLevelId === 'string' && raw.lastLevelId !== '') progress.lastLevelId = raw.lastLevelId;
   if (isRecord(raw.settings)) {
-    const { muted, showTimer } = raw.settings;
+    const { muted, showTimer, testMode } = raw.settings;
     if (typeof muted === 'boolean') progress.settings.muted = muted;
     if (typeof showTimer === 'boolean') progress.settings.showTimer = showTimer;
+    // Additive field (same version): saves written before it simply lack it (default off).
+    if (typeof testMode === 'boolean') progress.settings.testMode = testMode;
   }
   return progress;
 }

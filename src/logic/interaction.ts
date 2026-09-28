@@ -22,10 +22,12 @@ export interface DropChoice {
   z: number;
   /** Zone on that cell (any color), or -1. */
   zoneIndex: number;
+  /** Height the box lands at (0 = floor, 1 = on one box, …). */
+  level: number;
 }
 
 export function createDropChoice(): DropChoice {
-  return { x: 0, z: 0, zoneIndex: -1 };
+  return { x: 0, z: 0, zoneIndex: -1, level: 0 };
 }
 
 /**
@@ -75,7 +77,7 @@ export class Interaction {
   }
 
   /**
-   * Box the action would lift now, or -1: resting, center within pickupRadius of the fork point and within
+   * Box the action would lift now, or -1: resting on top of its stack, center within pickupRadius of the fork point and within
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
    * inside another obstacle, so the load collider can always settle smoothly.
    */
@@ -90,6 +92,14 @@ export class Interaction {
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
       if (b.carried) continue;
+      const cell = b.cell;
+      // Only the top of a stack can be lifted; the stack's base stands for the whole cell in collisions.
+      let ignore = b.id;
+      if (cell) {
+        if (this.grid.boxAt(cell.x, cell.z) !== i) continue;
+        const base = this.grid.baseAt(cell.x, cell.z);
+        if (base >= 0) ignore = this.boxes[base].id;
+      }
       const dx = b.pos.x - px;
       const dz = b.pos.z - pz;
       const dSq = dx * dx + dz * dz;
@@ -98,7 +108,7 @@ export class Interaction {
       const oz = b.pos.z - f.pos.z;
       const along = ox * fx + oz * fz;
       if (along < Math.sqrt(ox * ox + oz * oz) * this.pickupCos) continue;
-      if (this.world.clearance(px, pz, b.id) < 0) continue;
+      if (this.world.clearance(px, pz, ignore) < 0) continue;
       best = i;
       bestSq = dSq;
     }
@@ -107,8 +117,9 @@ export class Interaction {
 
   /**
    * Cell a carried box of `color` would be dropped on. Candidates: the cell under the fork point and its 8
-   * neighbours that are in bounds, free (no shelf, plant or resting box) and would not overlap the body by more
-   * than DROP_BODY_TOLERANCE. A free zone of the box's own color within zoneMagnetRadius wins (nearest first);
+   * neighbours that are in bounds, free (no shelf or plant; empty, or a stack with room — the box goes on top)
+   * and would not overlap the body by more than DROP_BODY_TOLERANCE. A zone within zoneMagnetRadius whose recipe
+   * takes this color next wins (nearest first);
    * otherwise the nearest candidate (which may be a zone of another color when the forks are over it). If no cell
    * passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
    * is used, so a drop in a snug corner still works. Returns false when nothing fits.
@@ -133,7 +144,7 @@ export class Interaction {
 
     for (let z = cellZ - 1; z <= cellZ + 1; z++) {
       for (let x = cellX - 1; x <= cellX + 1; x++) {
-        if (!this.grid.isFree(x, z)) continue;
+        if (!this.grid.canTakeBox(x, z)) continue;
         const wx = x + 0.5 - this.halfWidth;
         const wz = z + 0.5 - this.halfDepth;
         const dSq = (wx - px) * (wx - px) + (wz - pz) * (wz - pz);
@@ -157,9 +168,9 @@ export class Interaction {
           nearestX = x;
           nearestZ = z;
         }
-        // Zone magnet: only zones of the carried color pull the box off the aimed cell.
+        // Zone magnet: only zones that need this color next pull the box off the aimed cell.
         const zi = this.grid.zoneAt(x, z);
-        if (zi < 0 || dSq > this.magnetSq || this.zones[zi].color !== color) continue;
+        if (zi < 0 || dSq > this.magnetSq || this.zones[zi].next !== color) continue;
         if (dSq < zoneSq - TIE_EPSILON) {
           zoneIndex = zi;
           zoneSq = dSq;
@@ -173,6 +184,7 @@ export class Interaction {
       out.x = zoneX;
       out.z = zoneZ;
       out.zoneIndex = zoneIndex;
+      out.level = this.grid.height(zoneX, zoneZ);
       return true;
     }
     if (nearestSq === Infinity) {
@@ -183,6 +195,7 @@ export class Interaction {
     out.x = nearestX;
     out.z = nearestZ;
     out.zoneIndex = this.grid.zoneAt(nearestX, nearestZ);
+    out.level = this.grid.height(nearestX, nearestZ);
     return true;
   }
 

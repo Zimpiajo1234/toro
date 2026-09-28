@@ -116,7 +116,7 @@ describe('pick-up', () => {
     const fork = forkPoint(state);
     expect(Math.hypot(fork.x - 2, fork.z)).toBeLessThanOrEqual(F.pickupRadius);
     const events = press(state);
-    expect(events).toEqual([{ type: 'boxPicked', boxId: 'front', fromZoneId: null }]);
+    expect(events).toEqual([{ type: 'boxPicked', boxId: 'front', fromZoneId: null, level: 0 }]);
     const box = snap.boxes[2];
     expect(box).toMatchObject({ carried: true, cell: null, zoneId: null, correct: false });
     expect(snap.forklift.carrying).toBe('front');
@@ -163,7 +163,7 @@ describe('drop', () => {
     const state = new GameState(level(90, [['b', 'blue', 4, 2]], [['z', 'blue', 0, 0]]));
     press(state);
     const e = eventOf(press(state), 'boxDropped');
-    expect(e).toEqual({ type: 'boxDropped', boxId: 'b', cell: { x: 4, z: 2 }, zoneId: null, correct: false, satisfiedCount: 0, total: 1 });
+    expect(e).toEqual({ type: 'boxDropped', boxId: 'b', cell: { x: 4, z: 2 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0, total: 1 });
     expect(state.getSnapshot().boxes[0]).toMatchObject({ carried: false, cell: { x: 4, z: 2 }, pos: { x: 1, z: 0 } });
   });
 
@@ -206,7 +206,7 @@ describe('drop', () => {
     expect(snap.hint.dropZoneId).toBe('zb');
     const events = press(state);
     expect(events).toEqual([
-      { type: 'boxDropped', boxId: 'b', cell: { x: 4, z: 2 }, zoneId: 'zb', correct: true, satisfiedCount: 1, total: 1 },
+      { type: 'boxDropped', boxId: 'b', cell: { x: 4, z: 2 }, zoneId: 'zb', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 1 },
       { type: 'levelComplete' },
     ]);
     expect(snap.zones[0]).toMatchObject({ occupiedBy: 'b', satisfied: true });
@@ -232,7 +232,7 @@ describe('drop', () => {
     press(state);
     expect(snap.hint).toMatchObject({ dropCell: { x: 4, z: 3 }, dropZoneId: null });
     const events = press(state);
-    expect(eventOf(events, 'boxDropped')).toMatchObject({ cell: { x: 4, z: 3 }, zoneId: null, correct: false, satisfiedCount: 0 });
+    expect(eventOf(events, 'boxDropped')).toMatchObject({ cell: { x: 4, z: 3 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0 });
     expect(snap.zones[0]).toMatchObject({ occupiedBy: null, satisfied: false });
   });
 
@@ -398,7 +398,7 @@ describe('drop', () => {
       const boxes = snap.boxes.map((b) => ({ ...b, pos: { ...b.pos } }));
       boxes[0].carried = true;
       const grid = new LevelGrid(lv);
-      grid.setBox(0, 0, -1);
+      grid.popBox(0, 0);
       const world = new CollisionWorld(CollisionWorld.fromLevel(lv, GAME_CONFIG.box.size).bounds, behind, GAME_CONFIG.box.size);
       world.setBoxes(boxes);
       const forklift = { ...snap.forklift, pos: { x: -0.72, z: 0 }, heading: Math.PI / 2 };
@@ -460,14 +460,14 @@ describe('zones and events', () => {
     expect(snap.progress).toEqual({ satisfied: 1, total: 2 });
     expect(press(state)).toEqual([
       { type: 'firstInput' },
-      { type: 'boxPicked', boxId: 'b', fromZoneId: 'zb' },
+      { type: 'boxPicked', boxId: 'b', fromZoneId: 'zb', level: 0 },
       { type: 'zoneReleased', zoneId: 'zb', boxId: 'b' },
     ]);
     expect(snap.progress).toEqual({ satisfied: 0, total: 2 });
     expect(snap.zones[0]).toMatchObject({ occupiedBy: null, satisfied: false });
     // Dropping it back satisfies the zone again (no completion: mint is still off).
     expect(press(state)).toEqual([
-      { type: 'boxDropped', boxId: 'b', cell: { x: 2, z: 2 }, zoneId: 'zb', correct: true, satisfiedCount: 1, total: 2 },
+      { type: 'boxDropped', boxId: 'b', cell: { x: 2, z: 2 }, zoneId: 'zb', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 2 },
     ]);
   });
 
@@ -486,7 +486,7 @@ describe('zones and events', () => {
       }),
     );
     expect(state.getSnapshot().zones[0]).toMatchObject({ occupiedBy: 'b', satisfied: false });
-    expect(press(state)).toEqual([{ type: 'firstInput' }, { type: 'boxPicked', boxId: 'b', fromZoneId: 'zm' }]);
+    expect(press(state)).toEqual([{ type: 'firstInput' }, { type: 'boxPicked', boxId: 'b', fromZoneId: 'zm', level: 0 }]);
     expect(state.getSnapshot().zones[0].occupiedBy).toBeNull();
     // With the forks over it, the box still goes back onto the mint zone (nearest cell), just not "correct".
     expect(eventOf(press(state), 'boxDropped')).toMatchObject({ cell: { x: 2, z: 2 }, zoneId: 'zm', correct: false });
@@ -515,7 +515,7 @@ describe('zones and events', () => {
     const later = [...run(state, 1, move(1, 0)), ...run(state, 0.5, move(0, 1, true)), ...run(state, 0.5, { move: { x: 0, z: 0 }, actionPressed: true })];
     expect(later).toEqual([]);
     expect(snap.forklift.pos).toEqual(pos);
-    expect(snap.hint).toEqual({ targetBoxId: null, dropCell: null, dropZoneId: null });
+    expect(snap.hint).toEqual({ targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0 });
   });
 
   it('the drop hint keeps its object while the cell is unchanged', () => {

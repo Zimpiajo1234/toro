@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | Path | Owner | Responsibility |
 |---|---|---|
 | `src/core/types.ts`, `math.ts`, `store.ts` | shared | Contracts, helpers, tiny external store |
-| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
+| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level JSON schema + validation |
 | `src/data/levels/*.json` | **levels** | Level content |
@@ -92,17 +92,40 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
     `pickupAngleDeg` of forward; nearest wins. Emits `boxPicked` (+ `zoneReleased` if it was satisfying a zone).
   - Carrying → drop. Candidate cells: the cell under the fork point and its 8 neighbours. Valid = in bounds,
     not shelf/plant, no resting box, and the box square would not overlap the forklift body circle by more than
-    ~0.05. **Zone magnet:** a free zone of the carried box's colour whose centre is within `zoneMagnetRadius` of
-    the fork point wins (nearest first). Zones of other colours never pull; the nearest-cell rule still lands on
-    them when the forks are over them. Otherwise nearest valid cell to the fork point. **Tight spot:** if no cell
-    passes the 0.05 body tolerance, the nearest free cell overlapping the body by ≤ 0.15 is used, provided the
-    body can be eased out along the push normal without hitting anything. A dropped box that overlaps the body
-    starts with a shrunk collider that grows back at 0.4 u/s (`CollisionWorld.softenBox` / `settle(dt)`; picking
-    calls `hardenBox`), so the forklift is eased out instead of popping. Emits `boxDropped` (with `correct`,
-    `satisfiedCount`, `total`). If no valid cell: `actionIdle` (gentle, not negative).
+    ~0.05. **Zone magnet:** a zone whose `next` is the carried box's colour (classic: a free zone of that colour)
+    whose centre is within `zoneMagnetRadius` of the fork point wins (nearest first). Other zones never pull; the
+    nearest-cell rule still lands on them when the forks are over them. Otherwise nearest valid cell to the fork
+    point. **Tight spot:** if no cell passes the 0.05 body tolerance, the nearest free cell overlapping the body by
+    ≤ 0.15 is used, provided the body can be eased out along the push normal without hitting anything. A dropped
+    box that overlaps the body starts with a shrunk collider that grows back at 0.4 u/s (`CollisionWorld.softenBox`
+    / `settle(dt)`; picking calls `hardenBox`), so the forklift is eased out instead of popping. Emits `boxDropped`
+    (with `correct`, `satisfiedCount`, `total`). If no valid cell: `actionIdle` (gentle, not negative).
   - Nothing to pick: `actionIdle`.
-- `hint` in the snapshot is recomputed every update: `targetBoxId` when not carrying; `dropCell` / `dropZoneId`
-  preview when carrying.
+- `hint` in the snapshot is recomputed every update: `targetBoxId` when not carrying; `dropCell` / `dropZoneId` /
+  `dropLevel` preview when carrying.
+- **Stacks** (spec: `docs/STACKING.md`; levels 13–18). `LevelData.stackLimit` (validateLevel fills it: JSON value,
+  else `stack.maxHeight` when the level uses stacking — a recipe longer than 1 or a stacked start — else 1, so the
+  classic levels behave exactly as before). `LevelZone.recipe` (bottom → top, default `[color]`, `color` must be
+  `recipe[0]`); box colors must equal the union of recipes as a multiset. Stacked starts: boxes with the same
+  (x, z) are stacked in list order, first on the floor (no height field). `LevelGrid` keeps a per-cell stack of box
+  indices. Pick = only the top box of a stack (collision check ignores the stack's own base). Drop candidates are
+  free cells *or stacks with room* (the box goes on top, `BoxState.level` = height); the zone magnet only pulls
+  toward a zone whose `ZoneState.next` (next recipe color while its stack is a correct prefix) is the carried
+  color. `ZoneState` gains `recipe`, `stack` (ids bottom → top), `next`; `satisfied` iff the stack equals the recipe;
+  `occupiedBy` = top box; `BoxState.correct` = stack from the floor up to it matches the recipe so far. Stacking onto
+  a satisfied zone emits a neutral `zoneReleased`; lifting a wrong top box that leaves a zone satisfied again emits
+  `zoneRestored` { zoneId, boxId, recipeLength, satisfiedCount, total } after `boxPicked` (a pick never completes a
+  level). Events: `boxPicked.level`, `boxDropped.level` + `recipeLength` (`correct` = the drop completed its zone).
+  Collision: a stack is one cell (only level-0 boxes collide); the body always collides; full stacks block the
+  carried load. A stack with room lets the load pass over it (`CollisionWorld.setPassable` / `isPassable`) once
+  `forkHeight >= height - LOAD_PASS_CLEARANCE` (0.25), and stays passable while the load is over it (never turns
+  solid under it); until then it blocks the load like any box. `ForkliftState.forkHeight` (stack levels,
+  continuous; 0 in classic levels) moves toward max(`dropLevel`, clear level) while carrying, the target box's level
+  while empty (else the top box of a stack the tines reach). The clear level is the tallest stack the load (or the
+  empty forks) is over or would reach before the forks could climb, predicted from the rig's motion, turn rate and
+  throttle; the forks never go down while over a stack. Rate `forkRiseRate` (`logic/forkRise.ts`):
+  `stack.forkRiseSpeed / (1 + 0.25·level)` (3.2: level 1 in 0.39 s, level 2 in 0.94 s). All of it is gated on
+  `stackLimit > 1`.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every zone is satisfied and nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
@@ -116,6 +139,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
 - Level 1 is one straight run along the forklift's start heading, so holding W alone (`"vehicle"` mapping) reaches
   the box and then the zone (`src/integration/level1Controls.test.ts` simulates it with the real GameState). 3-tier shelves only against the back walls (z = 0 or x = 0).
+- Two chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2). Box count and area grow
+  within each chapter. Start headings face a box straight ahead. `levels.test.ts` (grid solver) and
+  `src/integration/levelsPlayable.test.ts` (autopilot) model per-cell color stacks: a move lifts a stack's top box
+  and drops it on the floor or on a stack with room (conservative: stacks block driving and turning sweeps).
 - Colors are introduced in `COLOR_IDS` order. Shapes: small, readable warehouses; generous empty floor.
 - Decor is sparse: 1–4 plants in corners/edges, 1–3 windows on north/west walls. Never clutter lanes.
 
@@ -139,8 +166,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   to a clean ghost (~0.35 opacity, depth prepass) whenever it stands in front of the forklift, a box or a zone.
 - Zones: rounded-square pad slightly raised (≈0.02), `fill` color, inset border in `border` color like floor
   tape, tone-on-tone glyph (`theme.glyphs`; the diamond is a rhombus, never a rotated square). Satisfied → emissive `glow` eases up (≈0.35) then settles (≈0.15),
-  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones of that color breathe
-  gently (slow sine on emissive), teaching the goal without text.
+  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones whose `next` is that color
+  (classic: free zones of that color) breathe gently (slow sine on emissive), teaching the goal without text.
 - Boxes: low-poly beveled cube (`box.size`), `base` color, tape strip across the lid in `tape`, small glyph on
   the lid. Pick → small hop then ride on forks (visual position damped, never teleports). Drop → eased glide to
   the cell lasting `box.dropLandSec` (0.26 s; the zone celebration and the audio thump wait for it), then a
@@ -153,6 +180,16 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   slight body pitch on acceleration and roll on turns (≤ 3°). Carried box rides on the forks.
 - Level complete: zones glow in a gentle sequential wave, window light warms slightly. No flashes, no particles
   storms, no screen effects. Everything eases.
+- Stacks: box y = `level · boxHeight` (visual height `box.size · 0.82`); drop glide ends on the stack top (landing
+  up from lower forks it lifts first, then slides on top). As a box lands, the whole stack dips together (3.5 % of
+  a box height, no squash, no seam). The carriage adds `forkHeight · boxHeight` (eased in the view) and an inner
+  mast stage appears only while raised. A stack zone draws its recipe as a mini stack of colored steps with cream
+  spacers on a cream plinth, at two opposite pad corners (one glow-material mesh per step); the step the carried
+  box would fill breathes with the zone. The drop outline floats on the stack top. A completed stack glows box by
+  box bottom → top (stacked boxes glow without the bob). A zone un-completed by a box stacked on top keeps its glow
+  until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
+  cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
+  complete (materials stay `transparent`; classic levels are untouched).
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 
@@ -171,11 +208,17 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   - drop: soft felt thump scheduled `box.dropLandSec` after the event, when the box touches the floor; if
     `correct`: warm bell/marimba chime whose pitch climbs a pentatonic scale with `satisfiedCount` (satisfying
     progression), in the current music key. The fork servo answers the key press at once.
-  - zoneReleased / actionIdle: barely audible soft tick (never a buzzer, never "wrong").
-  - levelComplete: gentle ascending arpeggio (on the 8th-note grid, after the final landing chime) + pad swell
-    on the downbeat the music resolves on; music ducks slightly, then returns.
+  - stacks: a drop on a box is a lighter, higher wooden "toc" (+12 % pitch per level, less sub); pickup knock and
+    servo rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
+    chime (the lower notes skip avoid notes over the sounding chord). `zoneRestored`: the zone's chime (and stack
+    climb) 0.12 s after the pickup knock, no final flourish.
+  - zoneReleased / actionIdle: barely audible soft tick (never a buzzer, never "wrong"). A release caused by
+    stacking onto a satisfied zone ticks when that box lands (0.03 s after its knock); a pick-up releases at once.
+  - levelComplete: gentle ascending arpeggio (on the 8th-note grid, after the final landing chime and a completed
+    stack's climb into it) + pad swell on the downbeat the music resolves on; music ducks slightly, then returns.
   - motor: electric hum (two soft oscillators, lowpassed), gain and pitch follow `speed01`, very low level,
-    fades to silence when stopped; fork servo whine follows `forkMotion01`.
+    fades to silence when stopped; fork servo whine follows `forkMotion01` and sits +12 % higher per stack level
+    (`setMotor`'s 3rd argument `forkHeight`; 0 in classic levels).
   - uiClick: tiny soft wooden tap.
 
 ## UI direction (ui)
@@ -191,7 +234,17 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", a discreet row of level dots (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · M silencio (M activar sonido when muted)
-  · T tiempo · Esc inicio". Diorama visible behind (idle orbit).
+  · T tiempo · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+- **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
+  `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
+  playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
+  on a US layout; matched by `e.code`, with or without AltGr, so Spanish / ISO layouts work too) load the previous /
+  next level fresh: at once while no box has been picked, else held like R (`flow.restartHoldSec`, same ↺ fill).
+  Unlock progress is never modified: a level open only because of test mode records no time (a ranking would
+  unlock its successor), does not unlock anything and never becomes the "Continuar" target; its card shows only
+  "Tiempo" plus the quiet line "Modo prueba · este tiempo no se guarda" (`LevelResult.practice`). Genuinely
+  unlocked levels behave normally. HUD adds a faint "prueba" tag next to "Nivel N"; tag and switch share the
+  tooltip "Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente".
 - Mute toggles are confirmed by a polite live region and, in a level, a brief top-center pill (~1.6 s).
 - Completion card: compact (≤ 420 px) and anchored at the bottom center so the tidied warehouse stays in view;
   rises in, settles down on exit. Positive `result.message` as heading, "Tiempo 0:42.3", "Mejor tiempo 0:38.9",
@@ -223,12 +276,15 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   For `flow.confirmGraceSec` (0.45 s) after the card appears, keys and pad buttons cannot dismiss it.
 - `restart()`: rebuild the same level (fresh GameState, renderer.loadLevel), timer reset. `nextLevel()`: next or
   title after last. `toTitle()` mid-level is non-destructive: the level stays as it is, the timer pauses, and
-  `start()` with the same index ("Continuar") resumes it; the clock restarts on the first input.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, Q/E camera, M mute, T timer,
+  `start()` with the same index or no index ("Continuar") resumes it, even a level only test mode opened; the clock
+  restarts on the first input. Turning test mode off on the title drops such a suspended level and shows the real
+  "Continuar" level. "Continuar" follows `flow.continueTarget`: a saved last level already cleared, whose next level
+  is open but not cleared, moves on to that next level (an old 12-level save leads into levels 13–18).
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, Q/E camera, M mute, T timer, U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,
   d-pad drives like W/S/A/D (`controls.keyboardMapping`; non-zero drive wins over the stick), A pick / drop and confirm, LB/RB camera, Start confirm, Back/View = restart (same hold rule),
   Y = "Repetir" on the card only.
-- Push `elapsedMs` to the store at ≤ 10 Hz. Pass `|speed| / maxSpeed` and fork motion to `audio.setMotor` every
-  frame. Resize handled by the renderer (ResizeObserver on its container).
+- Push `elapsedMs` to the store at ≤ 10 Hz. Pass `|speed| / maxSpeed`, fork motion (carry lift, and the stack
+  climb normalised by `forkRiseRate`) and `forkHeight` to `audio.setMotor` every frame. Resize handled by the renderer (ResizeObserver on its container).

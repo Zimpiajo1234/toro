@@ -1,5 +1,18 @@
 export type MoveBinding = 'up' | 'down' | 'left' | 'right';
-export type CommandBinding = 'action' | 'rotateLeft' | 'rotateRight' | 'restart' | 'mute' | 'timer' | 'confirm' | 'back';
+export type CommandBinding =
+  | 'action'
+  | 'rotateLeft'
+  | 'rotateRight'
+  | 'restart'
+  | 'mute'
+  | 'timer'
+  | 'confirm'
+  | 'back'
+  /** "Modo prueba" only: previous / next level ([ / ], PageUp / PageDown). */
+  | 'prevLevel'
+  | 'nextLevel'
+  /** Title: toggle "Modo prueba" (U). */
+  | 'testMode';
 /** Logical game keys produced by the keyboard. */
 export type KeyBinding = MoveBinding | CommandBinding;
 
@@ -22,6 +35,11 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['Enter', 'confirm'],
   ['NumpadEnter', 'confirm'],
   ['Escape', 'back'],
+  ['BracketLeft', 'prevLevel'],
+  ['BracketRight', 'nextLevel'],
+  ['PageUp', 'prevLevel'],
+  ['PageDown', 'nextLevel'],
+  ['KeyU', 'testMode'],
 ]);
 
 /** Fallback on the produced character (lower-cased KeyboardEvent.key) when the code is empty or unbound. */
@@ -44,6 +62,11 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['enter', 'confirm'],
   ['escape', 'back'],
   ['esc', 'back'],
+  ['[', 'prevLevel'],
+  [']', 'nextLevel'],
+  ['pageup', 'prevLevel'],
+  ['pagedown', 'nextLevel'],
+  ['u', 'testMode'],
 ]);
 
 /** Resolve a key event to a game binding. Tolerates missing fields (autofill fires bare `keydown` Events). */

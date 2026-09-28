@@ -1,0 +1,28 @@
+{
+  "id": "dos-pilas",
+  "order": 15,
+  "name": "Dos pilas",
+  "size": { "width": 9, "depth": 7 },
+  "forklift": { "x": 7, "z": 2, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "mint", "x": 5, "z": 2 },
+    { "id": "b2", "color": "blue", "x": 6, "z": 5 },
+    { "id": "b3", "color": "coral", "x": 4, "z": 1 },
+    { "id": "b4", "color": "yellow", "x": 4, "z": 5 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "mint", "x": 2, "z": 2, "recipe": ["mint", "coral"] },
+    { "id": "z2", "color": "blue", "x": 2, "z": 4, "recipe": ["blue", "yellow"] }
+  ],
+  "shelves": [{ "x": 1, "z": 0, "w": 2, "d": 1 }],
+  "decor": {
+    "plants": [
+      { "x": 8, "z": 0 },
+      { "x": 0, "z": 6 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 4, "width": 3 },
+      { "wall": "west", "at": 4, "width": 2 }
+    ]
+  }
+}

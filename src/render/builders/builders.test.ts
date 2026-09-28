@@ -10,7 +10,7 @@ import { PartList } from '../paint';
 import { flatShapeGeometry } from '../shapes';
 import { BOX_BUILDERS, buildBoxGeometry } from './box';
 import { FORKLIFT_LAYOUT, buildForkliftGeometry } from './forklift';
-import { buildHaloGeometry, buildZoneGeometry } from './zone';
+import { RECIPE_MARKER, buildHaloGeometry, buildRecipeGeometry, buildZoneGeometry, recipeStepY } from './zone';
 
 function bounds(geo: BufferGeometry): Box3 {
   geo.computeBoundingBox();
@@ -101,6 +101,35 @@ describe('zone geometry', () => {
     }
     const halo = buildHaloGeometry();
     expect(halo.getAttribute('color').itemSize).toBe(4);
+  });
+
+  it('draws a recipe as one colored step per box, bottom → top, clear of the box, neighbours and a docked forklift', () => {
+    const colors = ['#9bbce0', '#92d2b6', '#b8a6da'];
+    const recipe = buildRecipeGeometry(colors, '#f3ece1');
+    expect(recipe.steps).toHaveLength(3);
+    const all = [recipe.base, ...recipe.steps];
+    for (const geo of all) {
+      const pos = geo.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        // Box on the pad: half 0.39; box on the diagonal neighbour: from 0.61; chassis docked along an axis: half ≤ 0.29.
+        expect(Math.min(Math.abs(pos.getX(i)), Math.abs(pos.getZ(i)))).toBeGreaterThan(0.4);
+        expect(Math.max(Math.abs(pos.getX(i)), Math.abs(pos.getZ(i)))).toBeLessThan(0.6);
+      }
+    }
+    // Stands on the floor, steps stacked bottom → top with a spacer between them, each painted its box color.
+    expect(bounds(recipe.base).min.y).toBeCloseTo(0, 5);
+    recipe.steps.forEach((geo, i) => {
+      const b = bounds(geo);
+      expect(b.min.y).toBeCloseTo(recipeStepY(i), 5);
+      expect(b.max.y - b.min.y).toBeCloseTo(RECIPE_MARKER.step, 5);
+      if (i > 0) expect(b.min.y).toBeGreaterThan(bounds(recipe.steps[i - 1]).max.y + 0.01);
+      const c = new Color(colors[i]);
+      expect(geo.getAttribute('color').getX(0)).toBeCloseTo(c.r, 5);
+    });
+    // Big enough to read at play scale (the first step is not lost in the pad rim).
+    expect(RECIPE_MARKER.size).toBeGreaterThanOrEqual(0.15);
+    expect(RECIPE_MARKER.step).toBeGreaterThanOrEqual(0.08);
+    expect(recipeStepY(0)).toBeGreaterThan(ZONE.padHeight);
   });
 });
 

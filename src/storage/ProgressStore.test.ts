@@ -138,12 +138,12 @@ describe('ProgressStore — levels & settings', () => {
 
   it('merges settings and returns copies', () => {
     const p = new ProgressStore(new FakeStorage(), KEY);
-    expect(p.getSettings()).toEqual({ muted: false, showTimer: true });
+    expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
     p.setSettings({ muted: true });
     p.getSettings().showTimer = false;
-    expect(p.getSettings()).toEqual({ muted: true, showTimer: true });
+    expect(p.getSettings()).toEqual({ muted: true, showTimer: true, testMode: false });
     p.setSettings({ showTimer: false });
-    expect(p.getSettings()).toEqual({ muted: true, showTimer: false });
+    expect(p.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
   });
 
   it('only writes when something changes', () => {
@@ -177,7 +177,7 @@ describe('ProgressStore — persistence', () => {
     expect(b.getRanking('lvl-1')).toEqual([29_500, 31_000]);
     expect(b.getHighestUnlocked()).toBe(1);
     expect(b.getLastLevel()).toBe(1);
-    expect(b.getSettings()).toEqual({ muted: true, showTimer: false });
+    expect(b.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
   });
 
   it('falls back to fresh progress on corrupt JSON or another version', () => {
@@ -186,7 +186,7 @@ describe('ProgressStore — persistence', () => {
       storage.setItem(KEY, bad);
       const p = new ProgressStore(storage, KEY);
       expect(p.hasProgress()).toBe(false);
-      expect(p.getSettings()).toEqual({ muted: false, showTimer: true });
+      expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
     }
   });
 
@@ -205,7 +205,7 @@ describe('ProgressStore — persistence', () => {
     expect(p.rankings.has('c')).toBe(false);
     expect(p.highestUnlocked).toBe(0);
     expect(p.lastLevel).toBe(0);
-    expect(p.settings).toEqual({ muted: false, showTimer: false });
+    expect(p.settings).toEqual({ muted: false, showTimer: false, testMode: false });
   });
 
   it('never throws when storage throws, and keeps working in memory', () => {
@@ -302,7 +302,7 @@ describe('ProgressStore — several tabs', () => {
     expect(b.getBest('b')).toBe(20_000);
     expect(b.getHighestUnlocked()).toBe(2);
     b.setSettings({ muted: true });
-    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: true, showTimer: false });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
   });
 
   it('keeps unsaved changes in memory when writes fail', () => {
@@ -324,5 +324,31 @@ describe('insertTime', () => {
     expect(src).toEqual([1, 2, 3]);
     expect(ranking).toEqual([1, 2, 2.5, 3]);
     expect(rank).toBe(3);
+  });
+});
+
+describe('ProgressStore: modo prueba setting', () => {
+  it('defaults to off, persists, and tolerates saves written before the field existed', () => {
+    const storage = new FakeStorage();
+    const a = new ProgressStore(storage, KEY, IDS);
+    expect(a.getSettings().testMode).toBe(false);
+    a.setSettings({ testMode: true });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: false, showTimer: true, testMode: true });
+
+    const old = new FakeStorage();
+    old.setItem(KEY, JSON.stringify({ version: PROGRESS_VERSION, rankings: { a: [1000] }, highestUnlocked: 1, lastLevel: 1, settings: { muted: true, showTimer: false } }));
+    const migrated = new ProgressStore(old, KEY, IDS);
+    expect(migrated.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
+    expect(migrated.getHighestUnlocked()).toBe(1);
+    expect(parseProgress(JSON.stringify({ version: PROGRESS_VERSION, settings: { testMode: 'yes' } })).settings.testMode).toBe(false);
+  });
+
+  it('toggling it never touches unlock progress', () => {
+    const storage = new FakeStorage();
+    const p = new ProgressStore(storage, KEY, IDS);
+    p.unlock(2);
+    p.setSettings({ testMode: true });
+    p.setSettings({ testMode: false });
+    expect(p.getHighestUnlocked()).toBe(2);
   });
 });

@@ -26,6 +26,16 @@ export function resolveStartLevel(requested: number | undefined, saved: SavedPro
   return clampIndex(preferred, levelCount);
 }
 
+/**
+ * The saved "Continuar" level, moved on to the next one when it is already cleared while that next level is open
+ * but was never cleared. A save from before new levels were added kept its final level as the last one (nothing
+ * came after it): "Continuar" then leads into the new chapter instead of replaying a finished level.
+ */
+export function continueTarget(lastLevel: number, highestUnlocked: number, isCleared: (index: number) => boolean): number {
+  const next = lastLevel + 1;
+  return next <= highestUnlocked && isCleared(lastLevel) && !isCleared(next) ? next : lastLevel;
+}
+
 /** After finishing `index`, "Continuar" should pick up at the next level (or stay on the last one). */
 export function continueIndexAfter(index: number, levelCount: number): number {
   return clampIndex(index + 1, levelCount);

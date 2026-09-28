@@ -9,6 +9,10 @@ const MAX_TILT = degToRad(3);
 const PITCH_PER_ACCEL = 0.0075;
 const BLINK_MIN = 4;
 const BLINK_MAX = 8;
+/** Visual easing of the stack height on top of logic's steady rate (1/s): soft starts and landings. */
+const STACK_LIFT_LAMBDA = 7;
+/** The inner mast stage rises this share of the extra carriage height (so the carriage always rides on it). */
+const INNER_MAST_SHARE = 0.6;
 
 export interface ForkliftMaterials {
   painted: Material;
@@ -19,6 +23,8 @@ export interface ForkliftTuning {
   maxSpeed: number;
   wheelRadius: number;
   forkReach: number;
+  /** World height of one stack level (box visual height). Optional: 0 = no stacking visuals. */
+  stackStep?: number;
 }
 
 /** Scene graph + animation of the forklift. Reads ForkliftState, never mutates it. */
@@ -29,6 +35,8 @@ export class ForkliftView {
 
   private readonly chassis = new Group();
   private readonly carriage: Mesh;
+  private readonly innerMast: Mesh;
+  private stackLift = 0;
   private readonly eyes: Mesh;
   private readonly wheels: Mesh[] = [];
   private readonly rearPivots: Group[] = [];
@@ -60,9 +68,12 @@ export class ForkliftView {
     this.carriage.receiveShadow = true;
     this.anchor.position.set(0, 0, tuning.forkReach);
     this.carriage.add(this.anchor);
+    this.innerMast = new Mesh(geometry.innerMast, materials.painted);
+    this.innerMast.castShadow = true;
+    this.innerMast.visible = false;
     this.eyes = new Mesh(geometry.eyes, materials.unlit);
     this.eyes.position.y = L.eyeY;
-    this.chassis.add(body, this.carriage, this.eyes);
+    this.chassis.add(body, this.innerMast, this.carriage, this.eyes);
     this.root.add(this.chassis);
 
     for (const [x, z, rear] of [
@@ -124,7 +135,13 @@ export class ForkliftView {
     if (this.happy.step(dt)) lift += Math.abs(Math.sin(this.happy.p * Math.PI * 2)) * (1 - this.happy.p) * 0.05;
     this.chassis.position.y = lift;
 
-    let forkY = lerp(FORK.downY, FORK.upY, clamp(state.forkLift, 0, 1));
+    // Stack height: discrete targets from logic, eased here so the carriage never starts or stops abruptly.
+    this.stackLift = dt > 0 ? damp(this.stackLift, Math.max(0, state.forkHeight), STACK_LIFT_LAMBDA, dt) : Math.max(0, state.forkHeight);
+    if (this.stackLift < 1e-4) this.stackLift = 0;
+    const extra = this.stackLift * (tuning.stackStep ?? 0);
+    this.innerMast.visible = extra > 1e-3;
+    this.innerMast.position.y = extra * INNER_MAST_SHARE;
+    let forkY = lerp(FORK.downY, FORK.upY, clamp(state.forkLift, 0, 1)) + extra;
     if (this.shrug.step(dt)) forkY += bump(this.shrug.p) * 0.035;
     this.carriage.position.y = forkY;
 

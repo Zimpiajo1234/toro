@@ -20,6 +20,22 @@ const HOVER_LIFT = 0.05;
 const HOVER_GLOW = 0.16;
 const CORRECT_GLOW = 0.1;
 const WAVE_GLOW = 0.16;
+/**
+ * A box landing on a stack: the whole stack (the new box included) dips together by this share of one level
+ * and recovers, much softer than the landing squash. An offset, never a scale, so stacked boxes keep touching.
+ */
+const STACK_SETTLE_SEC = 0.42;
+const STACK_SETTLE_DEPTH = 0.035;
+/**
+ * Landing up on a stack from lower forks: rise over the first LIFT_SHARE of the glide (all but done by
+ * SLIDE_FROM), then slide on top with an ease-in-out (no sudden start), so the box never passes through the
+ * box below. The glide still lands at DROP_GLIDE_SEC.
+ */
+const LIFT_SHARE = 0.45;
+const SLIDE_FROM = 0.4;
+/** Opacity of an upper stacked box while it hides something the player needs to see (colors stay readable). */
+const GHOST_OPACITY = 0.55;
+const GHOST_RATE = 6;
 const QUARTER = Math.PI / 2;
 /** Larger turns (e.g. a triangle glyph aligning to its zone) finish calmly after landing. */
 const MAX_GLIDE_TURN = 0.9;
@@ -47,6 +63,12 @@ export class BoxView {
   private readonly settle = new OneShot(SETTLE_SEC);
   private readonly wobble = new OneShot(0.5);
   private readonly wave = new OneShot(0.8);
+  private readonly stackSettle = new OneShot(STACK_SETTLE_SEC);
+  /** Current stack dip 0…1 (bump of stackSettle), applied as a downward offset of the inner mesh. */
+  private stackDip = 0;
+  /** Whether the current wave also bobs the box (off inside a stack, where boxes must keep touching). */
+  private waveBob = true;
+  private opacity = 1;
   private hover = 0;
   private correctGlow: number;
   private glideTurn = 1;
@@ -57,7 +79,15 @@ export class BoxView {
     private readonly material: MeshStandardMaterial,
     /** Rotational symmetry of the lid glyph (see GLYPH_SYMMETRY). */
     private readonly glyphSymmetry: number,
+    /** Height of one stack level (the box's visual height); resting y = level · stackStep. */
+    private readonly stackStep = 0,
+    /** Stack levels only: the material may fade (ghost) while the box hides the forklift. */
+    ghostable = false,
   ) {
+    if (ghostable) {
+      // Always transparent (opacity 1 while solid) so fading never switches shader programs mid-game.
+      material.transparent = true;
+    }
     this.id = state.id;
     this.color = state.color;
     this.mesh = new Mesh(geometry, material);
@@ -65,7 +95,7 @@ export class BoxView {
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.userData.boxId = state.id;
-    this.group.position.set(state.pos.x, 0, state.pos.z);
+    this.group.position.set(state.pos.x, state.level * stackStep, state.pos.z);
     this.phase = state.carried ? 'carried' : 'rest';
     this.correctGlow = state.correct ? 1 : 0;
   }
@@ -75,8 +105,27 @@ export class BoxView {
     this.wobble.start();
   }
 
-  playWave(delay: number): void {
+  /** Glow pulse (and a tiny bob when `bob`; boxes in a stack only glow, so no seam opens between them). */
+  playWave(delay: number, bob = true): void {
     this.wave.start(delay);
+    this.waveBob = bob;
+  }
+
+  /**
+   * A box just landed on this box's stack (or this box landed on one): a slight, slow dip and recover once it
+   * lands. Every box of the stack plays it with the same delay, so they move as one.
+   */
+  playStackSettle(delay: number): void {
+    this.stackSettle.start(delay);
+  }
+
+  /** Fade toward the ghost (true) or back to solid. Only has an effect on ghostable boxes. */
+  setGhost(ghost: boolean, dt: number): void {
+    if (!this.material.transparent) return;
+    this.opacity = damp(this.opacity, ghost ? GHOST_OPACITY : 1, GHOST_RATE, dt);
+    if (!ghost && this.opacity > 0.995) this.opacity = 1;
+    this.material.opacity = this.opacity;
+    this.material.depthWrite = this.opacity >= 1;
   }
 
   sync(state: BoxState, anchor: Object3D, isTarget: boolean, dt: number): void {
@@ -103,10 +152,18 @@ export class BoxView {
       case 'dropping': {
         this.drop.step(dt);
         const p = this.drop.p;
-        const e = easeOutCubic(p);
+        const restY = state.level * this.stackStep;
+        let e: number;
+        if (restY > this.from.y + 1e-3) {
+          // Landing up on a stack from lower forks: lift first, then slide (and turn) on top.
+          e = easeInOutSine(Math.max(0, (p - SLIDE_FROM) / (1 - SLIDE_FROM)));
+          g.position.y = this.from.y + (restY - this.from.y) * easeOutCubic(Math.min(1, p / LIFT_SHARE));
+        } else {
+          e = easeOutCubic(p);
+          g.position.y = restY + (this.from.y - restY) * (1 - p * p); // eases onto the floor / the stack, then settles
+        }
         g.position.x = this.from.x + (state.pos.x - this.from.x) * e;
         g.position.z = this.from.z + (state.pos.z - this.from.z) * e;
-        g.position.y = this.from.y * (1 - p * p); // eases into the floor, then settles
         g.quaternion.slerpQuaternions(this.fromQuat, this.restQuat, e * this.glideTurn);
         if (!this.drop.active) {
           this.phase = 'rest';
@@ -117,7 +174,7 @@ export class BoxView {
       case 'rest':
         g.position.x = damp(g.position.x, state.pos.x, 18, dt);
         g.position.z = damp(g.position.z, state.pos.z, 18, dt);
-        g.position.y = damp(g.position.y, 0, 18, dt);
+        g.position.y = damp(g.position.y, state.level * this.stackStep, 18, dt);
         g.quaternion.slerp(this.restQuat, 1 - Math.exp(-7 * dt));
         break;
     }
@@ -133,6 +190,7 @@ export class BoxView {
     this.pick.start();
     this.drop.stop();
     this.settle.stop();
+    // A running stack dip plays out (it is a tiny offset): stopping it would snap the box up.
     this.group.scale.set(1, 1, 1);
   }
 
@@ -149,12 +207,14 @@ export class BoxView {
     this.drop.start();
   }
 
-  /** Squash on landing, stretch, settle (easeOutBack, scale ≤ 1.08). */
+  /** Squash on landing, stretch, settle (easeOutBack, scale ≤ 1.08); the stack dip runs alongside. */
   private applySettle(dt: number): void {
-    if (!this.settle.step(dt)) return;
-    const sy = 0.9 + 0.1 * easeOutBack(this.settle.p, 6.5);
-    const sxz = 1 / Math.sqrt(sy);
-    this.group.scale.set(sxz, sy, sxz);
+    this.stackDip = this.stackSettle.step(dt) ? bump(this.stackSettle.p) : 0;
+    if (this.settle.step(dt)) {
+      const sy = 0.9 + 0.1 * easeOutBack(this.settle.p, 6.5);
+      const sxz = 1 / Math.sqrt(sy);
+      this.group.scale.set(sxz, sy, sxz);
+    }
   }
 
   private applyHighlight(state: BoxState, isTarget: boolean, dt: number): void {
@@ -163,7 +223,8 @@ export class BoxView {
     let yaw = 0;
     if (this.wobble.step(dt)) yaw = Math.sin(this.wobble.p * Math.PI * 5) * (1 - this.wobble.p) * 0.07;
     const wave = this.wave.step(dt) ? bump(this.wave.p) : 0;
-    this.mesh.position.y = this.hover * HOVER_LIFT + wave * 0.02;
+    const bob = this.waveBob ? wave * 0.02 : 0;
+    this.mesh.position.y = this.hover * HOVER_LIFT + bob - STACK_SETTLE_DEPTH * this.stackStep * this.stackDip;
     this.mesh.rotation.y = yaw;
     this.material.emissiveIntensity = Math.max(this.hover * HOVER_GLOW, this.correctGlow * CORRECT_GLOW) + wave * WAVE_GLOW;
   }

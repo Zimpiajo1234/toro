@@ -3,10 +3,10 @@ import { GAME_CONFIG, type GameConfig } from '../config';
 import type { AudioScene, Rng } from './types';
 import { createAudioGraph, type AudioGraph } from './graph';
 import { Composer, type ComposerDebug } from './music/Composer';
-import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing } from './music/harmony';
+import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing, stackArpeggio } from './music/harmony';
 import { TONIC_CHORD } from './music/progressions';
 import { MusicPlayer } from './MusicPlayer';
-import { SfxPlayer } from './sfx';
+import { SfxPlayer, STACK_NOTE_GAP } from './sfx';
 import { MotorSound } from './motor';
 import { glideParam, rampParam } from './nodes';
 
@@ -24,8 +24,15 @@ const STARTUP_GRACE_MS = 1000;
  * the felt thump and the chime land with it. The forks' servo already answers the key press at once.
  */
 export const DROP_LAND_SEC = GAME_CONFIG.box.dropLandSec;
-/** The level-complete arpeggio waits for the final chime (and its second strike) to ring first. */
+/**
+ * The level-complete arpeggio waits for the final chime (and its second strike) to ring first; a completed
+ * stack's figure delays that chime further, and the arpeggio waits for that too.
+ */
 export const COMPLETE_AFTER_LAND_SEC = 0.2;
+/** A zone un-completed by a box stacked on top ticks just after that box lands (its knock first). */
+export const RELEASE_AFTER_LAND_SEC = 0.03;
+/** A zone satisfied again by lifting a wrong top box chimes this long after the pickup knock. */
+export const RESTORE_AFTER_PICK_SEC = 0.12;
 
 /** Internal state bundle, present only once Web Audio has been created. */
 interface Runtime {
@@ -61,6 +68,10 @@ export class AudioEngine {
   private gestureListening = false;
   private suspendTimer: ReturnType<typeof setTimeout> | null = null;
   private resumeRequestedAt = -Infinity;
+  /** Box of the drop just handled: a zone it un-completes (stacked on top) releases when it lands. Cleared by a pick. */
+  private droppedBoxId: string | null = null;
+  /** How much later than a plain chime that drop's chime rings (a completed stack climbs into it first). */
+  private completeTail = 0;
 
   constructor(private readonly config: GameConfig['audio'] = GAME_CONFIG.audio) {
     this.composer = new Composer({ rng: this.rng });
@@ -84,15 +95,33 @@ export class AudioEngine {
     this.guard('handleEvent', (rt, now) => {
       switch (event.type) {
         case 'boxPicked':
-          rt.sfx.pickup(now);
+          rt.sfx.pickup(now, event.level ?? 0);
           break;
         case 'boxDropped': {
-          const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, this.composer.currentChord() ?? undefined) : null;
-          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total);
+          const chord = this.composer.currentChord() ?? undefined;
+          const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
+          const stack =
+            event.correct && event.recipeLength > 1
+              ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
+              : null;
+          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack);
+          break;
+        }
+        case 'zoneRestored': {
+          // Lifting a wrong top box leaves the zone satisfied again: its chime (and stack climb) after the pickup
+          // knock, never the final flourish (a pick never completes a level).
+          const chord = this.composer.currentChord() ?? undefined;
+          const chime = chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord);
+          const stack =
+            event.recipeLength > 1
+              ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
+              : null;
+          rt.sfx.chime(now + RESTORE_AFTER_PICK_SEC, chime, false, stack);
           break;
         }
         case 'zoneReleased':
-          rt.sfx.tick(now, 'release');
+          // Un-completed by the box just stacked on top: the tick follows that box's landing, never precedes it.
+          rt.sfx.tick(event.boxId === this.droppedBoxId ? now + DROP_LAND_SEC + RELEASE_AFTER_LAND_SEC : now, 'release');
           break;
         case 'actionIdle':
           rt.sfx.tick(now, 'idle');
@@ -104,14 +133,18 @@ export class AudioEngine {
           break;
       }
     });
+    this.noteDrop(event);
   }
 
-  /** Called every frame. speed01 = |speed| / maxSpeed, forkMotion01 = how fast the forks are moving. */
-  setMotor(speed01: number, forkMotion01: number): void {
+  /**
+   * Called every frame. speed01 = |speed| / maxSpeed, forkMotion01 = how fast the forks are moving,
+   * forkHeight = their stack height (0 = floor; the servo sits a little higher per level).
+   */
+  setMotor(speed01: number, forkMotion01: number, forkHeight = 0): void {
     const rt = this.rt;
     if (!rt) return;
     try {
-      rt.motor.set(speed01, forkMotion01);
+      rt.motor.set(speed01, forkMotion01, forkHeight);
     } catch (err) {
       warn('setMotor', err);
     }
@@ -245,11 +278,11 @@ export class AudioEngine {
   private playLevelComplete(rt: Runtime, now: number): void {
     const key = this.composer.keyPc;
     const tonic = buildChord(key, TONIC_CHORD);
-    // The level completes on the final drop: the arpeggio follows that box's landing chime (with the zones'
-    // glow wave), on the music's 8th-note grid so it feels part of the song, fitted to the chord still
-    // sounding. The tonic swell waits for the downbeat where the music resolves (the bar requestResolve()
+    // The level completes on the final drop: the arpeggio follows that box's landing chime (after a completed
+    // stack's climb into it, with the zones' glow wave), on the music's 8th-note grid so it feels part of the
+    // song, fitted to the chord still sounding. The tonic swell waits for the downbeat where the music resolves (the bar requestResolve()
     // lands on) and carries that bar's sub-bass: one bass, never two roots at once.
-    const at = rt.music.nextEighth(now + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC);
+    const at = rt.music.nextEighth(now + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC + this.completeTail);
     const downbeat = rt.music.nextUnplannedDownbeat(at);
     rt.music.yieldResolveBass();
     const arpeggio = completionArpeggio(key, this.composer.currentChord() ?? undefined);
@@ -257,6 +290,20 @@ export class AudioEngine {
     const duck = rt.graph.musicDuck.gain;
     glideParam(duck, 0.45, now, 0.25);
     duck.setTargetAtTime(1, now + 3.4, 1.2);
+  }
+
+  /**
+   * Remembers the drop just handled for the events that follow it in the same batch (zoneReleased,
+   * levelComplete). Kept outside guard() so it stays in step while muted.
+   */
+  private noteDrop(event: GameEvent): void {
+    if (event.type === 'boxDropped') {
+      this.droppedBoxId = event.boxId;
+      this.completeTail = event.correct && event.recipeLength > 1 ? (Math.round(event.recipeLength) - 1) * STACK_NOTE_GAP : 0;
+    } else if (event.type === 'boxPicked' || event.type === 'levelComplete') {
+      this.droppedBoxId = null;
+      this.completeTail = 0;
+    }
   }
 
   /** Runs `fn` only when the engine is live and audible; swallows (and logs in dev) any error. */

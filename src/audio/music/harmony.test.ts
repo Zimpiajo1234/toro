@@ -17,6 +17,7 @@ import {
   QUALITIES,
   voiceChord,
   type ChordQuality,
+  stackArpeggio,
 } from './harmony';
 import { PROGRESSIONS, RESOLVE_PROGRESSION } from './progressions';
 
@@ -229,5 +230,50 @@ describe('chimes', () => {
     // C major: over Fm6 the E would drop onto the D before it, so it is left out; over Em7 nothing changes.
     expect(completionArpeggio(0, buildChord(0, { degree: 5, quality: 'm6' }))).toEqual([60, 67, 74, 79, 84]);
     expect(completionArpeggio(0, buildChord(0, { degree: 4, quality: 'm7' }))).toEqual(completionArpeggio(0));
+  });
+});
+
+describe('stackArpeggio', () => {
+  it('climbs one pentatonic step per box and ends on the chime', () => {
+    for (const key of ALL_KEYS) {
+      for (const n of [2, 3]) {
+        const notes = stackArpeggio(key, 1, 3, n);
+        expect(notes).toHaveLength(n);
+        expect(notes[n - 1]).toBe(chimeNote(key, 1, 3));
+        for (let i = 1; i < n; i++) {
+          expect(notes[i]).toBeGreaterThan(notes[i - 1]);
+          expect(notes[i] - notes[i - 1]).toBeLessThanOrEqual(3);
+        }
+      }
+      expect(stackArpeggio(key, 2, 2, 1)).toEqual([chimeNote(key, 2, 2)]);
+    }
+  });
+
+  it('keeps its lower notes off the avoid notes of the sounding chord, still climbing gently into the chime', () => {
+    const chords = [...PROGRESSIONS, RESOLVE_PROGRESSION].flatMap((p) => p.chords);
+    for (const key of ALL_KEYS) {
+      for (const spec of chords) {
+        const chord = buildChord(key, spec);
+        const safe = melodyPitchClasses(key, chord);
+        for (let total = 1; total <= 5; total++) {
+          for (let s = 1; s <= total; s++) {
+            for (const n of [2, 3]) {
+              const notes = stackArpeggio(key, s, total, n, chord);
+              expect(notes).toHaveLength(n);
+              expect(notes[n - 1]).toBe(chimeNote(key, s, total, chord));
+              for (let i = 0; i < n - 1; i++) {
+                expect(safe).toContain(pitchClass(notes[i]));
+                expect(inPentatonic(key, pitchClass(notes[i]))).toBe(true);
+                expect(notes[i + 1]).toBeGreaterThan(notes[i]);
+                expect(notes[i + 1] - notes[i]).toBeLessThanOrEqual(5);
+              }
+            }
+          }
+        }
+      }
+    }
+    // C major over Fm6 (F Ab C D): E steps down to D. Over Em7 (E G B D): C steps down to A.
+    expect(stackArpeggio(0, 1, 2, 2, buildChord(0, { degree: 5, quality: 'm6' }))).toEqual([74, 79]);
+    expect(stackArpeggio(0, 1, 5, 3, buildChord(0, { degree: 4, quality: 'm7' }))).toEqual([67, 69, 74]);
   });
 });

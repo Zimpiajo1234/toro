@@ -5,6 +5,7 @@
  */
 import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC, type AudioScene } from '../src/audio/AudioEngine';
 import { GAME_CONFIG } from '../src/config';
+import type { GameEvent } from '../src/core/types';
 import { createAudioGraph } from '../src/audio/graph';
 import { Composer } from '../src/audio/music/Composer';
 import { MusicPlayer } from '../src/audio/MusicPlayer';
@@ -19,6 +20,13 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 let dropCount = 0;
 const DROP_TOTAL = 5;
+/** Zones in the little stacking level the "Apilar" buttons pretend to solve (2-stack, 3-stack, final 3-stack). */
+const STACK_TOTAL = 3;
+
+/** A landing at stack `level` (0 = floor); `recipeLength` > 0 means on a zone with that recipe. */
+function dropped(level: number, correct: boolean, recipeLength: number, satisfiedCount: number, total: number): GameEvent {
+  return { type: 'boxDropped', boxId: 'b', cell: { x: 0, z: 0 }, zoneId: recipeLength > 0 ? 'z' : null, level, correct, recipeLength, satisfiedCount, total };
+}
 
 function on(id: string, fn: () => void): void {
   $(id).addEventListener('click', () => {
@@ -43,18 +51,37 @@ document.querySelectorAll<HTMLButtonElement>('#scenes button').forEach((b) =>
     setScene(b.dataset.scene as AudioScene);
   }),
 );
-on('pickup', () => engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null }));
-on('drop', () => engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 0, z: 0 }, zoneId: null, correct: false, satisfiedCount: dropCount, total: DROP_TOTAL }));
+/** Level complete, then the music scene change Game makes after `flow.completeDelaySec`. */
+function completeLevel(): void {
+  engine.handleEvent({ type: 'levelComplete' });
+  setTimeout(() => setScene('complete'), GAME_CONFIG.flow.completeDelaySec * 1000);
+}
+
+on('pickup', () => engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 0 }));
+on('drop', () => engine.handleEvent(dropped(0, false, 0, dropCount, DROP_TOTAL)));
 on('dropCorrect', () => {
   dropCount = dropCount >= DROP_TOTAL ? 1 : dropCount + 1;
-  engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 0, z: 0 }, zoneId: 'z', correct: true, satisfiedCount: dropCount, total: DROP_TOTAL });
+  engine.handleEvent(dropped(0, true, 1, dropCount, DROP_TOTAL));
   $('dropCorrect').textContent = `Dejar en su zona (${dropCount >= DROP_TOTAL ? 1 : dropCount + 1}/${DROP_TOTAL})`;
 });
 on('released', () => engine.handleEvent({ type: 'zoneReleased', zoneId: 'z', boxId: 'b' }));
 on('idle', () => engine.handleEvent({ type: 'actionIdle', carrying: false }));
-on('complete', () => {
-  engine.handleEvent({ type: 'levelComplete' });
-  setTimeout(() => setScene('complete'), GAME_CONFIG.flow.completeDelaySec * 1000);
+on('complete', completeLevel);
+// Stacking: the higher "toc" on a box, pick-ups from a stack, stack-completion figures, and the final stack
+// completing the level in the same tick (as GameState emits it).
+on('dropOnBox1', () => engine.handleEvent(dropped(1, false, 0, 0, STACK_TOTAL)));
+on('dropOnBox2', () => engine.handleEvent(dropped(2, false, 0, 0, STACK_TOTAL)));
+on('pickupStack1', () => engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1 }));
+on('pickupStack2', () => engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 2 }));
+on('stack2', () => engine.handleEvent(dropped(1, true, 2, 1, STACK_TOTAL)));
+on('stack3', () => engine.handleEvent(dropped(2, true, 3, 2, STACK_TOTAL)));
+on('restored', () => {
+  engine.handleEvent({ type: 'boxPicked', boxId: 'w', fromZoneId: 'z', level: 2 });
+  engine.handleEvent({ type: 'zoneRestored', zoneId: 'z', boxId: 'w', recipeLength: 2, satisfiedCount: 1, total: STACK_TOTAL });
+});
+on('stackFinal', () => {
+  engine.handleEvent(dropped(2, true, 3, STACK_TOTAL, STACK_TOTAL));
+  completeLevel();
 });
 on('click', () => engine.uiClick());
 

@@ -32,6 +32,12 @@ export interface InputSample {
   confirmPressed: boolean;
   /** Edge-triggered: Escape (back to the title). */
   backPressed: boolean;
+  /** Edge-triggered level jump for "Modo prueba": [ / PageUp = -1, ] / PageDown = +1. */
+  levelStep: -1 | 0 | 1;
+  /** Level-jump key currently held (the latest pressed wins), same signs as `levelStep` (hold-to-jump). */
+  levelStepHeld: -1 | 0 | 1;
+  /** Edge-triggered: U (toggle "Modo prueba" on the title). */
+  testModePressed: boolean;
   /** True if any input happened this frame. */
   any: boolean;
 }
@@ -59,6 +65,10 @@ export interface InputOptions {
 
 const DIRECTION: Record<MoveBinding, number> = { up: 0, down: 1, left: 2, right: 3 };
 const never = () => false;
+
+function levelStepOf(binding: KeyBinding): -1 | 0 | 1 {
+  return binding === 'prevLevel' ? -1 : binding === 'nextLevel' ? 1 : 0;
+}
 
 /** Space / Enter: the keys a focused button activates on. */
 function isActivationKey(binding: KeyBinding): boolean {
@@ -88,6 +98,8 @@ export class Input {
   private readonly heldCount = [0, 0, 0, 0];
   /** Held restart keys (R by code or character). */
   private readonly restartKeys = new Set<string>();
+  /** Held level-jump keys: key id → step, in press order. */
+  private readonly levelStepKeys = new Map<string, -1 | 1>();
   /** Space / Enter presses the game took (or swallowed): their keyup must not click a button focused since. */
   private readonly claimedKeys = new Set<string>();
   private actionEdge = false;
@@ -97,6 +109,8 @@ export class Input {
   private timerEdge = false;
   private confirmEdge = false;
   private backEdge = false;
+  private levelStepEdge: -1 | 0 | 1 = 0;
+  private testModeEdge = false;
   /** A game key was pressed during gameplay since focus last moved: Enter goes back to the game too. */
   private drivenSinceFocus = false;
   private disposed = false;
@@ -115,6 +129,9 @@ export class Input {
     timerPressed: false,
     confirmPressed: false,
     backPressed: false,
+    levelStep: 0,
+    levelStepHeld: 0,
+    testModePressed: false,
     any: false,
   };
 
@@ -139,7 +156,9 @@ export class Input {
       s.keyX = s.keyY = s.stickX = s.stickY = 0;
       s.actionPressed = s.restartPressed = s.restartHeld = s.retryPressed = false;
       s.mutePressed = s.timerPressed = s.confirmPressed = s.backPressed = s.any = false;
+      s.testModePressed = false;
       s.rotateCamera = 0;
+      s.levelStep = s.levelStepHeld = 0;
       return s;
     }
 
@@ -168,6 +187,9 @@ export class Input {
     s.timerPressed = this.timerEdge;
     s.confirmPressed = this.confirmEdge || pad.confirmPressed;
     s.backPressed = this.backEdge;
+    s.levelStep = this.levelStepEdge;
+    s.levelStepHeld = this.heldLevelStep();
+    s.testModePressed = this.testModeEdge;
     s.any =
       s.keyX !== 0 ||
       s.keyY !== 0 ||
@@ -181,7 +203,10 @@ export class Input {
       s.mutePressed ||
       s.timerPressed ||
       s.confirmPressed ||
-      s.backPressed;
+      s.backPressed ||
+      s.levelStep !== 0 ||
+      s.levelStepHeld !== 0 ||
+      s.testModePressed;
     this.clearEdges();
     return s;
   }
@@ -203,9 +228,11 @@ export class Input {
     const focus = classifyFocusTarget(e.target);
     if (focus === 'text') return;
     if (!e.repeat) this.onGesture?.();
-    // Leave browser / OS shortcuts alone (Ctrl+R, Cmd+M, Alt+←…).
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const binding = resolveKey(e.code, e.key);
+    // Leave browser / OS shortcuts alone (Ctrl+R, Cmd+M, Alt+←…). AltGr (Ctrl+Alt on Windows) is what types [ / ]
+    // on Spanish, German and most ISO layouts, so the level-jump keys alone still accept it.
+    const altGrStep = binding !== null && levelStepOf(binding) !== 0 && e.getModifierState?.('AltGraph') === true;
+    if ((e.ctrlKey || e.metaKey || e.altKey) && !altGrStep) return;
     if (binding === null) return;
     const id = keyId(e.code, e.key);
     const gameplay = this.isGameplay();
@@ -234,6 +261,8 @@ export class Input {
       return;
     }
     if (binding === 'restart') this.restartKeys.add(id); // held state, re-synced by repeats too
+    const step = levelStepOf(binding);
+    if (step !== 0) this.levelStepKeys.set(id, step); // held state (hold-to-jump), re-synced by repeats too
     if (e.repeat) return;
     switch (binding) {
       case 'action':
@@ -260,6 +289,15 @@ export class Input {
       case 'back':
         this.backEdge = true;
         break;
+      case 'prevLevel':
+        this.levelStepEdge = -1;
+        break;
+      case 'nextLevel':
+        this.levelStepEdge = 1;
+        break;
+      case 'testMode':
+        this.testModeEdge = true;
+        break;
     }
   };
 
@@ -274,6 +312,7 @@ export class Input {
     // focus in between (e.g. the completion card appearing while Space is held).
     if (this.claimedKeys.delete(id)) e.preventDefault();
     this.restartKeys.delete(id);
+    this.levelStepKeys.delete(id);
     const dir = this.held.get(id);
     if (dir === undefined) return;
     this.held.delete(id);
@@ -298,6 +337,7 @@ export class Input {
     this.held.clear();
     this.heldCount.fill(0);
     this.restartKeys.clear();
+    this.levelStepKeys.clear();
     this.claimedKeys.clear();
     this.clearEdges();
   };
@@ -308,6 +348,14 @@ export class Input {
     this.heldCount[dir]++;
   }
 
+  /** Step of the most recently pressed level-jump key still held, 0 when none is. */
+  private heldLevelStep(): -1 | 0 | 1 {
+    if (this.levelStepKeys.size === 0) return 0; // the usual frame: no iterator
+    let step: -1 | 0 | 1 = 0;
+    for (const held of this.levelStepKeys.values()) step = held;
+    return step;
+  }
+
   private clearEdges(): void {
     this.actionEdge = false;
     this.rotateEdge = 0;
@@ -316,5 +364,7 @@ export class Input {
     this.timerEdge = false;
     this.confirmEdge = false;
     this.backEdge = false;
+    this.levelStepEdge = 0;
+    this.testModeEdge = false;
   }
 }
