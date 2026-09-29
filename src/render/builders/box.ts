@@ -8,18 +8,25 @@ import { PartList } from '../paint';
 import { extrudedShapeGeometry } from '../shapes';
 
 /**
+ * How the lid shows the box's symbol: the small tone-on-tone glyph of levels that never name a symbol, or the large,
+ * deeper print (`BoxPalette.ink`) of a level that sorts by symbol, where it is half of what the zones read.
+ */
+export type LidMark = 'glyph' | 'symbol';
+
+/**
  * Box meshes by kind. Geometry origin = center of the box bottom; +Z is the box's forward.
  * To add a kind: add it to BOX_KINDS (core/types) and register a builder here — the Record type
  * makes the compiler ask for it.
  */
-export type BoxGeometryBuilder = (palette: BoxPalette, glyph: GlyphShape, dims: BoxDims) => BufferGeometry;
+export type BoxGeometryBuilder = (palette: BoxPalette, glyph: GlyphShape, dims: BoxDims, mark: LidMark) => BufferGeometry;
 
 export const BOX_BUILDERS: Record<BoxKind, BoxGeometryBuilder> = {
   standard: buildStandardBox,
 };
 
-export function buildBoxGeometry(kind: BoxKind, palette: BoxPalette, glyph: GlyphShape, dims: BoxDims): BufferGeometry {
-  return BOX_BUILDERS[kind](palette, glyph, dims);
+/** `glyph` = the box's own symbol (BoxState.symbol). */
+export function buildBoxGeometry(kind: BoxKind, palette: BoxPalette, glyph: GlyphShape, dims: BoxDims, mark: LidMark = 'glyph'): BufferGeometry {
+  return BOX_BUILDERS[kind](palette, glyph, dims, mark);
 }
 
 const TAPE_WIDTH_RATIO = 0.19;
@@ -27,10 +34,12 @@ const TAPE_THICKNESS = 0.01;
 const TAPE_OFFSET = 0.002;
 const TAPE_DROP_RATIO = 0.3;
 const GLYPH_RATIO = 0.4;
+/** Lid symbol of a sorting level: 1.5× the classic glyph, still inside the flat part of the lid. */
+export const SYMBOL_RATIO = 0.6;
 const GLYPH_THICKNESS = 0.012;
 
-/** Beveled carton with a tape strip over the lid (wrapping down the front/back) and a glyph sticker. */
-function buildStandardBox(palette: BoxPalette, glyph: GlyphShape, dims: BoxDims): BufferGeometry {
+/** Beveled carton with a tape strip over the lid (wrapping down the front/back) and a glyph sticker or symbol print. */
+function buildStandardBox(palette: BoxPalette, glyph: GlyphShape, dims: BoxDims, mark: LidMark): BufferGeometry {
   const { size, height, bevel } = dims;
   const parts = new PartList();
   parts.add(new RoundedBoxGeometry(size, height, size, 1, bevel), palette.base, { y: height / 2 });
@@ -41,8 +50,9 @@ function buildStandardBox(palette: BoxPalette, glyph: GlyphShape, dims: BoxDims)
   const tape = extrudedProfile(profile, tapeWidth);
   parts.add(tape, palette.tape, { x: tapeWidth / 2, ry: -Math.PI / 2 });
 
-  const sticker = extrudedShapeGeometry(glyphShape(glyph, size * GLYPH_RATIO), GLYPH_THICKNESS, 0, 6);
-  parts.add(sticker, palette.glyph, { y: height + TAPE_OFFSET + TAPE_THICKNESS * 0.4, ry: GLYPH_YAW });
+  const print = mark === 'symbol';
+  const sticker = extrudedShapeGeometry(glyphShape(glyph, size * (print ? SYMBOL_RATIO : GLYPH_RATIO)), GLYPH_THICKNESS, 0, 6);
+  parts.add(sticker, print ? palette.ink : palette.glyph, { y: height + TAPE_OFFSET + TAPE_THICKNESS * 0.4, ry: GLYPH_YAW });
   return parts.build();
 }
 

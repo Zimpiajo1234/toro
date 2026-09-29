@@ -83,6 +83,15 @@ on('stackFinal', () => {
   engine.handleEvent(dropped(2, true, 3, STACK_TOTAL, STACK_TOTAL));
   completeLevel();
 });
+// Sorting: the chime's timbre says how the zone matched (Game passes it along with the event).
+const SORT_TOTAL = 4;
+on('matchColor', () => engine.handleEvent(dropped(0, true, 1, 1, SORT_TOTAL), 'color'));
+on('matchSymbol', () => engine.handleEvent(dropped(0, true, 1, 2, SORT_TOTAL), 'symbol'));
+on('matchExact', () => engine.handleEvent(dropped(0, true, 1, 3, SORT_TOTAL), 'exact'));
+on('matchFinal', () => {
+  engine.handleEvent(dropped(0, true, 1, SORT_TOTAL, SORT_TOTAL), 'symbol');
+  completeLevel();
+});
 on('click', () => engine.uiClick());
 
 // Motor: sliders, or a simulated drive (accelerate, cruise, brake, lift forks).
@@ -147,7 +156,10 @@ async function analyse(seconds = 40): Promise<void> {
     [14, (t) => sfx.drop(t + DROP_LAND_SEC, chimeNote(composer.keyPc, 1, 3, chord()))],
     [17, (t) => sfx.pickup(t)],
     [19, (t) => sfx.tick(t, 'idle')],
+    // Sorting timbres at the same climb: a symbol match (wood), then an exact one (bell + wood).
+    [20, (t) => sfx.drop(t + DROP_LAND_SEC, chimeNote(composer.keyPc, 1, 3, chord()), false, 0, null, 'symbol')],
     [21, (t) => sfx.drop(t + DROP_LAND_SEC, null)],
+    [22, (t) => sfx.drop(t + DROP_LAND_SEC, chimeNote(composer.keyPc, 1, 3, chord()), false, 0, null, 'exact')],
     [23, (t) => sfx.pickup(t)],
     [24, (t) => sfx.tick(t, 'release')],
     [26, (t) => sfx.drop(t + DROP_LAND_SEC, chimeNote(composer.keyPc, 2, 3, chord()))],

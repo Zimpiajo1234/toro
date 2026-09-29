@@ -8,9 +8,9 @@ import { boxDims, ZONE } from '../dims';
 import { GLYPH_SYMMETRY, glyphShape } from '../glyphs';
 import { PartList } from '../paint';
 import { flatShapeGeometry } from '../shapes';
-import { BOX_BUILDERS, buildBoxGeometry } from './box';
+import { BOX_BUILDERS, SYMBOL_RATIO, buildBoxGeometry } from './box';
 import { FORKLIFT_LAYOUT, buildForkliftGeometry } from './forklift';
-import { RECIPE_MARKER, buildHaloGeometry, buildRecipeGeometry, buildZoneGeometry, recipeStepY } from './zone';
+import { ENGRAVE, RECIPE_MARKER, buildHaloGeometry, buildRecipeGeometry, buildZoneGeometry, recipeStepY } from './zone';
 
 function bounds(geo: BufferGeometry): Box3 {
   geo.computeBoundingBox();
@@ -50,6 +50,31 @@ describe('box registry', () => {
         expect(b.max.y).toBeLessThan(dims.height + 0.04);
       }
     }
+  });
+
+  it('prints the symbol large and deeper on the lid where symbols sort, still on the flat part of the lid', () => {
+    const dims = boxDims(GAME_CONFIG);
+    const flat = dims.size / 2 - dims.bevel;
+    const lidSpan = (geo: BufferGeometry, hex: string) => {
+      const c = new Color(hex);
+      const pos = geo.getAttribute('position');
+      const col = geo.getAttribute('color');
+      let span = 0;
+      for (let i = 0; i < pos.count; i++)
+        if (Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4)
+          span = Math.max(span, Math.abs(pos.getX(i)), Math.abs(pos.getZ(i)));
+      return span;
+    };
+    for (const color of COLOR_IDS) {
+      const palette = defaultTheme.boxes[color];
+      for (const kind of ['circle', 'triangle', 'square', 'diamond', 'cross'] as GlyphShape[]) {
+        const glyph = lidSpan(buildBoxGeometry('standard', palette, kind, dims, 'glyph'), palette.glyph);
+        const symbol = lidSpan(buildBoxGeometry('standard', palette, kind, dims, 'symbol'), palette.ink);
+        expect(symbol, `${color} ${kind}`).toBeGreaterThan(glyph * 1.4);
+        expect(symbol).toBeLessThan(flat);
+      }
+    }
+    expect(SYMBOL_RATIO).toBeGreaterThan(0.5);
   });
 });
 
@@ -94,13 +119,52 @@ describe('glyphs', () => {
 describe('zone geometry', () => {
   it('stays inside its cell and only slightly raised', () => {
     for (const color of COLOR_IDS) {
-      const b = bounds(buildZoneGeometry(defaultTheme.zones[color], defaultTheme.glyphs[color]));
+      const b = bounds(buildZoneGeometry(defaultTheme.zones[color], { shape: defaultTheme.glyphs[color], style: 'glyph' }));
       expect(b.max.x).toBeLessThanOrEqual(0.5);
       expect(b.min.z).toBeGreaterThanOrEqual(-0.5);
       expect(b.max.y).toBeLessThan(ZONE.padHeight + 0.01);
     }
     const halo = buildHaloGeometry();
     expect(halo.getAttribute('color').itemSize).toBe(4);
+  });
+
+  it('engraves a large symbol into the pad: a real recess, clear of the tape ring, hidden by a box on the pad', () => {
+    const kinds: GlyphShape[] = ['circle', 'triangle', 'square', 'diamond', 'cross'];
+    const plain = buildZoneGeometry(defaultTheme.neutralZone, null);
+    for (const kind of kinds) {
+      for (const palette of [defaultTheme.neutralZone, defaultTheme.zones.blue]) {
+        const geo = buildZoneGeometry(palette, { shape: kind, style: 'engraved' });
+        const b = bounds(geo);
+        expect(b.max.x).toBeLessThanOrEqual(0.5);
+        expect(b.max.y).toBeLessThan(ZONE.padHeight + 0.01);
+        // The engraving's floor: painted `engrave`, below the pad top, above the floor, inside the tape ring and the
+        // footprint of a box resting there (half 0.39).
+        const pos = geo.getAttribute('position');
+        const col = geo.getAttribute('color');
+        const engrave = new Color(palette.engrave);
+        let floorVerts = 0;
+        for (let i = 0; i < pos.count; i++) {
+          const isEngrave = Math.abs(col.getX(i) - engrave.r) < 1e-4 && Math.abs(col.getY(i) - engrave.g) < 1e-4 && Math.abs(col.getZ(i) - engrave.b) < 1e-4;
+          if (!isEngrave) continue;
+          floorVerts++;
+          expect(pos.getY(i)).toBeCloseTo(ENGRAVE.floorY, 5);
+          expect(Math.max(Math.abs(pos.getX(i)), Math.abs(pos.getZ(i)))).toBeLessThan(0.36);
+        }
+        expect(floorVerts).toBeGreaterThan(2);
+        expect(ENGRAVE.floorY).toBeGreaterThan(0.002);
+        expect(ENGRAVE.floorY).toBeLessThan(ZONE.padHeight);
+        // The pad top has a hole: more geometry than the plain pad (hole walls + floor).
+        expect(pos.count).toBeGreaterThan(plain.getAttribute('position').count);
+      }
+    }
+    // Bigger than the classic tone-on-tone glyph (0.38), so it reads from the default camera.
+    expect(ENGRAVE.size).toBeGreaterThanOrEqual(0.55);
+  });
+
+  it('a pad without a mark is just the pad and its tape ring', () => {
+    const plain = buildZoneGeometry(defaultTheme.zones.mint, null);
+    const glyph = buildZoneGeometry(defaultTheme.zones.mint, { shape: 'triangle', style: 'glyph' });
+    expect(plain.getAttribute('position').count).toBeLessThan(glyph.getAttribute('position').count);
   });
 
   it('draws a recipe as one colored step per box, bottom → top, clear of the box, neighbours and a docked forklift', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { COLOR_IDS, forwardOf, type ColorId, type LevelData } from '../../core/types';
+import { COLOR_IDS, SYMBOL_IDS, forwardOf, type ColorId, type LevelData, type SymbolId, type ZoneCriteria } from '../../core/types';
 import { degToRad } from '../../core/math';
+import { assignBoxes, criteriaOf, matchKind, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
 import { validateLevel } from '../validateLevel';
 import { LEVELS } from './index';
 
@@ -20,27 +21,27 @@ class LevelGrid {
   readonly cellCount: number;
   /** 1 where a shelf or a plant stands. */
   readonly solid: Uint8Array;
-  /** Zone color per cell, or null. */
-  readonly zoneColor: (ColorId | null)[];
-  /** Zone recipe per cell as color codes bottom → top (see colorCode), or ''. */
-  readonly recipe: string[];
+  /**
+   * Per zone cell, what each box of its stack must meet, bottom → top: the zone's own criteria (color and / or
+   * symbol) for the bottom box, then the colors of its recipe. null off zones.
+   */
+  readonly steps: (ZoneCriteria[] | null)[];
   readonly stackLimit: number;
+  /** The level sorts by symbol (docs/SORTING.md): the search also looks for a complete sorting (see solve). */
+  readonly sorting: boolean;
 
   constructor(level: LevelData) {
     this.width = level.size.width;
     this.depth = level.size.depth;
     this.cellCount = this.width * this.depth;
     this.solid = new Uint8Array(this.cellCount);
-    this.zoneColor = new Array<ColorId | null>(this.cellCount).fill(null);
-    this.recipe = new Array<string>(this.cellCount).fill('');
+    this.steps = new Array<ZoneCriteria[] | null>(this.cellCount).fill(null);
     this.stackLimit = level.stackLimit ?? 1;
+    this.sorting = usesSymbols(level);
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
     for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
-    for (const zone of level.zones) {
-      this.zoneColor[this.index(zone.x, zone.z)] = zone.color;
-      this.recipe[this.index(zone.x, zone.z)] = (zone.recipe ?? [zone.color]).map(colorCode).join('');
-    }
+    for (const zone of level.zones) this.steps[this.index(zone.x, zone.z)] = zoneSteps(zone);
   }
 
   index(x: number, z: number): number {
@@ -55,17 +56,33 @@ class LevelGrid {
   }
 }
 
-/** One character per color (index in COLOR_IDS): a stack is a string of these, bottom → top. */
-function colorCode(c: ColorId): string {
-  return String(COLOR_IDS.indexOf(c));
+/** A zone's stack steps: its own criteria for the bottom box, then one color per box of its recipe above it. */
+function zoneSteps(zone: LevelData['zones'][number]): ZoneCriteria[] {
+  return [criteriaOf(zone), ...(zone.recipe ?? []).slice(1).map((color) => ({ color }))];
 }
 
-/** Per cell: the stack resting there as color codes bottom → top ('' = empty). */
+/**
+ * One character per kind of box (color × symbol): a stack is a string of these, bottom → top. Boxes of the same
+ * color and symbol are interchangeable (in levels before 19 that is: of the same color).
+ */
+function boxCode(box: Sortable): string {
+  return String.fromCharCode(65 + COLOR_IDS.indexOf(box.color) * SYMBOL_IDS.length + SYMBOL_IDS.indexOf(box.symbol));
+}
+
+const BOX_KINDS_BY_CODE: Sortable[] = COLOR_IDS.flatMap((color) => SYMBOL_IDS.map((symbol) => ({ color, symbol })));
+
+function boxOfCode(code: string): Sortable {
+  return BOX_KINDS_BY_CODE[code.charCodeAt(0) - 65];
+}
+
+const code = (color: ColorId, symbol: SymbolId) => boxCode({ color, symbol });
+
+/** Per cell: the stack resting there as box codes bottom → top ('' = empty). */
 type Stacks = string[];
 
 function stacksOf(grid: LevelGrid, level: LevelData): Stacks {
   const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
-  for (const b of level.boxes) stacks[grid.index(b.x, b.z)] += colorCode(b.color);
+  for (const b of level.boxes) stacks[grid.index(b.x, b.z)] += boxCode(sortableOf(b));
   return stacks;
 }
 
@@ -76,13 +93,38 @@ function occupancyOfStacks(grid: LevelGrid, stacks: Stacks): Int16Array {
   return occupancy;
 }
 
-/** Boxes on a zone that already match its recipe from the floor up. */
+/** Boxes on a zone that already fit it from the floor up (the bottom one accepted, the rest its recipe's colors). */
 function correctPrefix(grid: LevelGrid, stacks: Stacks, cell: number): number {
-  const recipe = grid.recipe[cell];
+  const steps = grid.steps[cell];
+  if (!steps) return 0;
   const stack = stacks[cell];
   let n = 0;
-  while (n < stack.length && n < recipe.length && stack[n] === recipe[n]) n++;
+  while (n < stack.length && n < steps.length && meets(steps[n], boxOfCode(stack[n]))) n++;
   return n;
+}
+
+/** The box `box` (a code) would extend the zone on `cell` right now (it fits the next step of a correct prefix). */
+function extendsZone(grid: LevelGrid, stacks: Stacks, cell: number, box: string): boolean {
+  const steps = grid.steps[cell];
+  const h = stacks[cell].length;
+  return steps !== null && correctPrefix(grid, stacks, cell) === h && h < steps.length && meets(steps[h], boxOfCode(box));
+}
+
+/**
+ * Sorting levels (one box per zone): the boxes not yet accepted by the zone they rest on can still all be sorted
+ * into the zones not yet done, without moving an accepted box again. False = the layout is a dead end until some
+ * accepted box moves (e.g. level 23's trap).
+ */
+function sortable(grid: LevelGrid, stacks: Stacks): boolean {
+  const loose: Sortable[] = [];
+  const open: ZoneCriteria[] = [];
+  for (let c = 0; c < grid.cellCount; c++) {
+    const steps = grid.steps[c];
+    const placed = correctPrefix(grid, stacks, c);
+    if (steps && placed < steps.length) open.push(steps[0]);
+    for (let i = placed; i < stacks[c].length; i++) loose.push(boxOfCode(stacks[c][i]));
+  }
+  return assignBoxes(loose, open).every((z) => z >= 0);
 }
 
 /** A stack (not empty) that still has room for one more box. */
@@ -197,21 +239,24 @@ interface SearchNode {
 }
 
 /**
- * State = the colors stacked on every cell (same-colored boxes are interchangeable) + the forklift's reachable
- * region. A move lifts the top box of a stack and drops it on the floor or on top of a stack with room.
+ * State = the boxes (color × symbol) stacked on every cell (identical boxes are interchangeable) + the forklift's
+ * reachable region. A move lifts the top box of a stack and drops it on the floor or on top of a stack with room.
+ * Zones accept by their criteria (core/sorting), so an ambiguous box may go to any zone that accepts it; in a
+ * sorting level a layout that leaves the rest without a complete sorting (a box stranded) ranks one step worse,
+ * which steers the greedy search away from traps without forbidding them.
  */
 function solve(level: LevelData, options: SolveOptions): SolveResult {
   const grid = new LevelGrid(level);
   const total = level.boxes.length;
   const misplaced = (stacks: Stacks) => {
     let placed = 0;
-    for (let c = 0; c < grid.cellCount; c++) if (grid.recipe[c]) placed += correctPrefix(grid, stacks, c);
-    return total - placed;
+    for (let c = 0; c < grid.cellCount; c++) if (grid.steps[c]) placed += correctPrefix(grid, stacks, c);
+    return total - placed + (grid.sorting && placed < total && !sortable(grid, stacks) ? 1 : 0);
   };
   const keyOf = (stacks: Stacks, region: Uint8Array) => `${stacks.join('/')}@${region.indexOf(1)}`;
 
   // Buckets by number of misplaced boxes; LIFO inside a bucket (greedy, depth-first flavoured).
-  const buckets: SearchNode[][] = Array.from({ length: total + 1 }, () => []);
+  const buckets: SearchNode[][] = Array.from({ length: total + 2 }, () => []);
   const seen = new Set<string>();
   const push = (stacks: Stacks, forklift: number, moves: number, region: Uint8Array) => {
     const key = keyOf(stacks, region);
@@ -244,8 +289,7 @@ function solve(level: LevelData, options: SolveOptions): SolveResult {
       occupancy[from] = lifted[from].length > 0 ? 0 : -1;
       for (const [drop, forkliftCells] of carryDrops(grid, occupancy, lifted, region, from)) {
         if (drop === from || drop < 0 || lifted[drop].length >= grid.stackLimit) continue;
-        const h = lifted[drop].length;
-        if (!options.allowParking && !(correctPrefix(grid, lifted, drop) === h && grid.recipe[drop][h] === box)) continue;
+        if (!options.allowParking && !extendsZone(grid, lifted, drop, box)) continue;
         const next = lifted.slice();
         next[drop] += box;
         const before = occupancy[drop];
@@ -271,8 +315,9 @@ function solve(level: LevelData, options: SolveOptions): SolveResult {
 /* ------------------------------------------------------------------ */
 
 /**
- * Boxes that start on a zone above the part of its stack that already matches the recipe from the floor up
- * (classic levels: a box on a zone of another color). They must move before that zone can be finished.
+ * Boxes that start on a zone above the part of its stack that already fits it from the floor up (classic levels: a
+ * box on a zone of another color; sorting levels: a box the zone does not accept). They must move before that zone
+ * can be finished.
  */
 function misplacedBoxes(level: LevelData) {
   const grid = new LevelGrid(level);
@@ -282,7 +327,7 @@ function misplacedBoxes(level: LevelData) {
     const cell = grid.index(b.x, b.z);
     // List order is bottom → top, so the count so far is this box's level in its stack.
     const index = seen[cell]++;
-    return grid.recipe[cell] !== '' && index >= correctPrefix(grid, stacks, cell);
+    return grid.steps[cell] !== null && index >= correctPrefix(grid, stacks, cell);
   });
 }
 
@@ -315,7 +360,7 @@ function coarseProblems(level: LevelData): string[] {
     // Parking spot: reachable open floor (not a zone) with at least 3 free sides.
     let parking = 0;
     for (let cell = 0; cell < grid.cellCount; cell++) {
-      if (region[cell] !== 1 || grid.zoneColor[cell] !== null) continue;
+      if (region[cell] !== 1 || grid.steps[cell] !== null) continue;
       const freeSides = [0, 1, 2, 3].filter((d) => isFree(grid, occupancy, grid.step(cell, d))).length;
       if (freeSides >= 3) parking++;
     }
@@ -336,7 +381,7 @@ function hiddenItems(level: LevelData): string[] {
   const blocks = (x: number, z: number, far: boolean) => {
     if (x >= grid.width || z >= grid.depth) return false;
     const cell = grid.index(x, z);
-    const tallest = Math.max(stacks[cell].length, grid.recipe[cell].length);
+    const tallest = Math.max(stacks[cell].length, grid.steps[cell]?.length ?? 0);
     return far ? tallest >= 3 : grid.solid[cell] === 1 || tallest >= 2;
   };
   // Offsets never include the item's own cell, so boxes of a stack never hide each other or their zone.
@@ -358,7 +403,9 @@ function hiddenItems(level: LevelData): string[] {
 }
 
 const colorsOf = (level: LevelData) => new Set(level.boxes.map((b) => b.color));
-const CLASSIC = LEVELS.filter((l) => (l.stackLimit ?? 1) === 1);
+/** Chapters: classic (1–12), stacking (13–18), sorting by color + symbol (19–24). */
+const SORTING = LEVELS.filter((l) => usesSymbols(l));
+const CLASSIC = LEVELS.filter((l) => (l.stackLimit ?? 1) === 1 && !usesSymbols(l));
 const STACKING = LEVELS.filter((l) => (l.stackLimit ?? 1) > 1);
 
 /** Tiny synthetic level: a corridor with the zone behind the forklift, so the box must be carried back. */
@@ -411,8 +458,9 @@ describe('progression', () => {
     expect(along(zone)).toBeGreaterThan(along(box));
   });
 
-  // Two chapters: classic levels (no stacking), then the stacking chapter, which starts small again.
-  const chapters = [CLASSIC, STACKING] as const;
+  // Three chapters: classic levels (no stacking), then stacking, then sorting by color + symbol; each starts small
+  // again.
+  const chapters = [CLASSIC, STACKING, SORTING] as const;
 
   it('box count never decreases within a chapter and stays within 10', () => {
     for (const chapter of chapters) {
@@ -539,6 +587,167 @@ describe('stacking chapter (docs/STACKING.md)', () => {
     expect(blockedZones(level).map((z) => z.id)).toEqual(['z2']);
     // A tall stack hides what stands just behind it from the camera, like a shelf does.
     expect(hiddenItems({ ...level, forklift: { x: 0, z: 1, heading: 180 } })).toEqual(['forklift@0,1']);
+  });
+});
+
+describe('sorting chapter (docs/SORTING.md)', () => {
+  type Box = LevelData['boxes'][number];
+  type Zone = LevelData['zones'][number];
+  const fits = (zone: Zone, box: Box) => meets(criteriaOf(zone), sortableOf(box));
+  const zonesFor = (level: LevelData, box: Box) => level.zones.filter((z) => fits(z, box));
+  const ambiguous = (level: LevelData) => level.boxes.filter((b) => zonesFor(level, b).length > 1);
+  const kinds = (level: LevelData) => new Set(level.zones.map((z) => matchKind(criteriaOf(z))));
+  /** Every complete sorting (box index → zone index, one box per zone), by backtracking. */
+  const sortings = (level: LevelData): number[][] => {
+    const out: number[][] = [];
+    const used = new Set<number>();
+    const pick: number[] = [];
+    const place = (b: number) => {
+      if (b === level.boxes.length) return void out.push([...pick]);
+      level.zones.forEach((zone, z) => {
+        if (used.has(z) || !fits(zone, level.boxes[b])) return;
+        used.add(z);
+        pick.push(z);
+        place(b + 1);
+        pick.pop();
+        used.delete(z);
+      });
+    };
+    place(0);
+    return out;
+  };
+  /** A box put in one of its zones that leaves the other boxes without a complete sorting (a trap, fixable by moving it). */
+  const traps = (level: LevelData) =>
+    level.boxes.flatMap((box, b) =>
+      level.zones
+        .filter((zone) => fits(zone, box))
+        .filter((zone) => {
+          const rest = level.boxes.filter((_, i) => i !== b).map(sortableOf);
+          const open = level.zones.filter((z) => z !== zone).map(criteriaOf);
+          return assignBoxes(rest, open).includes(-1);
+        })
+        .map((zone) => `${box.id}→${zone.id}`),
+    );
+  const box = (level: LevelData, color: ColorId, symbol: SymbolId) => {
+    const found = level.boxes.find((b) => b.color === color && sortableOf(b).symbol === symbol);
+    expect(found, `${color} ${symbol} box`).toBeDefined();
+    return found!;
+  };
+
+  it('follows the stacking chapter: 6 levels that sort by color + symbol, none of them stacking', () => {
+    expect(SORTING).toHaveLength(6);
+    expect(LEVELS.indexOf(SORTING[0])).toBe(CLASSIC.length + STACKING.length);
+    for (const l of SORTING) {
+      expect(l.stackLimit).toBe(1);
+      expect(l.boxes).toHaveLength(l.zones.length);
+      expect(sortings(l).length, l.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('19 sorts by symbol alone: neutral pads, and two boxes of one color go to different zones', () => {
+    const [first] = SORTING;
+    expect(kinds(first)).toEqual(new Set(['symbol']));
+    expect(first.zones.every((z) => z.color === undefined)).toBe(true);
+    const sameColor = first.boxes.filter((b, i) => first.boxes.some((o, j) => j !== i && o.color === b.color));
+    expect(new Set(sameColor.map((b) => zonesFor(first, b)[0].id)).size).toBeGreaterThan(1);
+    for (const b of first.boxes) expect(zonesFor(first, b)).toHaveLength(1);
+  });
+
+  it('20 mixes color zones and symbol zones, and every box still fits exactly one zone', () => {
+    const level = SORTING[1];
+    expect(kinds(level)).toEqual(new Set(['color', 'symbol']));
+    for (const b of level.boxes) expect(zonesFor(level, b), b.id).toHaveLength(1);
+  });
+
+  it('21 brings the first box that fits two zones, and where it goes matters a little', () => {
+    for (const l of SORTING.slice(0, 2)) expect(ambiguous(l), l.id).toEqual([]);
+    const level = SORTING[2];
+    expect(ambiguous(level)).toHaveLength(1);
+    expect(traps(level).length).toBeGreaterThan(0);
+    expect(sortings(level)).toHaveLength(1);
+  });
+
+  it('22 asks for exact boxes: color and symbol, each shared with another zone', () => {
+    const level = SORTING[3];
+    expect(kinds(level)).toEqual(new Set(['exact']));
+    for (const b of level.boxes) {
+      expect(zonesFor(level, b), b.id).toHaveLength(1);
+      // Near misses: another pad has its color, another engraving its symbol.
+      expect(level.zones.some((z) => z.color === b.color && !fits(z, b))).toBe(true);
+      expect(level.zones.some((z) => z.symbol === sortableOf(b).symbol && !fits(z, b))).toBe(true);
+    }
+  });
+
+  it('23 is the sample: two "any ▲", one "any blue", one exact "blue ■"; one complete sorting and the classic trap', () => {
+    const level = SORTING[4];
+    const anyTriangle = level.zones.filter((z) => z.symbol === 'triangle' && z.color === undefined);
+    const anyBlue = level.zones.filter((z) => z.color === 'blue' && z.symbol === undefined);
+    const exact = level.zones.filter((z) => z.color === 'blue' && z.symbol === 'square');
+    expect([anyTriangle.length, anyBlue.length, exact.length, level.zones.length]).toEqual([2, 1, 1, 4]);
+    const blueTriangle = box(level, 'blue', 'triangle');
+    const blueSquare = box(level, 'blue', 'square');
+    const mintTriangle = box(level, 'mint', 'triangle');
+    const blueCircle = box(level, 'blue', 'circle');
+    expect(level.boxes).toHaveLength(4);
+    // The one complete sorting (up to the two identical ▲ zones).
+    const index = (b: Box) => level.boxes.indexOf(b);
+    for (const s of sortings(level)) {
+      expect(level.zones[s[index(blueSquare)]]).toBe(exact[0]);
+      expect(level.zones[s[index(blueCircle)]]).toBe(anyBlue[0]);
+      expect(anyTriangle).toContain(level.zones[s[index(blueTriangle)]]);
+      expect(anyTriangle).toContain(level.zones[s[index(mintTriangle)]]);
+    }
+    // The gentle trap: blue ▲ (or blue ■) in "any blue" leaves blue ● without a zone.
+    expect(traps(level)).toContain(`${blueTriangle.id}→${anyBlue[0].id}`);
+    expect(traps(level)).toContain(`${blueSquare.id}→${anyBlue[0].id}`);
+    // Easy to see: the forklift starts facing blue ▲, and "any blue" lies straight on beyond it.
+    const f = forwardOf(degToRad(level.forklift.heading));
+    const ahead = (p: { x: number; z: number }, d: number) =>
+      p.x === level.forklift.x + Math.round(f.x) * d && p.z === level.forklift.z + Math.round(f.z) * d;
+    expect([1, 2, 3].some((d) => ahead(blueTriangle, d))).toBe(true);
+    expect([4, 5, 6, 7].some((d) => ahead(anyBlue[0], d))).toBe(true);
+  });
+
+  it('24 closes the chapter: every kind of zone, several ambiguous boxes, one complete sorting', () => {
+    const last = SORTING[5];
+    expect(kinds(last)).toEqual(new Set(['color', 'symbol', 'exact']));
+    expect(ambiguous(last).length).toBeGreaterThanOrEqual(2);
+    expect(sortings(last)).toHaveLength(1);
+    expect(last.shelves.length).toBeGreaterThan(0);
+  });
+
+  it.each(SORTING.map((l) => [l.id, l] as const))('%s: the start heading faces a box straight ahead', (_, level) => {
+    const f = forwardOf(degToRad(level.forklift.heading));
+    const ahead = [1, 2, 3, 4].map((d) => ({ x: level.forklift.x + Math.round(f.x) * d, z: level.forklift.z + Math.round(f.z) * d }));
+    expect(level.boxes.some((b) => ahead.some((c) => c.x === b.x && c.z === b.z))).toBe(true);
+  });
+
+  it.each(SORTING.map((l) => [l.id, l] as const))('%s flows away from the camera', (_, level) => {
+    // The camera sits toward +x / +z: driving away keeps A/D reading as screen left / right. Every zone lies further
+    // from the camera than the forklift starts, so each delivery heads up the screen.
+    const f = forwardOf(degToRad(level.forklift.heading));
+    expect(f.x + f.z).toBeLessThan(0);
+    for (const z of level.zones) expect(z.x + z.z, z.id).toBeLessThan(level.forklift.x + level.forklift.z);
+  });
+
+  it('solver model: a trap ranks one step worse until the ambiguous box moves on', () => {
+    const level = SORTING[4];
+    const grid = new LevelGrid(level);
+    const at = (z: Zone) => grid.index(z.x, z.z);
+    const [tri1, tri2] = level.zones.filter((z) => z.symbol === 'triangle');
+    const anyBlue = level.zones.find((z) => z.color === 'blue' && z.symbol === undefined)!;
+    const exact = level.zones.find((z) => z.symbol === 'square')!;
+    const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
+    stacks[at(anyBlue)] = code('blue', 'triangle');
+    stacks[at(exact)] = code('blue', 'square');
+    stacks[at(tri1)] = code('mint', 'triangle');
+    const blueCircle = box(level, 'blue', 'circle');
+    stacks[grid.index(blueCircle.x, blueCircle.z)] = code('blue', 'circle');
+    expect(sortable(grid, stacks)).toBe(false);
+    // Blue ▲ moved on to the free ▲ zone: blue ● has its zone again.
+    stacks[at(anyBlue)] = '';
+    stacks[at(tri2)] = code('blue', 'triangle');
+    expect(sortable(grid, stacks)).toBe(true);
   });
 });
 

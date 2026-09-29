@@ -1,6 +1,7 @@
-import type { ColorId } from '../core/types';
+import type { ColorId, SymbolId } from '../core/types';
 
-export type GlyphShape = 'circle' | 'triangle' | 'square' | 'diamond' | 'cross';
+/** Glyph shapes drawn on lids and pads: the gameplay symbols themselves (core/types SYMBOL_IDS). */
+export type GlyphShape = SymbolId;
 
 export interface BoxPalette {
   /** Main cardboard color. */
@@ -9,6 +10,11 @@ export interface BoxPalette {
   tape: string;
   /** Tone-on-tone glyph on the lid (accessibility, never text). */
   glyph: string;
+  /**
+   * The box's symbol printed large on the lid in levels that sort by symbol: a deeper tone of base (never black),
+   * readable from the default camera.
+   */
+  ink: string;
 }
 
 export interface ZonePalette {
@@ -20,6 +26,8 @@ export interface ZonePalette {
   glow: string;
   /** Glyph painted in the center of the pad. */
   glyph: string;
+  /** Floor of the symbol engraved in the pad of a zone that asks for a symbol: deeper than `glyph`, soft, never black. */
+  engrave: string;
 }
 
 /** A visual theme. Add new themes as new files and add them to the `THEMES` map in themes/index.ts. */
@@ -45,7 +53,13 @@ export interface Theme {
   };
   boxes: Record<ColorId, BoxPalette>;
   zones: Record<ColorId, ZonePalette>;
-  glyphs: Record<ColorId, GlyphShape>;
+  /** Pad of a zone that asks for no color (a symbol only): neutral cream / light gray, never a functional hue. */
+  neutralZone: ZonePalette;
+  /**
+   * Color → glyph. Symbols are gameplay data now, so this must stay the canonical map (core/types DEFAULT_SYMBOL,
+   * checked by src/integration/themes.test.ts); the render draws each box's own symbol.
+   */
+  glyphs: Readonly<Record<ColorId, GlyphShape>>;
   lighting: {
     hemiSky: string;
     hemiGround: string;

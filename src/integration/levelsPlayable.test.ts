@@ -5,13 +5,26 @@
  * this proves the real controls agree with it.
  *
  * Planner: greedy search over "move one box" steps (same conservative carrying model as levels.test.ts:
- * forward only, the box in the cell ahead, 90° turns need two cells of clearance; state = the color stack on
- * every cell, a move lifts a stack's top box and drops it on the floor or on a stack with room), replanned from
- * the live state after every drop. Driver: closed-loop steering toward cell centers with world-space input.
+ * forward only, the box in the cell ahead, 90° turns need two cells of clearance; state = the stack of boxes
+ * (color × symbol) on every cell, a move lifts a stack's top box and drops it on the floor or on a stack with room;
+ * zones accept by their criteria, so an ambiguous box may go to any zone that accepts it, and a layout that leaves
+ * the rest without a complete sorting ranks one step worse), replanned from the live state after every drop.
+ * Driver: closed-loop steering toward cell centers with world-space input.
  */
 import { describe, expect, it } from 'vitest';
 import { angleDelta } from '../core/math';
-import { COLOR_IDS, cellToWorld, worldToCell, type ColorId, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
+import { assignBoxes, criteriaOf, meets, usesSymbols, type Sortable } from '../core/sorting';
+import {
+  COLOR_IDS,
+  SYMBOL_IDS,
+  cellToWorld,
+  worldToCell,
+  type GameEvent,
+  type GameSnapshot,
+  type LevelData,
+  type Vec2,
+  type ZoneCriteria,
+} from '../core/types';
 import { LEVELS } from '../data/levels';
 import { GameState } from '../logic/GameState';
 
@@ -25,25 +38,24 @@ class Grid {
   readonly depth: number;
   readonly cellCount: number;
   readonly solid: Uint8Array;
-  readonly zoneColor: (ColorId | null)[];
-  /** Zone recipe per cell as color codes bottom → top, or ''. */
-  readonly recipe: string[];
+  /** Per zone cell: what each box of its stack must meet, bottom → top (its criteria, then its recipe's colors). */
+  readonly steps: (ZoneCriteria[] | null)[];
   readonly stackLimit: number;
+  /** The level sorts by symbol: plans also keep a complete sorting in reach (see misplacedCount). */
+  readonly sorting: boolean;
   constructor(level: LevelData) {
     this.width = level.size.width;
     this.depth = level.size.depth;
     this.cellCount = this.width * this.depth;
     this.solid = new Uint8Array(this.cellCount);
-    this.zoneColor = new Array<ColorId | null>(this.cellCount).fill(null);
-    this.recipe = new Array<string>(this.cellCount).fill('');
+    this.steps = new Array<ZoneCriteria[] | null>(this.cellCount).fill(null);
     this.stackLimit = level.stackLimit ?? 1;
+    this.sorting = usesSymbols(level);
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
     for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
-    for (const zone of level.zones) {
-      this.zoneColor[this.index(zone.x, zone.z)] = zone.color;
-      this.recipe[this.index(zone.x, zone.z)] = (zone.recipe ?? [zone.color]).map(colorCode).join('');
-    }
+    for (const zone of level.zones)
+      this.steps[this.index(zone.x, zone.z)] = [criteriaOf(zone), ...(zone.recipe ?? []).slice(1).map((color) => ({ color }))];
   }
   index(x: number, z: number) {
     return z * this.width + x;
@@ -58,19 +70,21 @@ class Grid {
   }
 }
 
-/** One character per color (index in COLOR_IDS): a stack is a string of these, bottom → top. */
-function colorCode(c: ColorId): string {
-  return String(COLOR_IDS.indexOf(c));
+/** One character per kind of box (color × symbol): a stack is a string of these, bottom → top. */
+function boxCode(box: Sortable): string {
+  return String.fromCharCode(65 + COLOR_IDS.indexOf(box.color) * SYMBOL_IDS.length + SYMBOL_IDS.indexOf(box.symbol));
 }
+const KINDS: Sortable[] = COLOR_IDS.flatMap((color) => SYMBOL_IDS.map((symbol) => ({ color, symbol })));
+const boxOfCode = (code: string): Sortable => KINDS[code.charCodeAt(0) - 65];
 
-/** Per cell: the stack resting there as color codes bottom → top ('' = empty). */
+/** Per cell: the stack resting there as box codes bottom → top ('' = empty). */
 type Stacks = string[];
 
 /** Live stacks from the snapshot (resting boxes by cell, ordered by level). */
 function liveStacks(grid: Grid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
-  for (const b of resting) stacks[grid.index(b.cell!.x, b.cell!.z)] += colorCode(b.color);
+  for (const b of resting) stacks[grid.index(b.cell!.x, b.cell!.z)] += boxCode(b);
   return stacks;
 }
 
@@ -79,12 +93,26 @@ function occupancyOf(grid: Grid, stacks: Stacks): Int16Array {
   for (let c = 0; c < grid.cellCount; c++) if (stacks[c].length > 0) occ[c] = 0;
   return occ;
 }
+/** Boxes on a zone that fit it from the floor up (the bottom one accepted, the rest its recipe's colors). */
 function correctPrefix(grid: Grid, stacks: Stacks, cell: number): number {
-  const recipe = grid.recipe[cell];
+  const steps = grid.steps[cell];
+  if (!steps) return 0;
   const stack = stacks[cell];
   let n = 0;
-  while (n < stack.length && n < recipe.length && stack[n] === recipe[n]) n++;
+  while (n < stack.length && n < steps.length && meets(steps[n], boxOfCode(stack[n]))) n++;
   return n;
+}
+/** Sorting levels: the boxes not yet accepted can all still go to the zones not yet done (no accepted box moves). */
+function sortable(grid: Grid, stacks: Stacks): boolean {
+  const loose: Sortable[] = [];
+  const open: ZoneCriteria[] = [];
+  for (let c = 0; c < grid.cellCount; c++) {
+    const steps = grid.steps[c];
+    const placed = correctPrefix(grid, stacks, c);
+    if (steps && placed < steps.length) open.push(steps[0]);
+    for (let i = placed; i < stacks[c].length; i++) loose.push(boxOfCode(stacks[c][i]));
+  }
+  return assignBoxes(loose, open).every((z) => z >= 0);
 }
 const canStackOn = (grid: Grid, stacks: Stacks, cell: number) =>
   cell >= 0 && grid.solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < grid.stackLimit;
@@ -170,13 +198,15 @@ function lift(stacks: Stacks, from: number): Stacks {
 }
 
 /**
- * Boxes not yet part of a correct recipe prefix on their zone: each must be moved at least once, so this is a
- * lower bound on the moves still needed (on single-box recipes: boxes not on a zone of their own color).
+ * Boxes not yet part of a correct prefix on their zone: each must be moved at least once, so this is a lower bound
+ * on the moves still needed (on single-box recipes: boxes not on a zone that accepts them; classic levels: not on a
+ * zone of their own color). In a sorting level whose loose boxes cannot all be sorted into the zones left (a trap:
+ * an ambiguous box took the only zone another box fits), some accepted box must move too: one more.
  */
 function misplacedCount(grid: Grid, stacks: Stacks, total: number): number {
   let placed = 0;
-  for (let c = 0; c < grid.cellCount; c++) if (grid.recipe[c]) placed += correctPrefix(grid, stacks, c);
-  return total - placed;
+  for (let c = 0; c < grid.cellCount; c++) if (grid.steps[c]) placed += correctPrefix(grid, stacks, c);
+  return total - placed + (grid.sorting && placed < total && !sortable(grid, stacks) ? 1 : 0);
 }
 
 /** Full box-move sequence from the given layout (greedy best-first), or null. */
@@ -189,7 +219,7 @@ function planMoves(level: LevelData, grid: Grid, stacks0: Stacks, forklift: numb
     forklift: number;
     moves: Move[];
   }
-  const buckets: Node[][] = Array.from({ length: total + 1 }, () => []);
+  const buckets: Node[][] = Array.from({ length: total + 2 }, () => []);
   const seen = new Set<string>();
   const push = (stacks: Stacks, fl: number, moves: Move[], region: Uint8Array) => {
     const key = keyOf(stacks, region);
@@ -337,19 +367,21 @@ interface Outcome {
   seconds: number;
   moves: number;
   note: string;
+  events: GameEvent[];
 }
 
-function autopilot(level: LevelData, dt: number): Outcome {
+/** Plays `level` to the end; `opening` = moves to make first as they are (e.g. into a trap), then it plans. */
+function autopilot(level: LevelData, dt: number, opening: readonly Move[] = []): Outcome {
   const pilot = new Pilot(level, dt);
   const grid = new Grid(level);
   let moves = 0;
-  let queue: Move[] = [];
+  let queue: Move[] = opening.slice();
   /** Stacks the remaining plan expects; any mismatch with the live state triggers a replan. */
-  let expected: Stacks | null = null;
-  const fail = (note: string): Outcome => ({ solved: false, seconds: pilot.seconds, moves, note });
+  let expected: Stacks | null = queue.length > 0 ? liveStacks(grid, pilot.snap) : null;
+  const fail = (note: string): Outcome => ({ solved: false, seconds: pilot.seconds, moves, note, events: pilot.events });
   for (let iter = 0; iter < 60; iter++) {
     const snap = pilot.snap;
-    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '' };
+    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events };
     const stacks = liveStacks(grid, snap);
     const occ = occupancyOf(grid, stacks);
     const fc = worldToCell(snap.forklift.pos, level.size);
@@ -450,7 +482,7 @@ describe('every shipped level is playable with the real controls', () => {
   }
 
   it('the move bound still counts boxes starting on a zone of another color (classic levels)', () => {
-    const classic = LEVELS.filter((level) => level.stackLimit === 1);
+    const classic = LEVELS.filter((level) => level.stackLimit === 1 && !usesSymbols(level));
     expect(classic.length).toBeGreaterThanOrEqual(12);
     for (const level of classic) {
       const grid = new Grid(level);
@@ -458,5 +490,53 @@ describe('every shipped level is playable with the real controls', () => {
       const offZone = level.boxes.filter((b) => !level.zones.some((z) => z.x === b.x && z.z === b.z && z.color === b.color));
       expect(misplacedCount(grid, start, level.boxes.length), level.id).toBe(offZone.length);
     }
+  });
+});
+
+describe('sorting levels with the real controls (docs/SORTING.md)', () => {
+  const sample = LEVELS.find((l) => l.id === 'la-muestra')!;
+  const grid = new Grid(sample);
+  const cellOf = (p: { x: number; z: number }) => grid.index(p.x, p.z);
+  const blueTriangle = sample.boxes.find((b) => b.color === 'blue' && b.symbol === 'triangle')!;
+  const blueCircle = sample.boxes.find((b) => b.color === 'blue' && b.symbol === 'circle')!;
+  const anyBlue = sample.zones.find((z) => z.color === 'blue' && z.symbol === undefined)!;
+
+  it('level 23 is the sample level, with its trap in reach', () => {
+    expect(LEVELS.indexOf(sample)).toBe(22);
+    expect(usesSymbols(sample)).toBe(true);
+  });
+
+  it.each([
+    ['60 fps', 1 / 60],
+    ['20 fps', 1 / 20],
+  ] as const)('%s: level 23 recovers from its trap: blue ▲ into "any blue" first, moved on once blue ● needs it', (_, dt) => {
+    const out = autopilot(sample, dt, [{ from: cellOf(blueTriangle), drop: cellOf(anyBlue) }]);
+    expect(out.note).toBe('');
+    expect(out.solved).toBe(true);
+    const drops = out.events.filter((e): e is Extract<GameEvent, { type: 'boxDropped' }> => e.type === 'boxDropped');
+    // The trap drop is accepted (a correct, chiming drop), then undone without anything negative...
+    expect(drops[0]).toMatchObject({ boxId: blueTriangle.id, zoneId: anyBlue.id, correct: true });
+    expect(out.events).toContainEqual({ type: 'zoneReleased', zoneId: anyBlue.id, boxId: blueTriangle.id });
+    // ...and blue ● ends up in "any blue", blue ▲ on a ▲ zone: one move more than a plan free of the trap needs.
+    const last = (id: string) => drops.filter((d) => d.boxId === id).at(-1)!;
+    expect(last(blueCircle.id)).toMatchObject({ zoneId: anyBlue.id, correct: true });
+    expect(sample.zones.find((z) => z.id === last(blueTriangle.id).zoneId)?.symbol).toBe('triangle');
+    expect(out.moves).toBeGreaterThanOrEqual(sample.boxes.length + 1);
+  });
+
+  it('the move bound counts a trap as one more move', () => {
+    const stacks = new Array<string>(grid.cellCount).fill('');
+    for (const b of sample.boxes) stacks[cellOf(b)] = boxCode({ color: b.color, symbol: b.symbol! });
+    expect(misplacedCount(grid, stacks, 4)).toBe(4);
+    // Blue ▲ in "any blue", blue ■ and mint ▲ in their zones: blue ● is left without one.
+    const exact = sample.zones.find((z) => z.symbol === 'square')!;
+    const triangle = sample.zones.find((z) => z.symbol === 'triangle')!;
+    const blueSquare = sample.boxes.find((b) => b.symbol === 'square')!;
+    const mintTriangle = sample.boxes.find((b) => b.color === 'mint')!;
+    for (const b of [blueTriangle, blueSquare, mintTriangle]) stacks[cellOf(b)] = '';
+    stacks[cellOf(anyBlue)] = boxCode({ color: 'blue', symbol: 'triangle' });
+    stacks[cellOf(exact)] = boxCode({ color: 'blue', symbol: 'square' });
+    stacks[cellOf(triangle)] = boxCode({ color: 'mint', symbol: 'triangle' });
+    expect(misplacedCount(grid, stacks, 4)).toBe(2);
   });
 });

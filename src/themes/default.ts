@@ -1,3 +1,4 @@
+import { DEFAULT_SYMBOL } from '../core/types';
 import type { Theme } from './types';
 
 /**
@@ -25,27 +26,25 @@ export const defaultTheme: Theme = {
     seat: '#b3a58f',
     light: '#fff5d6',
   },
+  // `ink` (the large lid symbol of the sorting levels) and `engrave` (a symbol cut into a pad) are deeper tones of the
+  // same hue: readable from the default camera, never black, coral kept pink so it never reads as red.
   boxes: {
-    blue: { base: '#9bbce0', tape: '#89abd2', glyph: '#b5cdea' },
-    mint: { base: '#92d2b6', tape: '#80c1a5', glyph: '#b1e1cb' },
-    yellow: { base: '#f3d47c', tape: '#e7c56a', glyph: '#f8e3a6' },
-    coral: { base: '#f6b4ad', tape: '#eba39b', glyph: '#fad0cb' },
-    lavender: { base: '#b8a6da', tape: '#a896cc', glyph: '#cfc2e8' },
+    blue: { base: '#9bbce0', tape: '#89abd2', glyph: '#b5cdea', ink: '#5f87b8' },
+    mint: { base: '#92d2b6', tape: '#80c1a5', glyph: '#b1e1cb', ink: '#4f9a7b' },
+    yellow: { base: '#f3d47c', tape: '#e7c56a', glyph: '#f8e3a6', ink: '#c2952f' },
+    coral: { base: '#f6b4ad', tape: '#eba39b', glyph: '#fad0cb', ink: '#d58780' },
+    lavender: { base: '#b8a6da', tape: '#a896cc', glyph: '#cfc2e8', ink: '#7f69ae' },
   },
   zones: {
-    blue: { fill: '#c9dbee', border: '#9dbde0', glow: '#b7d3f2', glyph: '#a7c4e4' },
-    mint: { fill: '#c8eadb', border: '#9ad7bd', glow: '#b3f0d6', glyph: '#a5dcc4' },
-    yellow: { fill: '#f7e6b8', border: '#f0d185', glow: '#fbe7a8', glyph: '#f1d792' },
-    coral: { fill: '#f7d5ce', border: '#f0b0a5', glow: '#fbcdc4', glyph: '#f2bbb0' },
-    lavender: { fill: '#ddd5ef', border: '#bfb0e0', glow: '#d6c9f6', glyph: '#c6b9e3' },
+    blue: { fill: '#c9dbee', border: '#9dbde0', glow: '#b7d3f2', glyph: '#a7c4e4', engrave: '#86a8d0' },
+    mint: { fill: '#c8eadb', border: '#9ad7bd', glow: '#b3f0d6', glyph: '#a5dcc4', engrave: '#7cc0a2' },
+    yellow: { fill: '#f7e6b8', border: '#f0d185', glow: '#fbe7a8', glyph: '#f1d792', engrave: '#dcb760' },
+    coral: { fill: '#f7d5ce', border: '#f0b0a5', glow: '#fbcdc4', glyph: '#f2bbb0', engrave: '#e4a097' },
+    lavender: { fill: '#ddd5ef', border: '#bfb0e0', glow: '#d6c9f6', glyph: '#c6b9e3', engrave: '#a797cf' },
   },
-  glyphs: {
-    blue: 'circle',
-    mint: 'triangle',
-    yellow: 'square',
-    coral: 'diamond',
-    lavender: 'cross',
-  },
+  /** "Any box with this symbol": light cream pad with warm gray tape, a taupe engraving. */
+  neutralZone: { fill: '#f4efe7', border: '#d6c9b4', glow: '#fff1d8', glyph: '#e6dccd', engrave: '#c2b095' },
+  glyphs: DEFAULT_SYMBOL,
   lighting: {
     hemiSky: '#fff8ee',
     hemiGround: '#dccfbb',

@@ -1,6 +1,7 @@
 import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
+import { zoneMatchKinds, type MatchKind } from '../core/sorting';
 import { GAME_CONFIG } from '../config';
 import { LEVELS, getLevel } from '../data/levels';
 import { GameState } from '../logic/GameState';
@@ -79,6 +80,8 @@ export class Game implements GameActions {
   private levelIndex = 0;
   private level: LevelData | null = null;
   private state: GameState | null = null;
+  /** How each zone of the level matches its box (color / symbol / exact): the timbre audio gives its chime. */
+  private zoneMatch = new Map<string, MatchKind>();
   /** Result of the level just completed, shown once the completion delay runs out. */
   private pendingResult: LevelResult | null = null;
   /** The control hint disappears for the whole session after the first drop. */
@@ -470,7 +473,7 @@ export class Game implements GameActions {
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
     rt.renderer.handleEvent(event, snapshot);
-    rt.audio.handleEvent(event);
+    rt.audio.handleEvent(event, this.matchOf(event));
     switch (event.type) {
       case 'firstInput':
         this.timer.start();
@@ -539,11 +542,18 @@ export class Game implements GameActions {
   /* Helpers                                                           */
   /* ---------------------------------------------------------------- */
 
+  /** Kind of match of the zone a drop / restore event is about (the classic color bell for anything else). */
+  private matchOf(event: GameEvent): MatchKind {
+    if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
+    return (event.zoneId !== null && this.zoneMatch.get(event.zoneId)) || 'color';
+  }
+
   /** Fresh simulation + scene for a level; resets the timer and any pending completion or suspended level. */
   private loadLevel(rt: Runtime, index: number): LevelData {
     const level = getLevel(index);
     this.levelIndex = clamp(index, 0, Math.max(0, LEVELS.length - 1));
     this.level = level;
+    this.zoneMatch = zoneMatchKinds(level);
     this.state = new GameState(level);
     rt.renderer.loadLevel(this.state.getSnapshot(), getTheme(level.theme));
     this.timer.reset();

@@ -40,7 +40,11 @@ const LEVEL = validateLevel(
 
 /** Park the forklift so its fork point sits over `cell` (facing +z). */
 function aimAt(sim: PreviewSim, cell: CellPos): void {
-  const p = cellToWorld(cell, LEVEL.size);
+  aimAtIn(sim, LEVEL, cell);
+}
+
+function aimAtIn(sim: PreviewSim, level: { size: { width: number; depth: number } }, cell: CellPos): void {
+  const p = cellToWorld(cell, level.size);
   sim.setPose(p.x, p.z - GAME_CONFIG.forklift.forkReach, 0);
 }
 
@@ -83,6 +87,28 @@ describe('dev render preview simulation', () => {
     aimAt(sim, { x: 2, z: 4 });
     sim.pick();
     expect(sim.drop({ x: 4, z: 2 })).toEqual([{ type: 'actionIdle', carrying: true }]);
+  });
+
+  it('sorts like the game: a zone takes the boxes it accepts, by color and / or symbol (level 23)', () => {
+    const sample = LEVELS.find((l) => l.id === 'la-muestra')!;
+    const sim = new PreviewSim(sample);
+    const zones = sim.snapshot.zones;
+    const exact = zones.find((z) => z.accepts.color === 'blue' && z.accepts.symbol === 'square')!;
+    const anyTriangle = zones.find((z) => z.accepts.color === undefined && z.accepts.symbol === 'triangle')!;
+    const box = (id: string) => sim.snapshot.boxes.find((b) => b.id === id)!;
+    const exactDrop = eventOf(sim.solveZone(exact.id), 'boxDropped')!;
+    expect(exactDrop).toMatchObject({ zoneId: exact.id, correct: true });
+    expect(box(exactDrop.boxId)).toMatchObject({ color: 'blue', symbol: 'square' });
+    const triangleDrop = eventOf(sim.solveZone(anyTriangle.id), 'boxDropped')!;
+    expect(box(triangleDrop.boxId).symbol).toBe('triangle');
+    expect(anyTriangle).toMatchObject({ satisfied: true, color: null });
+    // A box on the zone that it does not accept leaves it open: blue ● on "any ▲" is neutral.
+    const other = zones.find((z) => z.accepts.symbol === 'triangle' && z.id !== anyTriangle.id)!;
+    const circle = sim.snapshot.boxes.find((b) => b.symbol === 'circle')!;
+    aimAtIn(sim, sample, { x: circle.cell!.x, z: circle.cell!.z });
+    expect(eventOf(sim.pick(), 'boxPicked')?.boxId).toBe(circle.id);
+    expect(eventOf(sim.drop(other.cell), 'boxDropped')).toMatchObject({ zoneId: other.id, correct: false });
+    expect(other).toMatchObject({ satisfied: false, next: null });
   });
 
   it('solves a recipe zone one step at a time, never from under another box', () => {

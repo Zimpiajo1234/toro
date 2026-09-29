@@ -622,12 +622,14 @@
 
 /* ---------- Level dots ---------------------------------------------------- */
 
+/* Twelve dots per row (12 × 26 + 11 × 2 = 334 px): the 24 warehouses read as two even rows (classic chapter on top;
+   stacking and sorting below). */
 .level-dots {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 2px;
-  max-width: 340px;
+  max-width: 334px;
 }
 
 .level-dot {
@@ -909,9 +911,15 @@
   .title__wordmark {
     font-size: clamp(48px, 14vh, 80px);
   }
-  /* All 18 dots on one row (18 × 26 + 17 × 2 = 502 px) keep the diorama band; narrow windows still wrap. */
+  /* The same two rows of twelve, a little smaller (12 × 22 + 11 × 2 = 286 px wide, 2 × 22 px tall), so the diorama
+     band stays clear; the hover / focus ring still fits (the dot grows to 14 px). */
   .level-dots {
-    max-width: 520px;
+    row-gap: 0;
+    max-width: 286px;
+  }
+  .level-dot {
+    width: 22px;
+    height: 22px;
   }
   .card-layer {
     padding-bottom: max(clamp(10px, 3vh, 16px), env(safe-area-inset-bottom, 0px));

@@ -1,0 +1,30 @@
+{
+  "id": "dos-sitios-posibles",
+  "order": 21,
+  "name": "Dos sitios posibles",
+  "size": { "width": 9, "depth": 7 },
+  "forklift": { "x": 8, "z": 3, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "coral", "symbol": "square", "x": 6, "z": 3 },
+    { "id": "b2", "color": "yellow", "symbol": "square", "x": 4, "z": 5 },
+    { "id": "b3", "color": "blue", "symbol": "circle", "x": 6, "z": 5 },
+    { "id": "b4", "color": "mint", "symbol": "triangle", "x": 4, "z": 3 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "coral", "x": 1, "z": 1 },
+    { "id": "z2", "symbol": "square", "x": 3, "z": 1 },
+    { "id": "z3", "color": "blue", "x": 5, "z": 1 },
+    { "id": "z4", "symbol": "triangle", "x": 1, "z": 4 }
+  ],
+  "shelves": [{ "x": 7, "z": 0, "w": 2, "d": 1 }],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 6 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 2, "width": 3 },
+      { "wall": "west", "at": 2, "width": 2 }
+    ]
+  }
+}

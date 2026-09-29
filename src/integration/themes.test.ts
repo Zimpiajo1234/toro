@@ -1,8 +1,10 @@
 /**
  * Integration check (levels × themes × shell): every shipped level names a registered theme (a typo would
- * otherwise fall back to 'default' silently), and the shell exposes every UI token of a theme to CSS.
+ * otherwise fall back to 'default' silently), themes keep the gameplay symbols canonical, and the shell exposes
+ * every UI token of a theme to CSS.
  */
 import { describe, expect, it } from 'vitest';
+import { COLOR_IDS, DEFAULT_SYMBOL } from '../core/types';
 import { LEVELS } from '../data/levels';
 import { getTheme, hasTheme, themeCssVars } from '../themes';
 import { defaultTheme } from '../themes/default';
@@ -20,6 +22,20 @@ describe('themes', () => {
     for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
       expect(hasTheme(key)).toBe(false);
       expect(getTheme(key)).toBe(defaultTheme);
+    }
+  });
+
+  it('keeps symbols gameplay data: every theme draws the canonical color → symbol map, and has the sorting tones', () => {
+    for (const theme of [defaultTheme, ...LEVELS.map((l) => getTheme(l.theme))]) {
+      expect(theme.glyphs).toEqual(DEFAULT_SYMBOL);
+      for (const c of COLOR_IDS) {
+        expect(theme.boxes[c].ink).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(theme.zones[c].engrave).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+      // The neutral pad is none of the functional hues.
+      const neutral = theme.neutralZone;
+      for (const c of COLOR_IDS) expect(neutral.fill).not.toBe(theme.zones[c].fill);
+      expect(neutral.engrave).toMatch(/^#[0-9a-f]{6}$/i);
     }
   });
 

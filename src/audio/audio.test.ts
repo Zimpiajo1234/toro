@@ -3,6 +3,7 @@ import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC, RELEASE_AFTER_LAND
 import type { AudioGraph } from './graph';
 import { BellInstrument } from './instruments/bell';
 import { PadInstrument } from './instruments/pad';
+import { WOOD_LOWPASS_HZ, WoodInstrument } from './instruments/wood';
 import { completionArpeggio, midiToFreq } from './music/harmony';
 import { biquadQ, filter } from './nodes';
 import { centsToRatio, chance, mulberry32, pick, range, vary, weightedIndex } from './random';
@@ -186,6 +187,53 @@ describe('SfxPlayer', () => {
     expect(times[2]).toBeGreaterThan(times[1]);
   });
 
+  it('rings a zone by how it matched: color = the bell, symbol = soft wood, exact = both, softer', () => {
+    const strikes = (match: 'color' | 'symbol' | 'exact', final = false) => {
+      const { sfx } = setup();
+      const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+      const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+      sfx.chime(1, 79, final, null, match);
+      const out = { bell: bell.mock.calls.map((c) => [c[0], c[2]]), wood: wood.mock.calls.map((c) => [c[0], c[2]]) };
+      vi.restoreAllMocks();
+      return out;
+    };
+    const color = strikes('color');
+    expect(color.bell.map((c) => c[0])).toEqual([79]);
+    expect(color.wood).toEqual([]);
+    const symbol = strikes('symbol');
+    expect(symbol.bell).toEqual([]);
+    expect(symbol.wood.map((c) => c[0])).toEqual([79]);
+    const exact = strikes('exact');
+    expect(exact.bell.map((c) => c[0])).toEqual([79]);
+    expect(exact.wood.map((c) => c[0])).toEqual([79]);
+    // Layered, each softer than a lone strike, so the pair is not louder than one chime.
+    expect(exact.bell[0][1]).toBeLessThan(color.bell[0][1] * 0.8);
+    expect(exact.wood[0][1]).toBeLessThan(symbol.wood[0][1] * 0.8);
+    expect(exact.bell[0][1] + exact.wood[0][1]).toBeLessThan(color.bell[0][1] * 1.5);
+    // The last zone's second strike (a fourth below) stays on the zone's own timbre.
+    expect(strikes('color', true).bell.map((c) => c[0])).toEqual([79, 74]);
+    expect(strikes('symbol', true)).toMatchObject({ bell: [], wood: [[79, expect.any(Number)], [74, expect.any(Number)]] });
+    expect(strikes('exact', true).bell.map((c) => c[0])).toEqual([79, 74]);
+  });
+
+  it('a symbol chime is a soft wooden strike: warm low-pass, no high partials, short decay', () => {
+    const ctx = new FakeAudioContext();
+    const noise = ctx.createBuffer(1, 16000, 8000) as unknown as AudioBuffer;
+    const wood = new WoodInstrument(ctx.asContext(), ctx.createGain() as unknown as AudioNode, noise, mulberry32(9));
+    for (const midi of [67, 72, 79, 84]) wood.strike(midi, 0, 1);
+    const oscs = ctx.ofKind(FakeOscillator);
+    expect(oscs.length).toBeGreaterThan(0);
+    for (const o of oscs) expect(o.frequency.value).toBeLessThan(9000);
+    const filters = ctx.ofKind(FakeBiquad);
+    for (const f of filters.filter((b) => b.type === 'lowpass')) expect(f.frequency.value).toBeLessThanOrEqual(WOOD_LOWPASS_HZ * 1.06);
+    for (const f of filters.filter((b) => b.type === 'bandpass')) expect(f.frequency.value).toBeLessThanOrEqual(2200);
+    const envs = ctx.ofKind(FakeGain).flatMap((g) => g.gain.events.filter((e) => e.kind === 'target' && e.value === 0));
+    expect(envs.length).toBeGreaterThan(0);
+    for (const e of envs) expect(e.tau!).toBeLessThan(0.45);
+    const peaks = ctx.ofKind(FakeGain).flatMap((g) => g.gain.events.filter((e) => e.kind === 'linear').map((e) => e.value));
+    expect(Math.max(...peaks)).toBeLessThan(0.3);
+  });
+
   it('starts the level-complete swell on the given downbeat and hands its bass over when it ends', () => {
     const { sfx } = setup();
     const play = vi.spyOn(PadInstrument.prototype, 'play');
@@ -300,6 +348,29 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
 
     expect(ctx.state).toBe('suspended');
     expect(wake.last()?.value).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('hands the kind of match through to the chime (default: the classic color bell)', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
+    const chime = vi.spyOn(SfxPlayer.prototype, 'chime');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    const dropped = { type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 3 } as const;
+    engine.handleEvent(dropped);
+    engine.handleEvent(dropped, 'symbol');
+    engine.handleEvent({ ...dropped, satisfiedCount: 2 }, 'exact');
+    expect(drop.mock.calls.map((c) => c[5])).toEqual(['color', 'symbol', 'exact']);
+    // The chime inside each drop follows it.
+    expect(chime.mock.calls.map((c) => c[4])).toEqual(['color', 'symbol', 'exact']);
+    engine.handleEvent({ type: 'zoneRestored', zoneId: 'z', boxId: 'w', recipeLength: 1, satisfiedCount: 2, total: 3 }, 'symbol');
+    expect(chime.mock.calls.at(-1)?.[4]).toBe('symbol');
     expect(warn).not.toHaveBeenCalled();
     engine.dispose();
   });

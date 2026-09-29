@@ -16,6 +16,26 @@
 export const COLOR_IDS = ['blue', 'mint', 'yellow', 'coral', 'lavender'] as const;
 export type ColorId = (typeof COLOR_IDS)[number];
 
+/**
+ * Symbols a box carries on its lid and a zone may ask for (engraved on its pad): the glyph shapes, never text.
+ * Sorting rules (who accepts what) live in core/sorting.ts.
+ */
+export const SYMBOL_IDS = ['circle', 'triangle', 'square', 'diamond', 'cross'] as const;
+export type SymbolId = (typeof SYMBOL_IDS)[number];
+
+/**
+ * Canonical colour → symbol. A box that names no `symbol` carries its colour's, and a zone of a level that never
+ * names a symbol shows its colour's glyph tone on tone (a colour-blind aid). Levels 1–18 name none, so they play and
+ * look exactly as before the sorting chapter.
+ */
+export const DEFAULT_SYMBOL: Readonly<Record<ColorId, SymbolId>> = {
+  blue: 'circle',
+  mint: 'triangle',
+  yellow: 'square',
+  coral: 'diamond',
+  lavender: 'cross',
+};
+
 /** Box types. Only 'standard' exists today; the render layer keeps a registry keyed by kind. */
 export const BOX_KINDS = ['standard'] as const;
 export type BoxKind = (typeof BOX_KINDS)[number];
@@ -42,19 +62,36 @@ export interface Vec2 {
 export interface LevelBox {
   id: string;
   color: ColorId;
+  /** Symbol on the lid. Omitted = its colour's canonical one (DEFAULT_SYMBOL), as in every level before 19. */
+  symbol?: SymbolId;
   x: number;
   z: number;
   kind?: BoxKind;
 }
 
+/**
+ * A delivery zone. It declares what it accepts, at least one criterion: `color` only = any box of that colour (the
+ * classic rule), `symbol` only = any box with that symbol whatever its colour, both = that exact box.
+ */
 export interface LevelZone {
   id: string;
-  /** Pad color. With a recipe it must equal recipe[0] (the first box that goes down). */
-  color: ColorId;
+  /**
+   * Colour criterion, drawn as the pad colour (a zone without one gets a neutral pad). With a recipe it must equal
+   * recipe[0] (the first box that goes down).
+   */
+  color?: ColorId;
+  /** Symbol criterion, engraved in the pad. Never together with a recipe longer than 1 (recipes are colour-only). */
+  symbol?: SymbolId;
   x: number;
   z: number;
-  /** Stack this zone asks for, bottom → top. Omitted in JSON = [color] (one box, the classic rule). */
+  /** Stack this zone asks for, bottom → top. Omitted in JSON = one box (the classic rule). Needs `color`. */
   recipe?: ColorId[];
+}
+
+/** What a zone asks of its box (the bottom box of a stack zone): a colour, a symbol, or both. At least one is set. */
+export interface ZoneCriteria {
+  color?: ColorId;
+  symbol?: SymbolId;
 }
 
 /** Rectangular obstacle covering cells [x, x + w) × [z, z + d). */
@@ -139,6 +176,8 @@ export interface ForkliftState {
 export interface BoxState {
   id: string;
   color: ColorId;
+  /** Symbol on the lid (its level entry, else its colour's canonical one). */
+  symbol: SymbolId;
   kind: BoxKind;
   /** World position of the box center on the floor plane. While carried it follows the forks. */
   pos: Vec2;
@@ -147,26 +186,42 @@ export interface BoxState {
   /** Height in its stack: 0 = on the floor, 1 = on one box, … (0 while carried). */
   level: number;
   carried: boolean;
-  /** Zone the box is resting on (any color), or null. */
+  /** Zone the box is resting on (accepting it or not), or null. */
   zoneId: string | null;
-  /** True when resting on a zone and the stack from the floor up to this box matches the zone's recipe so far. */
+  /**
+   * True when resting on a zone and the stack from the floor up to this box fits it so far: the bottom box accepted
+   * by the zone (core/sorting `accepts`), every box above it of the colour its recipe asks for there.
+   */
   correct: boolean;
 }
 
 export interface ZoneState {
   id: string;
-  color: ColorId;
+  /**
+   * Pad colour: the zone's colour criterion (= `accepts.color`), or null for a neutral pad (a zone that asks for a
+   * symbol only). Display only: whether a box fits is always decided by `accepts` (core/sorting).
+   */
+  color: ColorId | null;
+  /** What the zone asks of its box (the bottom box of a stack zone): a colour, a symbol, or both. */
+  accepts: ZoneCriteria;
   cell: CellPos;
   pos: Vec2;
-  /** Stack this zone asks for, bottom → top (length 1 = classic zone). */
-  recipe: ColorId[];
+  /**
+   * The colour of each box the zone holds when done, bottom → top (length 1 = a single-box zone). The bottom box
+   * answers to `accepts`, so its entry is only the colour criterion (null when the zone asks no colour); boxes above
+   * it follow this colour recipe.
+   */
+  recipe: (ColorId | null)[];
   /** Box ids resting on this zone, bottom → top. */
   stack: string[];
-  /** Top box resting on this zone (any color), or null. */
+  /** Top box resting on this zone (accepted or not), or null. */
   occupiedBy: string | null;
-  /** True when the stack's colors equal the recipe exactly. */
+  /** True when the zone holds exactly what it asks for: an accepted bottom box and, above it, the recipe's colours. */
   satisfied: boolean;
-  /** Color the zone needs next (its stack is a correct, unfinished prefix of the recipe), else null. */
+  /**
+   * Colour the zone needs next while its stack is a correct, unfinished prefix, else null (also null for an empty
+   * zone that asks no colour). Whether the zone would take a given box next: core/sorting `takesNext`.
+   */
   next: ColorId | null;
 }
 
@@ -218,7 +273,10 @@ export type GameEvent =
       zoneId: string | null;
       /** Height it landed at (0 = floor). */
       level: number;
-      /** This drop completed its zone (stack now equals the recipe; classic: a zone of its own color). */
+      /**
+       * This drop completed its zone: a single-box zone now holds a box it accepts (classic: one of its colour), a
+       * stack zone its recipe.
+       */
       correct: boolean;
       /** Recipe length of that zone (1 = classic zone), 0 when not on a zone. */
       recipeLength: number;

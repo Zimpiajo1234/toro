@@ -23,11 +23,12 @@ export interface ZoneGeometries {
 
 /**
  * Delivery zone: glow rises and settles when satisfied (with one soft expanding ring), eases off
- * when released, breathes gently while a box of its color is being carried.
+ * when released, breathes gently while a box it would take is being carried.
  */
 export class ZoneView {
   readonly id: string;
-  readonly color: ColorId;
+  /** Pad color (null = neutral pad). */
+  readonly color: ColorId | null;
   readonly group = new Group();
   private readonly pad: Mesh;
   private readonly ring: Mesh;
@@ -93,7 +94,11 @@ export class ZoneView {
     }
   }
 
-  sync(state: ZoneState, carriedColor: ColorId | null, time: number, dt: number): void {
+  /**
+   * `invite` 0‥1: how strongly the pad breathes for the box being carried (1 = it would take that box next, a small
+   * value = a quiet hint, 0 = none). `takesNext`: the zone takes the carried box next (its recipe step breathes too).
+   */
+  sync(state: ZoneState, invite: number, takesNext: boolean, time: number, dt: number): void {
     if (state.satisfied !== this.satisfied) {
       this.satisfied = state.satisfied;
       if (this.satisfied) {
@@ -120,12 +125,11 @@ export class ZoneView {
       this.glow = damp(this.glow, this.satisfied ? GLOW_REST : 0, this.satisfied ? 4 : 2.2, dt);
     }
 
-    // Teach the goal without words: zones that take the carried color next breathe softly.
-    const invite = carriedColor !== null && carriedColor === state.next ? 1 : 0;
+    // Teach the goal without words: zones that would take the carried box breathe softly.
     this.breathe = damp(this.breathe, invite, 3, dt);
     const breatheGlow = this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
     // …and so does the recipe step that box would fill (its own envelope: no jump when the next step changes).
-    const nextStep = invite ? state.stack.length : -1;
+    const nextStep = takesNext ? state.stack.length : -1;
     for (let i = 0; i < this.stepMaterials.length; i++) {
       this.stepBreathe[i] = damp(this.stepBreathe[i], i === nextStep ? 1 : 0, 3, dt);
       this.stepMaterials[i].emissiveIntensity = this.stepBreathe[i] * (STEP_GLOW + STEP_PULSE * Math.sin(time * 2.3));

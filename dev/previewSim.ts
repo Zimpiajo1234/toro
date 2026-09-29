@@ -1,11 +1,12 @@
 /**
  * Dev-only stand-in for GameState: starts from the real GameState's initial snapshot (stacked starts, recipe
- * zones) and scripts simple motion (the forklift drives in a circle) plus pick / drop with the same stack rules
- * (top box only, drops on stacks with room, zones derived from their recipe), so the render layer can be
- * inspected alone. Not part of the production build.
+ * zones, sorting criteria) and scripts simple motion (the forklift drives in a circle) plus pick / drop with the
+ * same rules (top box only, drops on stacks with room, zones derived from what they accept and their recipe), so the
+ * render layer can be inspected alone. Not part of the production build.
  */
 import { GAME_CONFIG } from '../src/config';
 import { approach, degToRad } from '../src/core/math';
+import { fitsLevel, takesNext } from '../src/core/sorting';
 import {
   cellKey,
   cellToWorld,
@@ -168,8 +169,8 @@ export class PreviewSim {
   }
 
   /**
-   * Teleport free boxes onto a zone, one recipe step at a time, while it needs a color and a box of that color
-   * sits on top of some stack (quick way to preview satisfied zones and stacks). A wrong stack is left alone.
+   * Teleport free boxes onto a zone, one recipe step at a time, while it still takes a box and one it would take sits
+   * on top of some stack (quick way to preview satisfied zones and stacks). A wrong stack is left alone.
    */
   solveZone(zoneId: string): GameEvent[] {
     const s = this.snapshot;
@@ -177,9 +178,8 @@ export class PreviewSim {
     const events: GameEvent[] = [];
     if (!zone) return events;
     const was = s.forklift.carrying;
-    while (zone.next !== null && this.dropLevel(zone.cell) >= 0) {
-      const need = zone.next;
-      const box = s.boxes.find((b) => b.color === need && !b.carried && !b.correct && this.isTop(b));
+    while (!zone.satisfied && this.dropLevel(zone.cell) >= 0) {
+      const box = s.boxes.find((b) => takesNext(zone, b) && !b.carried && !b.correct && this.isTop(b));
       if (!box) break;
       this.lift(box);
       box.carried = true;
@@ -212,13 +212,16 @@ export class PreviewSim {
     return { released, restored };
   }
 
-  /** Same derivation as GameState: satisfied iff the stack equals the recipe, `next` while it is a correct prefix. */
+  /**
+   * Same derivation as GameState: satisfied iff it holds what it asks for (an accepted bottom box, then the recipe's
+   * colors), `next` while it is a correct, unfinished prefix.
+   */
   private refreshZone(zone: ZoneState): void {
     const boxes = this.snapshot.boxes;
     let prefix = true;
     zone.stack.forEach((id, i) => {
       const box = boxes.find((b) => b.id === id);
-      prefix = prefix && box !== undefined && i < zone.recipe.length && zone.recipe[i] === box.color;
+      prefix = prefix && box !== undefined && fitsLevel(zone, i, box);
       if (box) box.correct = prefix;
     });
     const n = zone.stack.length;

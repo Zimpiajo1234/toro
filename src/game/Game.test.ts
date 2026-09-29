@@ -457,6 +457,53 @@ describe('Game without WebGL', () => {
 });
 
 
+describe('Game: sorting chapter', () => {
+  it('tells audio how the zone of each drop matches (color bell, symbol wood, exact both)', () => {
+    const handle = vi.spyOn(fakes.FakeAudio.prototype, 'handleEvent');
+    const { game } = setup();
+    const index = LEVELS.findIndex((l) => l.id === 'la-muestra');
+    expect(index).toBe(22);
+    game.start(index);
+    const zone = (color: string | undefined, symbol: string | undefined) =>
+      LEVELS[index].zones.find((z) => z.color === color && z.symbol === symbol)!.id;
+    const dropOn = (zoneId: string | null): GameEvent => ({
+      type: 'boxDropped',
+      boxId: 'b1',
+      cell: { x: 1, z: 1 },
+      zoneId,
+      level: 0,
+      correct: zoneId !== null,
+      recipeLength: zoneId ? 1 : 0,
+      satisfiedCount: 1,
+      total: 4,
+    });
+    handle.mockClear();
+    emit(dropOn(zone('blue', undefined)), dropOn(zone(undefined, 'triangle')), dropOn(zone('blue', 'square')), dropOn(null));
+    expect(handle.mock.calls.map((c) => (c as unknown[])[1])).toEqual(['color', 'symbol', 'exact', 'color']);
+    // Classic levels ring the bell, as before.
+    game.start(0);
+    handle.mockClear();
+    emit(dropOn(LEVELS[0].zones[0].id));
+    expect(handle.mock.calls.map((c) => (c as unknown[])[1])).toEqual(['color']);
+    handle.mockRestore();
+  });
+
+  it('test mode reaches every level of the chapter, and the chapter ends the game', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(18);
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 18, levelName: LEVELS[18].name });
+    for (let i = 19; i < 24; i++) {
+      tap('PageDown', 'PageDown');
+      expect(store.get().levelIndex).toBe(i);
+      expect(current().level.id).toBe(LEVELS[i].id);
+    }
+    expect(LEVELS).toHaveLength(24);
+    tap('PageDown', 'PageDown');
+    expect(store.get().levelIndex).toBe(23); // the last level
+  });
+});
+
 describe('Game: modo prueba', () => {
   const unlockedCount = (levels: { unlocked: boolean }[]) => levels.filter((l) => l.unlocked).length;
   const completeLevel = () => {

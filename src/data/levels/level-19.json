@@ -1,0 +1,25 @@
+{
+  "id": "lo-que-dice-la-tapa",
+  "order": 19,
+  "name": "Lo que dice la tapa",
+  "size": { "width": 8, "depth": 6 },
+  "forklift": { "x": 7, "z": 3, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "symbol": "triangle", "x": 5, "z": 3 },
+    { "id": "b2", "color": "mint", "symbol": "circle", "x": 3, "z": 4 },
+    { "id": "b3", "color": "blue", "symbol": "square", "x": 1, "z": 3 }
+  ],
+  "zones": [
+    { "id": "z1", "symbol": "circle", "x": 1, "z": 1 },
+    { "id": "z2", "symbol": "triangle", "x": 3, "z": 1 },
+    { "id": "z3", "symbol": "square", "x": 5, "z": 1 }
+  ],
+  "shelves": [],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 7, "z": 5 }
+    ],
+    "windows": [{ "wall": "north", "at": 2, "width": 3 }]
+  }
+}
