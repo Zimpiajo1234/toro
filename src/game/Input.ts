@@ -38,6 +38,11 @@ export interface InputSample {
   levelStepHeld: -1 | 0 | 1;
   /** Edge-triggered: U (toggle "Modo prueba" on the title). */
   testModePressed: boolean;
+  /**
+   * One slot level up (+1: F, mouse wheel up, gamepad X) or down (−1: V, wheel down, gamepad B) this frame. Several
+   * presses in one frame come out one per frame. Only acts in front of a storage rack (docs/RACKS.md).
+   */
+  forkStep: -1 | 0 | 1;
   /** True if any input happened this frame. */
   any: boolean;
 }
@@ -65,6 +70,18 @@ export interface InputOptions {
 
 const DIRECTION: Record<MoveBinding, number> = { up: 0, down: 1, left: 2, right: 3 };
 const never = () => false;
+
+/** Mouse wheel → fork levels. A single event this large (px) is one notch of a mouse wheel: one slot, never more. */
+export const WHEEL_NOTCH_PX = 50;
+/** Smaller deltas (trackpads, smooth scrolling) add up: one slot per this many px in one direction. */
+export const WHEEL_TRACKPAD_PX = 120;
+/** A pause this long (ms) between wheel events forgets a partial trackpad sum. */
+export const WHEEL_IDLE_MS = 200;
+/** WheelEvent.deltaMode line / page units in px. */
+const WHEEL_LINE_PX = 40;
+const WHEEL_PAGE_PX = 800;
+/** Fork steps queued at most (a column has 3 slots: two steps reach any of them). */
+const MAX_FORK_STEPS = 2;
 
 function levelStepOf(binding: KeyBinding): -1 | 0 | 1 {
   return binding === 'prevLevel' ? -1 : binding === 'nextLevel' ? 1 : 0;
@@ -111,6 +128,11 @@ export class Input {
   private backEdge = false;
   private levelStepEdge: -1 | 0 | 1 = 0;
   private testModeEdge = false;
+  /** Fork level steps not handed out yet (keys and wheel), signed; poll() gives one per frame. */
+  private forkSteps = 0;
+  /** Trackpad-style wheel deltas summed toward one step (px, signed), and when the last wheel event came (ms). */
+  private wheelSum = 0;
+  private wheelAt = -Infinity;
   /** A game key was pressed during gameplay since focus last moved: Enter goes back to the game too. */
   private drivenSinceFocus = false;
   private disposed = false;
@@ -132,6 +154,7 @@ export class Input {
     levelStep: 0,
     levelStepHeld: 0,
     testModePressed: false,
+    forkStep: 0,
     any: false,
   };
 
@@ -146,6 +169,8 @@ export class Input {
     target.addEventListener('blur', this.releaseAll);
     target.addEventListener('pointerdown', this.onPointerDown, true);
     target.addEventListener('focusin', this.onFocusIn, true);
+    // Not passive: while playing, the wheel belongs to the forks (the page must not scroll).
+    target.addEventListener('wheel', this.onWheel, { passive: false });
     target.document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
@@ -159,6 +184,7 @@ export class Input {
       s.testModePressed = false;
       s.rotateCamera = 0;
       s.levelStep = s.levelStepHeld = 0;
+      s.forkStep = 0;
       return s;
     }
 
@@ -190,6 +216,12 @@ export class Input {
     s.levelStep = this.levelStepEdge;
     s.levelStepHeld = this.heldLevelStep();
     s.testModePressed = this.testModeEdge;
+    if (this.forkSteps !== 0) {
+      s.forkStep = this.forkSteps > 0 ? 1 : -1;
+      this.forkSteps -= s.forkStep;
+    } else {
+      s.forkStep = pad.forkStep;
+    }
     s.any =
       s.keyX !== 0 ||
       s.keyY !== 0 ||
@@ -206,7 +238,8 @@ export class Input {
       s.backPressed ||
       s.levelStep !== 0 ||
       s.levelStepHeld !== 0 ||
-      s.testModePressed;
+      s.testModePressed ||
+      s.forkStep !== 0;
     this.clearEdges();
     return s;
   }
@@ -219,6 +252,7 @@ export class Input {
     this.target.removeEventListener('blur', this.releaseAll);
     this.target.removeEventListener('pointerdown', this.onPointerDown, true);
     this.target.removeEventListener('focusin', this.onFocusIn, true);
+    this.target.removeEventListener('wheel', this.onWheel);
     this.target.document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.releaseAll();
   }
@@ -298,8 +332,47 @@ export class Input {
       case 'testMode':
         this.testModeEdge = true;
         break;
+      case 'forkUp':
+        this.queueForkStep(1);
+        break;
+      case 'forkDown':
+        this.queueForkStep(-1);
+        break;
     }
   };
+
+  /**
+   * Mouse wheel → fork levels while playing (docs/RACKS.md): one notch of a mouse wheel = one slot (up = +1), however
+   * large its delta; smaller trackpad deltas add up to one slot per WHEEL_TRACKPAD_PX. Off the playing screen, over
+   * a text field or with Ctrl / ⌘ (browser zoom, pinch) the wheel is left alone.
+   */
+  private readonly onWheel = (e: WheelEvent): void => {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || !this.isGameplay()) return;
+    if (classifyFocusTarget(e.target) === 'text') return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? WHEEL_LINE_PX : e.deltaMode === 2 ? WHEEL_PAGE_PX : 1;
+    const delta = (Number.isFinite(e.deltaY) ? e.deltaY : 0) * unit;
+    if (delta === 0) return;
+    const now = Number.isFinite(e.timeStamp) ? e.timeStamp : 0;
+    const quiet = now - this.wheelAt > WHEEL_IDLE_MS;
+    this.wheelAt = now;
+    const step: -1 | 1 = delta < 0 ? 1 : -1;
+    if (Math.abs(delta) >= WHEEL_NOTCH_PX) {
+      this.wheelSum = 0;
+      this.queueForkStep(step);
+      return;
+    }
+    if (quiet || Math.sign(this.wheelSum) === -Math.sign(delta)) this.wheelSum = 0;
+    this.wheelSum += delta;
+    if (Math.abs(this.wheelSum) >= WHEEL_TRACKPAD_PX) {
+      this.wheelSum = 0;
+      this.queueForkStep(step);
+    }
+  };
+
+  private queueForkStep(step: -1 | 1): void {
+    this.forkSteps = Math.max(-MAX_FORK_STEPS, Math.min(MAX_FORK_STEPS, this.forkSteps + step));
+  }
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
     // macOS drops keyup events of keys released while ⌘ is held.
@@ -339,6 +412,8 @@ export class Input {
     this.restartKeys.clear();
     this.levelStepKeys.clear();
     this.claimedKeys.clear();
+    this.forkSteps = 0;
+    this.wheelSum = 0;
     this.clearEdges();
   };
 

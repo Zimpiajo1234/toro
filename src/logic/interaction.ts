@@ -23,12 +23,32 @@ export interface DropChoice {
   z: number;
   /** Zone on that cell (any color), or -1. */
   zoneIndex: number;
-  /** Height the box lands at (0 = floor, 1 = on one box, …). */
+  /** Height the box lands at (0 = floor, 1 = on one box, …; a rack slot's level). */
   level: number;
+  /** Rack slot (flat index, LevelGrid.slotOf) the box goes into, or -1 for the floor. */
+  slot: number;
 }
 
 export function createDropChoice(): DropChoice {
-  return { x: 0, z: 0, zoneIndex: -1, level: 0 };
+  return { x: 0, z: 0, zoneIndex: -1, level: 0, slot: -1 };
+}
+
+/**
+ * Levels with racks (docs/RACKS.md): the rack column the forks work on this frame, kept up to date by GameState.
+ * `column` ≥ 0 only while the forklift faces it and the forks stand at the selected slot level, so a pick / drop
+ * there acts on that slot and nowhere else.
+ */
+export interface RackAim {
+  /** Rack column (LevelGrid.columns) the forks work on, or -1. */
+  column: number;
+  /** Selected slot level in that column. */
+  level: number;
+  /** Carrying: the fork point is close enough to the rack face for the box to go into the slot. */
+  reach: boolean;
+}
+
+export function createRackAim(): RackAim {
+  return { column: -1, level: 0, reach: false };
 }
 
 /**
@@ -51,6 +71,7 @@ export class Interaction {
   private readonly magnetSq: number;
   private readonly contact = createContact();
   private readonly probe = createContact();
+  private readonly aim: RackAim;
 
   constructor(
     level: LevelData,
@@ -60,7 +81,9 @@ export class Interaction {
     zones: readonly ZoneState[],
     grid: LevelGrid,
     world: CollisionWorld,
+    aim: RackAim = createRackAim(),
   ) {
+    this.aim = aim;
     this.forklift = forklift;
     this.boxes = boxes;
     this.zones = zones;
@@ -80,7 +103,8 @@ export class Interaction {
   /**
    * Box the action would lift now, or -1: resting on top of its stack, center within pickupRadius of the fork point and within
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
-   * inside another obstacle, so the load collider can always settle smoothly.
+   * inside another obstacle, so the load collider can always settle smoothly. A box in a rack slot is only a
+   * candidate in the slot the forks work on (RackAim: facing its column, forks at its level).
    */
   findPickTarget(): number {
     const f = this.forklift;
@@ -90,9 +114,26 @@ export class Interaction {
     const pz = f.pos.z + fz * this.reach;
     let best = -1;
     let bestSq = Infinity;
+    const aim = this.aim;
+    const aimed = aim.column >= 0 ? this.grid.slotBox(this.grid.slotOf(aim.column, aim.level)) : -1;
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
       if (b.carried) continue;
+      if (b.slotId !== null) {
+        if (i !== aimed) continue;
+        const dx = b.pos.x - px;
+        const dz = b.pos.z - pz;
+        const dSq = dx * dx + dz * dz;
+        if (dSq > this.pickupRadiusSq || dSq >= bestSq - TIE_EPSILON) continue;
+        const ox = b.pos.x - f.pos.x;
+        const oz = b.pos.z - f.pos.z;
+        if (ox * fx + oz * fz < Math.sqrt(ox * ox + oz * oz) * this.pickupCos) continue;
+        // The fork point sits in the slot's own cell: only the rest of the world must leave it room.
+        if (this.world.clearance(px, pz, b.id, false, aim.column) < 0) continue;
+        best = i;
+        bestSq = dSq;
+        continue;
+      }
       const cell = b.cell;
       // Only the top of a stack can be lifted; the stack's base stands for the whole cell in collisions.
       let ignore = b.id;
@@ -133,6 +174,21 @@ export class Interaction {
     const pz = f.pos.z + Math.cos(f.heading) * this.reach;
     const cellX = Math.floor(px + this.halfWidth);
     const cellZ = Math.floor(pz + this.halfDepth);
+    out.slot = -1;
+
+    // Facing a rack column with the forks at the selected slot and the load at its face: that slot, or nothing.
+    const aim = this.aim;
+    if (aim.column >= 0 && aim.reach) {
+      const slot = this.grid.slotOf(aim.column, aim.level);
+      if (slot < 0 || this.grid.slotBox(slot) >= 0) return false;
+      const cell = this.grid.columns[aim.column].cell;
+      out.x = cell.x;
+      out.z = cell.z;
+      out.zoneIndex = -1;
+      out.level = aim.level;
+      out.slot = slot;
+      return true;
+    }
 
     let nearestSq = Infinity;
     let nearestX = 0;

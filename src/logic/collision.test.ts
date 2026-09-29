@@ -5,7 +5,7 @@ import { BOX_SETTLE_SPEED, circleRectContact, CollisionWorld, createContact, poi
 const BOUNDS: Rect = { minX: -5, minZ: -5, maxX: 5, maxZ: 5 };
 
 function box(id: string, x: number, z: number, carried = false): BoxState {
-  return { id, color: 'blue', symbol: 'circle', kind: 'standard', pos: { x, z }, cell: null, level: 0, carried, zoneId: null, correct: false };
+  return { id, color: 'blue', symbol: 'circle', kind: 'standard', pos: { x, z }, cell: null, level: 0, carried, zoneId: null, slotId: null, correct: false };
 }
 
 describe('circleRectContact', () => {

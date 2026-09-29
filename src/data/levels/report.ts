@@ -4,10 +4,11 @@
  * cells). Pure: the script loads the registry and prints what this returns. Metric definitions: docs/LEVELS.md.
  */
 import { usesSymbols } from '../../core/sorting';
+import { slotsOf } from '../../core/racks';
 import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import type { LevelSource } from './index';
-import { checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
+import { DEAD_END_STATES, checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
 import { LevelGrid, boxOfCode, lift, stacksOf, type Move } from './solver';
 
 export interface ReportOptions {
@@ -15,6 +16,8 @@ export interface ReportOptions {
   timings?: boolean;
   /** Work budget of the exact move search (see solver.minMoves `maxWork`). */
   maxWork?: number;
+  /** States the dead-end check expands per level (see solver.deadEnds `maxStates`; default DEAD_END_STATES). */
+  deadEndStates?: number;
 }
 
 /** Levels named on the command line: an order number ("23"), a position ("#23"), an id or a file name. */
@@ -34,7 +37,10 @@ export function levelsReport(sources: readonly LevelSource[], args: readonly str
   const selected = args.length > 0 ? selectSources(sources, args) : sources;
   const measured = selected.map((source) => {
     const started = performance.now();
-    const metrics = levelMetrics(source.level, options.maxWork === undefined ? {} : { maxWork: options.maxWork });
+    const metrics = levelMetrics(source.level, {
+      ...(options.maxWork === undefined ? {} : { maxWork: options.maxWork }),
+      deadEndStates: options.deadEndStates ?? DEAD_END_STATES,
+    });
     return { source, metrics, ms: performance.now() - started, checks: checkTargets(metrics, source.targets) };
   });
   const out: string[] = [];
@@ -60,6 +66,31 @@ function extraText(m: LevelMetrics): string {
   return m.moves.exact ? String(m.extra.lower) : `≥${m.extra.lower}`;
 }
 
+/**
+ * Dead ends found: exact once every reachable state was explored; otherwise «≥ n», or «0 (n)» = none among the n
+ * states explored. «+k?» = k more the check could not decide.
+ */
+function deadEndText(m: LevelMetrics): string {
+  const d = m.deadEnds;
+  if (!d) return '—';
+  const undecided = d.unknown > 0 ? `+${d.unknown}?` : '';
+  if (d.complete) return `${d.found}${undecided}`;
+  return d.found > 0 ? `≥${d.found}${undecided}` : `0${undecided} (${d.explored})`;
+}
+
+function deadEndDetail(m: LevelMetrics): string {
+  const d = m.deadEnds;
+  if (!d) return '—';
+  const undecided = d.unknown > 0 ? ` + ${d.unknown} sin decidir` : '';
+  const undo = d.deepChecks > 0 ? `, ${d.deepChecks} sin vuelta atrás directa` : '';
+  return `${d.found}${undecided} (${d.explored} estados, ${d.complete ? 'todos' : 'parcial'}${undo})`;
+}
+
+/** «6 (4 con pista, 2 libres)». */
+function slotsText(m: LevelMetrics): string {
+  return `${m.slots.total} (${m.slots.cued} con pista, ${m.slots.free} ${m.slots.free === 1 ? 'libre' : 'libres'})`;
+}
+
 function heading(source: LevelSource): string {
   const { level } = source;
   const canonical = source.text === undefined || source.text === renderLevel(level, source);
@@ -77,6 +108,8 @@ function summaryBlock(source: LevelSource, m: LevelMetrics): string[] {
     `ambiguas ${m.ambiguous}`,
   ];
   if (m.sortings !== null) parts.push(`trampas ${m.traps}`, `repartos ${m.sortings}`);
+  if (m.slots.total > 0) parts.push(`huecos ${slotsText(m)}`);
+  parts.push(`callejones ${deadEndText(m)}`);
   return [heading(source), ...renderMapLines(grid), ...(legend.length > 0 ? ['', ...legend] : []), parts.join(' · ')];
 }
 
@@ -102,8 +135,10 @@ function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]
     ['libre', pct(m.freeFloorPct), 'casillas sin estantería, planta ni caja al empezar'],
     ['ambiguas', String(m.ambiguous), 'cajas con más de un destino posible (zona o piso de pila)'],
     ['trampas', String(m.traps), 'colocaciones aceptadas que dejan otra caja sin zona'],
-    ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos)'],
+    ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos o estanterías)'],
+    ['callejones', deadEndDetail(m), 'estados desde los que ya no se puede terminar (desde un plan mínimo; --callejones N)'],
   ];
+  if (m.slots.total > 0) rows.push(['huecos', slotsText(m), 'huecos de estantería almacenable (docs/RACKS.md)']);
   const w0 = Math.max(...rows.map((r) => r[0].length));
   const w1 = Math.max(...rows.map((r) => r[1].length));
   lines.push('Métricas', ...rows.map(([name, value, what]) => `  ${name.padEnd(w0)}  ${value.padEnd(w1)}  ${what}`), '');
@@ -144,29 +179,40 @@ function blockerIds(m: LevelMetrics): string {
 function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
   const model = new LevelGrid(level);
   const symbols = usesSymbols(level);
+  const slots = slotsOf(level);
   let stacks = stacksOf(model, level);
   const width = String(plan.length).length;
+  /** A rack slot: «hueco 2 de R» (level from the bottom, the rack's map character). */
+  const slotName = (pos: number) => {
+    const slot = slots[pos - model.cellCount];
+    const cell = model.cellOf(model.slotCell[pos - model.cellCount]);
+    return { text: `hueco ${slot.level + 1} de ${grid[cell.z][cell.x]}`, cell };
+  };
   return plan.map((move, i) => {
     const code = stacks[move.from].slice(-1);
     const box = boxOfCode(code);
     const lifted = lift(stacks, move.from);
-    const height = lifted[move.drop].length;
-    const at = model.cellOf(move.drop);
-    const from = model.cellOf(move.from);
-    const target = model.steps[move.drop]
-      ? `zona ${grid[at.z][at.x]}`
-      : height > 0
-        ? 'encima de otra caja'
-        : 'suelo (aparcar)';
+    const height = model.isSlot(move.drop) ? 0 : lifted[move.drop].length;
+    const at = model.isSlot(move.drop) ? slotName(move.drop).cell : model.cellOf(move.drop);
+    const from = model.isSlot(move.from) ? slotName(move.from) : null;
+    const fromCell = from ? from.cell : model.cellOf(move.from);
+    const target = model.isSlot(move.drop)
+      ? slotName(move.drop).text + (model.steps[move.drop] ? '' : ' (libre: aparcar)')
+      : model.steps[move.drop]
+        ? `zona ${grid[at.z][at.x]}`
+        : height > 0
+          ? 'encima de otra caja'
+          : 'suelo (aparcar)';
     lifted[move.drop] += code;
     stacks = lifted;
     const what = `caja ${COLOR_NAMES[box.color]}${symbols ? ` ${SYMBOL_GLYPHS[box.symbol]}` : ''}`;
-    return `  ${String(i + 1).padStart(width)}. ${what} (${from.x},${from.z}) → ${target} (${at.x},${at.z})${height > 0 ? `, piso ${height + 1}` : ''}`;
+    const source = `(${fromCell.x},${fromCell.z})${from ? `, ${from.text}` : ''}`;
+    return `  ${String(i + 1).padStart(width)}. ${what} ${source} → ${target} (${at.x},${at.z})${height > 0 ? `, piso ${height + 1}` : ''}`;
   });
 }
 
 function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: number; checks: TargetCheck[] }[], timings: boolean): string[] {
-  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'dific.'];
+  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'callej.', 'huecos', 'dific.'];
   if (timings) head.push('ms');
   const rows = measured.map(({ metrics: m, ms, checks }) => {
     const row = [
@@ -185,6 +231,8 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
       String(m.ambiguous),
       String(m.traps),
       m.sortings === null ? '—' : String(m.sortings),
+      deadEndText(m),
+      m.slots.total === 0 ? '—' : `${m.slots.total}/${m.slots.cued}`,
       checks.length === 0 ? '—' : `${checks.every((c) => c.ok) ? 'OK' : 'NO'} ${checks.filter((c) => c.ok).length}/${checks.length}`,
     ];
     if (timings) row.push(ms.toFixed(0));
@@ -201,6 +249,8 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
     'mov. = mínimo de movimientos de caja (≥ = cota inferior: la búsqueda exacta se cortó) · extra = mov. − oblig.',
     'oblig. = cajas que deben moverse · bloq. = cajas que hay que apartar antes · estr. = casillas sin giro con carga',
     'libre = % de casillas vacías al empezar · ambig. = cajas con varios destinos · tramp./repart. = niveles con símbolos',
+    'callej. = callejones encontrados (entre paréntesis: estados explorados, si la búsqueda no los cubrió todos)',
+    'huecos = huecos de estantería almacenable / con pista (docs/RACKS.md)',
     'dific. = objetivos «dificultad:» del archivo que se cumplen · detalle y plan: npm run levels -- <nivel>',
   ];
 }

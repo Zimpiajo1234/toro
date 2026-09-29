@@ -81,7 +81,8 @@ de ≥ 2 casillas donde se gira con carga, nada tapado por estanterías.
   `fitsLevel`, `takesNext`, `specificity`, `matchKind`, `usesSymbols` (un nivel usa símbolos si alguna caja o zona
   nombra uno) y `assignBoxes` (emparejamiento por caminos aumentantes).
 - `validateLevel`: criterios válidos (símbolo desconocido, zona sin criterio → error), `symbol` + `recipe` de más de
-  1 → error; en niveles con símbolos: sin pilas (`stackLimit` 1, sin recetas ni pilas iniciales), nº cajas = nº zonas,
+  1 → error; en niveles con símbolos (sin estanterías almacenables, que tienen sus reglas: docs/RACKS.md): sin pilas
+  (`stackLimit` 1, sin recetas ni pilas iniciales), nº cajas = nº zonas,
   existe un reparto completo (si no, nombra la caja que se queda sin zona); los niveles sin símbolos mantienen la regla
   del multiconjunto de colores; ninguno empieza resuelto (con la aceptación general).
 - Lógica: `refreshZone` usa `fitsLevel` (abajo `accepts`, encima receta); imán por especificidad; eventos con la misma

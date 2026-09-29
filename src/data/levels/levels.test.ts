@@ -11,10 +11,13 @@ import {
   LevelGrid,
   blockedZones,
   boxCode,
+  deadEnds,
   isFree,
+  minMoves,
   misplacedBoxes,
   occupancyOf,
   reachableFrom,
+  replayMoves,
   solve,
   sortable,
   stacksOf,
@@ -94,6 +97,14 @@ function hiddenItems(level: LevelData): string[] {
 }
 
 const colorsOf = (level: LevelData) => new Set(level.boxes.map((b) => b.color));
+
+/** Shortest plans, searched once per level for the tests below that need one. */
+const shortest = new Map<string, ReturnType<typeof minMoves>>();
+const shortestOf = (level: LevelData) => {
+  let result = shortest.get(level.id);
+  if (!result) shortest.set(level.id, (result = minMoves(level)));
+  return result;
+};
 /** Chapters: classic (1–12), stacking (13–18), sorting by color + symbol (19–24). */
 const SORTING = LEVELS.filter((l) => usesSymbols(l));
 const CLASSIC = LEVELS.filter((l) => (l.stackLimit ?? 1) === 1 && !usesSymbols(l));
@@ -476,6 +487,14 @@ describe('sorting chapter (docs/SORTING.md)', () => {
     expect(level.boxes.some((b) => ahead.some((c) => c.x === b.x && c.z === b.z))).toBe(true);
   });
 
+  it.each(SORTING.map((l) => [l.id, l] as const))('%s never starts with a box hiding the engraving of a symbol zone that does not take it', (_, level) => {
+    // A box on a pad hides its engraving (docs/SORTING.md): only colour pads may start covered by a wrong box.
+    for (const z of level.zones.filter((zone) => zone.symbol !== undefined)) {
+      const onIt = level.boxes.filter((b) => b.x === z.x && b.z === z.z);
+      for (const b of onIt) expect(fits(z, b), `${b.id} on ${z.id}`).toBe(true);
+    }
+  });
+
   it.each(SORTING.map((l) => [l.id, l] as const))('%s flows away from the camera', (_, level) => {
     // The camera sits toward +x / +z: driving away keeps A/D reading as screen left / right. Every zone lies further
     // from the camera than the forklift starts, so each delivery heads up the screen.
@@ -559,9 +578,11 @@ describe('special layouts', () => {
 });
 
 describe('solvability', () => {
-  it('solver model: turning while carrying needs two cells of clearance (no reverse gear)', () => {
-    expect(solve(corridorLevel(3), { allowParking: true, maxExpansions: 200 }).solved).toBe(false);
-    expect(solve(corridorLevel(4), { allowParking: true, maxExpansions: 200 })).toMatchObject({ solved: true, moves: 1 });
+  it('solver model: turning while carrying needs two cells of clearance, even with the reverse gear', () => {
+    for (const reverse of [true, false]) {
+      expect(solve(corridorLevel(3), { allowParking: true, maxExpansions: 200, reverse }).solved).toBe(false);
+      expect(solve(corridorLevel(4), { allowParking: true, maxExpansions: 200, reverse })).toMatchObject({ solved: true, moves: 1 });
+    }
   });
 
   it.each(LEVELS.map((l) => [l.id, l] as const))('%s: every box and zone is reachable from the start', (_, level) => {
@@ -569,7 +590,22 @@ describe('solvability', () => {
   });
 
   it.each(LEVELS.map((l) => [l.id, l] as const))('%s: can be solved with the conservative carrying model', (_, level) => {
-    const result = solve(level, { allowParking: true, maxExpansions: 2000 });
-    expect(result.solved).toBe(true);
+    // The greedy search and the exact search's plan, replayed move by move.
+    expect(solve(level, { allowParking: true, maxExpansions: 2000 }).solved).toBe(true);
+    const result = shortestOf(level);
+    expect(result.unsolvable).toBe(false);
+    expect(result.plan).not.toBeNull();
+    expect(replayMoves(level, result.plan!)).toBe(true);
+  });
+
+  it.each(LEVELS.map((l) => [l.id, l] as const))('%s: no dead ends («callejones»): every slip along a shortest plan can be undone', (_, level) => {
+    // Every state of a shortest plan is expanded: all the moves a player could make there are checked, and each one
+    // can be undone with the reverse gear (the box carried back, the forklift back in the same region), so the level
+    // can always still be finished. docs/LEVELS.md, «callejones».
+    const plan = shortestOf(level).plan!;
+    const result = deadEnds(level, { plan, maxStates: plan.length + 1 });
+    expect(result.explored).toBe(plan.length + 1);
+    expect(result).toMatchObject({ found: 0, unknown: 0, deepChecks: 0 });
+    expect(result.checked).toBeGreaterThan(result.explored);
   });
 });

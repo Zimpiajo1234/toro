@@ -89,3 +89,14 @@ describe('GamepadReader', () => {
     expect(throwing.read().actionPressed).toBe(false);
   });
 });
+
+describe('GamepadReader: fork levels (docs/RACKS.md)', () => {
+  it('reports X as one slot up and B as one slot down, only on the press edge', () => {
+    const reader = readerWith([[pad({ pressed: [2] })], [pad({ pressed: [2] })], [pad()], [pad({ pressed: [1] })], [pad({ pressed: [1, 2] })]]);
+    expect(reader.read().forkStep).toBe(1);
+    expect(reader.read().forkStep).toBe(0); // held
+    expect(reader.read().forkStep).toBe(0);
+    expect(reader.read().forkStep).toBe(-1);
+    expect(reader.read().forkStep).toBe(1); // X pressed now, B still held
+  });
+});

@@ -49,9 +49,10 @@ function snapshot(level: LevelData = LEVEL): GameSnapshot {
   return {
     level,
     forklift: { pos: cellToWorld(level.forklift, size), heading: Math.PI / 2, speed: 0, forkLift: 0, forkHeight: 0, carrying: null, wheelSpin: 0, steer: 0 },
-    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, symbol: symbolOf(b), kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, correct: false })),
-    zones: level.zones.map((z) => ({ id: z.id, color: z.color ?? null, accepts: criteriaOf(z), cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color ?? null], stack: [], occupiedBy: null, satisfied: false, next: z.color ?? null })),
-    hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0 },
+    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, symbol: symbolOf(b), kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, slotId: null, correct: false })),
+    zones: level.zones.map((z) => ({ id: z.id, color: z.color ?? null, accepts: criteriaOf(z), cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color ?? null], stack: [], occupiedBy: null, satisfied: false, next: z.color ?? null, destined: null })),
+    slots: [],
+    hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null },
     completed: false,
     progress: { satisfied: 0, total: level.zones.length },
   };

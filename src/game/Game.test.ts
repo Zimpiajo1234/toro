@@ -13,7 +13,7 @@ import { Game } from './Game';
 const fakes = vi.hoisted(() => {
   const sim = {
     /** Every simulation Game created, oldest first (a new one = the level was (re)loaded). */
-    states: [] as { level: { id: string }; inputs: { x: number; z: number; throttle: number; steer: number; action: boolean }[] }[],
+    states: [] as { level: { id: string }; inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] }[],
     /** Events the current simulation emits on its next update. */
     queue: [] as unknown[],
     /** Next GameRenderer construction throws (no WebGL context). */
@@ -23,7 +23,7 @@ const fakes = vi.hoisted(() => {
 
   class FakeGameState {
     readonly level: { id: string };
-    readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean }[] = [];
+    readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
     private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false };
     constructor(level: { id: string }) {
       this.level = level;
@@ -32,13 +32,17 @@ const fakes = vi.hoisted(() => {
     getSnapshot() {
       return this.snapshot;
     }
-    update(_dt: number, input: { move: { x: number; z: number }; drive?: { throttle: number; steer: number }; actionPressed: boolean }) {
+    update(
+      _dt: number,
+      input: { move: { x: number; z: number }; drive?: { throttle: number; steer: number }; actionPressed: boolean; forkStep?: number },
+    ) {
       this.inputs.push({
         x: input.move.x,
         z: input.move.z,
         throttle: input.drive?.throttle ?? 0,
         steer: input.drive?.steer ?? 0,
         action: input.actionPressed,
+        forkStep: input.forkStep ?? 0,
       });
       if (sim.states[sim.states.length - 1] !== this) return [];
       const events = sim.queue.splice(0) as { type: string }[];
@@ -176,6 +180,25 @@ describe('Game input mapping', () => {
     press('KeyD', 'd');
     advance(1 / 60);
     expect(current().inputs.at(-1)!).toMatchObject({ x: 0, z: 0, throttle: -1, steer: -1 });
+  });
+
+  it('passes the fork level keys to the simulation while playing (F up, V down), never from the title', () => {
+    const { game } = setup();
+    press('KeyF', 'f');
+    advance(1 / 60);
+    expect(current().inputs.at(-1)!.forkStep).toBe(0); // title: the diorama gets no control
+    release('KeyF', 'f');
+    game.start(0);
+    advance(1 / 60);
+    press('KeyF', 'f');
+    advance(1 / 60);
+    expect(current().inputs.at(-1)!.forkStep).toBe(1);
+    advance(1 / 60);
+    expect(current().inputs.at(-1)!.forkStep).toBe(0); // an edge: one frame
+    release('KeyF', 'f');
+    press('KeyV', 'v');
+    advance(1 / 60);
+    expect(current().inputs.at(-1)!.forkStep).toBe(-1);
   });
 
   it('treats Space on a stray-focused HUD button as a pick-up during play', () => {

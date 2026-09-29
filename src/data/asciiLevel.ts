@@ -8,7 +8,19 @@
  *   level tests check it for every shipped level) and rendering the result again gives the same text.
  * Pure: no DOM, no three.
  */
-import { BOX_KINDS, type BoxKind, type ColorId, type LevelData, type LevelZone, type SymbolId, type WallSide } from '../core/types';
+import {
+  BOX_KINDS,
+  MAX_RACK_SLOTS,
+  type BoxKind,
+  type ColorId,
+  type Facing,
+  type LevelData,
+  type LevelRack,
+  type LevelZone,
+  type SymbolId,
+  type WallSide,
+} from '../core/types';
+import { racksOf, rackCellOf, runsAlongX } from '../core/racks';
 import { DifficultySyntaxError, formatTargets, parseTargets, type DifficultyTarget } from './difficulty';
 import { validateLevel } from './validateLevel';
 
@@ -124,6 +136,19 @@ const KIND_WORDS: Readonly<Record<string, BoxKind>> = {
 };
 const WALL_WORDS: Readonly<Record<string, WallSide>> = { norte: 'north', north: 'north', oeste: 'west', west: 'west' };
 const WALL_NAMES: Readonly<Record<WallSide, string>> = { north: 'norte', west: 'oeste' };
+/** Which way a storage rack's front looks (docs/RACKS.md). */
+const FACING_WORDS: Readonly<Record<string, Facing>> = {
+  norte: 'north',
+  north: 'north',
+  este: 'east',
+  east: 'east',
+  sur: 'south',
+  south: 'south',
+  oeste: 'west',
+  west: 'west',
+};
+/** Spanish facing names used when rendering. */
+export const FACING_NAMES: Readonly<Record<Facing, string>> = { north: 'norte', east: 'este', south: 'sur', west: 'oeste' };
 const TIER_WORDS: ReadonlySet<string> = new Set(['altura', 'alturas', 'balda', 'baldas', 'nivel', 'niveles', 'piso', 'pisos']);
 
 type HeaderKey = 'id' | 'limit' | 'tema' | 'ventanas' | 'rumbo' | 'dificultad' | 'nota';
@@ -143,6 +168,7 @@ const HEADER_KEYS: Readonly<Record<string, HeaderKey>> = {
 };
 const HEADER_LIST = 'id, limit, tema, ventanas, rumbo, dificultad o nota';
 const ELEMENTS = ['caja', 'pila', 'zona', 'estantería', 'planta'];
+const RACK_EXAMPLE = '«a = estantería frente sur: azul / ▲ + caja coral / libre»';
 const COLOR_LIST = 'azul, menta, amarillo, coral o lavanda';
 const SYMBOL_LIST = '● ▲ ■ ◆ ✚ (o círculo, triángulo, cuadrado, rombo, cruz)';
 
@@ -187,7 +213,7 @@ interface Pos {
 }
 
 interface Tok {
-  kind: 'word' | ',' | '+' | 'id';
+  kind: 'word' | ',' | '+' | 'id' | ':' | '/' | '|';
   text: string;
   /** Normalised text (words), the raw text otherwise. */
   key: string;
@@ -210,6 +236,22 @@ interface ZoneSpec {
   idPos?: Pos;
 }
 
+/** One slot of a storage rack in the legend: its cue (none = «libre») and the box that starts in it. */
+interface SlotSpec {
+  color?: ColorId;
+  symbol?: SymbolId;
+  box?: BoxSpec;
+}
+
+/** A storage rack character: «estantería frente sur: … | …» (docs/RACKS.md). */
+interface RackSpec {
+  facing: Facing;
+  /** Per column (along the rack), slots bottom → top. */
+  columns: SlotSpec[][];
+  id?: string;
+  idPos?: Pos;
+}
+
 interface LegendDef {
   char: string;
   /** Where the character is defined in the legend. */
@@ -220,6 +262,8 @@ interface LegendDef {
   shelfTiers?: number;
   /** A plant character: its variant (undefined = by position, like «p»). */
   plant?: { variant?: number };
+  /** A storage rack character. */
+  rack?: RackSpec;
 }
 
 interface Header {
@@ -358,6 +402,7 @@ class LevelParser {
     // Map cells.
     const forklifts: { char: string; x: number; z: number }[] = [];
     const shelfCells = new Map<string, Set<number>>();
+    const rackCells = new Map<string, Set<number>>();
     const plants: { x: number; z: number; variant?: number }[] = [];
     const cellsOf = new Map<string, { x: number; z: number }[]>();
     for (let z = 0; z < depth; z++) {
@@ -379,6 +424,10 @@ class LevelParser {
           const set = shelfCells.get(ch) ?? new Set<number>();
           set.add(z * width + x);
           shelfCells.set(ch, set);
+        } else if (def.rack) {
+          const set = rackCells.get(ch) ?? new Set<number>();
+          set.add(z * width + x);
+          rackCells.set(ch, set);
         } else if (def.plant) {
           plants.push({ x, z, ...(def.plant.variant === undefined ? {} : { variant: def.plant.variant }) });
         } else {
@@ -389,7 +438,14 @@ class LevelParser {
       }
     }
     for (const def of legendOrder) {
-      const used = def.shelfTiers !== undefined ? shelfCells.has(def.char) : def.plant ? rowsContain(rows, def.char) : cellsOf.has(def.char);
+      const used =
+        def.shelfTiers !== undefined
+          ? shelfCells.has(def.char)
+          : def.rack
+            ? rackCells.has(def.char)
+            : def.plant
+              ? rowsContain(rows, def.char)
+              : cellsOf.has(def.char);
       if (!used) this.fail(def.pos, `«${def.char}» está en la leyenda pero no en el mapa`);
     }
 
@@ -428,6 +484,61 @@ class LevelParser {
     }
     shelves.sort((a, b) => a.z - b.z || a.x - b.x);
 
+    // Storage racks: every connected group of one rack character is one rack, a straight run 1 cell deep along its
+    // front (a row for a front north / south, a column for east / west) with one legend column per cell. Racks come
+    // in legend order, then reading order.
+    const racks: Record<string, unknown>[] = [];
+    const rackOrigins: RackOrigin[] = [];
+    for (const def of legendOrder) {
+      const spec = def.rack;
+      const cells = rackCells.get(def.char);
+      if (!spec || !cells) continue;
+      const groups: number[][] = [];
+      const seen = new Set<number>();
+      for (const start of [...cells].sort((a, b) => a - b)) {
+        if (seen.has(start)) continue;
+        const group = floodFill(cells, start, width, depth).sort((a, b) => a - b);
+        for (const c of group) seen.add(c);
+        groups.push(group);
+      }
+      if (spec.id !== undefined && groups.length > 1)
+        this.fail(spec.idPos ?? def.pos, `«${def.char}» lleva un id propio y hay ${groups.length} estanterías con ese carácter: un id solo puede ir en una`);
+      for (const group of groups) {
+        const xs = group.map((c) => c % width);
+        const zs = group.map((c) => Math.floor(c / width));
+        const x0 = Math.min(...xs);
+        const z0 = Math.min(...zs);
+        const alongX = runsAlongX(spec.facing);
+        const straight = alongX ? zs.every((z) => z === z0) : xs.every((x) => x === x0);
+        const startPos = cellPos(x0, z0);
+        if (!straight)
+          this.fail(
+            startPos,
+            `la estantería «${def.char}» que empieza aquí no es una ${alongX ? 'fila' : 'columna'} recta: con el frente ${FACING_NAMES[spec.facing]} va a lo largo de una ${alongX ? 'fila' : 'columna'}, con 1 casilla de fondo; para dos estanterías pegadas usa otro carácter`,
+          );
+        if (group.length !== spec.columns.length)
+          this.fail(
+            startPos,
+            `la estantería «${def.char}» que empieza aquí ocupa ${group.length} ${plural(group.length, 'casilla', 'casillas')} y su leyenda describe ${spec.columns.length} ${plural(spec.columns.length, 'columna', 'columnas')}: una columna por casilla, separadas con «|»`,
+          );
+        const rackIndex = racks.length;
+        racks.push({
+          id: spec.id ?? `r${rackIndex + 1}`,
+          x: x0,
+          z: z0,
+          w: group.length,
+          facing: spec.facing,
+          columns: spec.columns.map((slots) =>
+            slots.map((slot) => ({
+              ...(slot.color === undefined ? {} : { color: slot.color }),
+              ...(slot.symbol === undefined ? {} : { symbol: slot.symbol }),
+            })),
+          ),
+        });
+        rackOrigins.push({ def, cell: startPos, columns: group.map((c) => cellPos(c % width, Math.floor(c / width))), ...(spec.idPos ? { idPos: spec.idPos } : {}) });
+      }
+    }
+
     // Zones and boxes, in legend order (a character used on several cells: in reading order).
     const zones: Record<string, unknown>[] = [];
     const boxes: Record<string, unknown>[] = [];
@@ -464,8 +575,31 @@ class LevelParser {
         }
       }
     }
+    // Boxes that start in rack slots: numbered after the floor boxes, rack by rack, column by column, bottom → top.
+    racks.forEach((rack, i) => {
+      const origin = rackOrigins[i];
+      const spec = origin.def.rack!;
+      spec.columns.forEach((slots, column) => {
+        const cell = rackCellOf({ x: rack.x as number, z: rack.z as number, facing: spec.facing }, column);
+        slots.forEach((slot, level) => {
+          const box = slot.box;
+          if (!box) return;
+          boxes.push({
+            id: box.id ?? `b${boxes.length + 1}`,
+            color: box.color,
+            ...(box.symbol === undefined ? {} : { symbol: box.symbol }),
+            x: cell.x,
+            z: cell.z,
+            level,
+            ...(box.kind === undefined ? {} : { kind: box.kind }),
+          });
+          boxOrigins.push({ def: origin.def, cell: origin.columns[column], ...(box.idPos ? { idPos: box.idPos } : {}) });
+        });
+      });
+    });
     this.checkIds('caja', boxes, boxOrigins);
     this.checkIds('zona', zones, zoneOrigins);
+    this.checkIds('estantería', racks, rackOrigins);
 
     const raw = {
       id: idHeader.value,
@@ -477,6 +611,7 @@ class LevelParser {
       boxes,
       zones,
       shelves,
+      ...(racks.length > 0 ? { racks } : {}),
       decor: { plants, windows },
       ...(themeHeader ? { theme: themeHeader.value } : {}),
     };
@@ -492,6 +627,7 @@ class LevelParser {
         size: `${width}×${depth}`,
         boxes: boxOrigins,
         zones: zoneOrigins,
+        racks: rackOrigins,
         boxIds: boxes.map((b) => String(b.id)),
         zoneIds: zones.map((z) => String(z.id)),
         cell: cellPos,
@@ -645,7 +781,7 @@ class LevelParser {
       const pos = at(start.line, start.column + i);
       if (/\s/.test(c)) {
         i++;
-      } else if (c === ',' || c === '+') {
+      } else if (c === ',' || c === '+' || c === ':' || c === '/' || c === '|') {
         toks.push({ kind: c, text: c, key: c, pos });
         i++;
       } else if (c === '(') {
@@ -664,7 +800,7 @@ class LevelParser {
         i = j;
       } else {
         let j = i;
-        while (j < text.length && !/[\s,+()]/.test(text[j]) && !GLYPH_CHARS.has(text[j])) j++;
+        while (j < text.length && !/[\s,+():/|]/.test(text[j]) && !GLYPH_CHARS.has(text[j])) j++;
         const word = text.slice(i, j);
         toks.push({ kind: 'word', text: word, key: norm(word), pos });
         i = j;
@@ -676,6 +812,13 @@ class LevelParser {
   /** «zona … + caja …», «pila …», «estantería 3 alturas», «planta variante 2». */
   private readDescription(def: Omit<LegendDef, 'char' | 'pos'>, toks: Tok[], eqPos: Pos, chars: string): void {
     if (toks.length === 0) this.fail(eqPos, `falta qué es «${chars}» después del «=»`);
+    // A storage rack («estantería frente sur: …») has its own grammar: «+» joins a slot's cue and its box.
+    if ((toks[0].key === 'estanteria' || toks[0].key === 'estante') && toks[1]?.key === 'frente') {
+      def.rack = this.readRack(toks);
+      return;
+    }
+    const stray = toks.find((t) => t.kind === ':' || t.kind === '/' || t.kind === '|');
+    if (stray) this.fail(stray.pos, `«${stray.text}» solo va en una estantería almacenable, p. ej. ${RACK_EXAMPLE}`);
     const parts: Tok[][] = [[]];
     for (const t of toks) {
       if (t.kind === '+') {
@@ -834,11 +977,105 @@ class LevelParser {
     }
   }
 
+  /**
+   * «estantería frente sur [(id)]: hueco / hueco | hueco …» — columns along the rack separated by «|», each one's
+   * slots bottom → top separated by «/»; a slot is its cue («libre», a colour, a symbol or both) and optionally
+   * «+ caja …», the box that starts in it.
+   */
+  private readRack(toks: Tok[]): RackSpec {
+    const [head, frente] = toks;
+    const dir = toks[2];
+    const facing = dir?.kind === 'word' ? lookup(FACING_WORDS, dir.key) : undefined;
+    if (!facing) this.fail((dir ?? frente).pos, `¿hacia dónde mira el frente? «frente norte», «frente este», «frente sur» o «frente oeste»${dir?.kind === 'word' ? suggest(dir.text, Object.keys(FACING_WORDS)) : ''}`);
+    let k = 3;
+    const spec: RackSpec = { facing, columns: [] };
+    if (toks[k]?.kind === 'id') {
+      spec.id = toks[k].text;
+      spec.idPos = toks[k].pos;
+      k++;
+    }
+    if (toks[k]?.kind !== ':')
+      this.fail((toks[k] ?? toks[k - 1]).pos, `después de «frente ${FACING_NAMES[facing]}» van dos puntos y los huecos de abajo arriba: ${RACK_EXAMPLE}`);
+    k++;
+    // Columns split by «|», slots by «/».
+    let column: SlotSpec[] = [];
+    let slot: Tok[] = [];
+    let slotPos = toks[k - 1].pos;
+    const endSlot = () => {
+      if (slot.length === 0) this.fail(slotPos, `falta un hueco: su pista (color, símbolo, ambos o «libre»), de abajo arriba, p. ej. ${RACK_EXAMPLE}`);
+      if (column.length === MAX_RACK_SLOTS)
+        this.fail(slot[0].pos, `una columna de estantería tiene como mucho ${MAX_RACK_SLOTS} huecos (suelo + 2); para otra columna, sepárala con «|»`);
+      column.push(this.readSlot(slot));
+      slot = [];
+    };
+    for (; k < toks.length; k++) {
+      const t = toks[k];
+      if (t.kind === '/' || t.kind === '|') {
+        slotPos = t.pos;
+        endSlot();
+        if (t.kind === '|') {
+          spec.columns.push(column);
+          column = [];
+        }
+        continue;
+      }
+      if (t.kind === ':') this.fail(t.pos, 'los dos puntos van una sola vez, tras «frente …»');
+      if (slot.length === 0) slotPos = t.pos;
+      slot.push(t);
+    }
+    endSlot();
+    spec.columns.push(column);
+    if (head.kind !== 'word') this.fail(head.pos, 'se esperaba «estantería»');
+    return spec;
+  }
+
+  /** One slot: «libre», «azul», «▲», «azul ■», each optionally «+ caja …». */
+  private readSlot(toks: Tok[]): SlotSpec {
+    const plus = toks.findIndex((t) => t.kind === '+');
+    const cue = plus >= 0 ? toks.slice(0, plus) : toks;
+    const rest = plus >= 0 ? toks.slice(plus + 1) : [];
+    const slot: SlotSpec = {};
+    if (cue.length === 0) this.fail(toks[0].pos, 'falta la pista del hueco antes del «+»: un color, un símbolo, ambos o «libre»');
+    let free = false;
+    for (const t of cue) {
+      if (t.kind !== 'word') this.fail(t.pos, `«${t.text}» sobra en la pista de un hueco`);
+      const c = lookup(COLOR_WORDS, t.key);
+      const s = lookup(SYMBOL_WORDS, t.key);
+      if (t.key === 'libre' || t.key === 'free') {
+        if (free || slot.color || slot.symbol) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        free = true;
+      } else if (c) {
+        if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        if (slot.color) this.fail(t.pos, 'un hueco pide un solo color');
+        slot.color = c;
+      } else if (s) {
+        if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        if (slot.symbol) this.fail(t.pos, 'un hueco pide un solo símbolo');
+        slot.symbol = s;
+      } else if (t.key === 'caja') {
+        this.fail(t.pos, 'la caja va después de la pista y un «+»: «libre + caja azul», «▲ + caja menta ▲»');
+      } else {
+        this.fail(t.pos, `palabra desconocida «${t.text}» en un hueco: color (${COLOR_LIST}), símbolo ${SYMBOL_LIST} o «libre»${suggest(t.text, [...WORDS_FOR_HINTS, 'libre'])}`);
+      }
+    }
+    if (plus >= 0) {
+      if (rest.length === 0) this.fail(toks[plus].pos, 'falta la caja después del «+»: «+ caja azul»');
+      const more = rest.findIndex((t) => t.kind === '+');
+      if (more >= 0) this.fail(rest[more].pos, 'un hueco guarda una sola caja');
+      const [head, ...box] = rest;
+      if (head.kind !== 'word' || head.key !== 'caja')
+        this.fail(head.pos, head.kind === 'word' && head.key === 'pila' ? 'en un hueco cabe una sola caja (no una pila)' : 'después del «+» va «caja …», p. ej. «+ caja coral»');
+      slot.box = this.readBox(box, head);
+    }
+    return slot;
+  }
+
   /** «3 alturas», «de 3 alturas», nothing (2 tiers). */
   private readShelf(toks: Tok[]): number {
     let tiers: number | undefined;
     let unit = false;
     for (const t of toks) {
+      if (t.kind === 'word' && t.key === 'frente') this.fail(t.pos, `una estantería almacenable se escribe «estantería frente sur: …», p. ej. ${RACK_EXAMPLE}`);
       if (t.kind !== 'word') this.fail(t.pos, `«${t.text}» sobra: escribe p. ej. «estantería 3 alturas»`);
       if (t.key === 'de' && tiers === undefined) continue;
       if (/^\d+$/.test(t.key) && tiers === undefined) {
@@ -870,7 +1107,7 @@ class LevelParser {
     return variant === undefined ? {} : { variant };
   }
 
-  private checkIds(what: 'caja' | 'zona', items: Record<string, unknown>[], origins: Origin[]): void {
+  private checkIds(what: 'caja' | 'zona' | 'estantería', items: Record<string, unknown>[], origins: Origin[]): void {
     const seen = new Map<string, number>();
     items.forEach((item, i) => {
       const id = String(item.id);
@@ -880,7 +1117,7 @@ class LevelParser {
         const [here, other] = origins[i].idPos ? [origins[i], origins[j]] : [origins[j], origins[i]];
         this.fail(
           here.idPos ?? here.def.pos,
-          `id repetido «${id}»: también es el de la ${what} «${other.def.char}» (línea ${other.def.pos.line}); los ids sin paréntesis son ${what === 'caja' ? 'b1, b2…' : 'z1, z2…'} por orden de leyenda`,
+          `id repetido «${id}»: también es el de la ${what} «${other.def.char}» (línea ${other.def.pos.line}); los ids sin paréntesis son ${what === 'caja' ? 'b1, b2…' : what === 'zona' ? 'z1, z2…' : 'r1, r2…'} por orden de leyenda`,
         );
       }
       seen.set(id, i);
@@ -899,6 +1136,9 @@ function structuredCloneDef(def: Omit<LegendDef, 'char' | 'pos'>): Omit<LegendDe
     ...(def.boxes ? { boxes: def.boxes.map((b) => ({ ...b })) } : {}),
     ...(def.shelfTiers === undefined ? {} : { shelfTiers: def.shelfTiers }),
     ...(def.plant ? { plant: { ...def.plant } } : {}),
+    ...(def.rack
+      ? { rack: { ...def.rack, columns: def.rack.columns.map((slots) => slots.map((slot) => ({ ...slot, ...(slot.box ? { box: { ...slot.box } } : {}) }))) } }
+      : {}),
   };
 }
 
@@ -925,6 +1165,11 @@ function floodFill(cells: ReadonlySet<number>, start: number, width: number, dep
   return group;
 }
 
+/** Where a storage rack came from: its legend entry, its first map cell and the cell of each column. */
+interface RackOrigin extends Origin {
+  columns: Pos[];
+}
+
 interface ValidationContext {
   title: Pos;
   map: Pos;
@@ -932,9 +1177,25 @@ interface ValidationContext {
   size: string;
   boxes: Origin[];
   zones: Origin[];
+  racks: RackOrigin[];
   boxIds: string[];
   zoneIds: string[];
   cell: (x: number, z: number) => Pos;
+}
+
+const SLOT_ORDINALS = ['de abajo', 'del medio', 'de arriba'];
+
+/** «el hueco de abajo de la columna 2 de la estantería «a»» (level / column from 0). */
+function slotText(rack: RackOrigin | undefined, column: number, level: number, levels: number): string {
+  const which = levels === 1 ? 'único' : levels === 2 ? (level === 0 ? 'de abajo' : 'de arriba') : SLOT_ORDINALS[level] ?? `${level + 1}`;
+  const col = rack && rack.columns.length > 1 ? ` de la columna ${column + 1}` : '';
+  return `el hueco ${which}${col} de la estantería «${rack?.def.char ?? '?'}»`;
+}
+
+/** «azul ●» for "blue/circle". */
+function kindText(kind: string): string {
+  const [color, symbol] = kind.split('/') as [ColorId, SymbolId];
+  return `${COLOR_NAMES[color] ?? color} ${SYMBOL_GLYPHS[symbol] ?? symbol}`;
 }
 
 /** validateLevel's message (English, no position) → a Spanish reason at the place the author has to fix. */
@@ -975,6 +1236,44 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
     const first = ctx.zones.find((o) => (o.def.zone?.recipe ?? [o.def.zone?.color]).includes(color));
     return { pos: first?.def.pos ?? ctx.title, reason: `faltan cajas ${name}: las zonas piden más de las que hay en el mapa` };
   }
+  if ((m = /^racks\[(\d+)\] column (\d+) has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
+    const rack = ctx.racks[Number(m[1])];
+    return {
+      pos: rack?.columns[Number(m[2])] ?? rack?.cell ?? ctx.title,
+      reason: `la estantería «${rack?.def.char ?? '?'}» se carga por delante y delante de esta casilla (la ${m[3]},${m[4]}) hay una pared, una estantería o una planta: déjale sitio o cambia su frente`,
+    };
+  }
+  if ((m = /^zones\[(\d+)\] asks for a stack: in a level with storage racks/.exec(message)))
+    return {
+      pos: zoneAt(Number(m[1]))?.def.pos ?? ctx.title,
+      reason: 'en un nivel con estanterías almacenables las zonas piden una sola caja: apilar en el suelo solo sirve para aparcar',
+    };
+  if (/^a level needs at least one zone or rack slot with a cue/.test(message))
+    return { pos: ctx.title, reason: 'el nivel necesita al menos una zona o un hueco de estantería con pista' };
+  if ((m = /^a level with storage racks needs one box per target \((\d+) boxes, (\d+) zones, (\d+) slots with a cue\)/.exec(message)))
+    return {
+      pos: ctx.title,
+      reason: `con estanterías, cada zona y cada hueco con pista lleva una caja: hay ${m[1]} cajas para ${m[2]} zonas y ${m[3]} huecos con pista (los huecos «libre» no cuentan)`,
+    };
+  if ((m = /^no complete assignment exists: box "([^"]+)"/.exec(message))) {
+    const origin = boxOf(m[1]);
+    return {
+      pos: origin?.cell ?? ctx.title,
+      reason: `no hay reparto completo: la caja «${origin?.def.char ?? m[1]}» de esta casilla siempre se queda sin zona ni hueco que la acepte`,
+    };
+  }
+  if ((m = /^more than one complete assignment: (?:zones\[(\d+)\]|racks\[(\d+)\]\.columns\[(\d+)\]\[(\d+)\]) may take (\S+) or (\S+)/.exec(message))) {
+    const kinds = `puede llevar la caja ${kindText(m[5])} o la ${kindText(m[6])}`;
+    const advice = 'con estanterías cada caja tiene un único sitio: afina las pistas (color, símbolo o ambos) hasta que solo quede un reparto';
+    if (m[1] !== undefined) {
+      const zone = zoneAt(Number(m[1]));
+      return { pos: zone?.def.pos ?? ctx.title, reason: `hay más de un reparto: la zona «${zone?.def.char ?? '?'}» ${kinds}; ${advice}` };
+    }
+    const rack = ctx.racks[Number(m[2])];
+    const column = Number(m[3]);
+    const levels = rack?.def.rack?.columns[column]?.length ?? 1;
+    return { pos: rack?.columns[column] ?? rack?.def.pos ?? ctx.title, reason: `hay más de un reparto: ${slotText(rack, column, Number(m[4]), levels)} ${kinds}; ${advice}` };
+  }
   if (/^level starts already solved/.test(message)) return { pos: ctx.title, reason: 'el nivel empieza ya resuelto: todas las zonas tienen lo que piden' };
   if (/^a level needs at least one zone/.test(message)) return { pos: ctx.title, reason: 'el nivel necesita al menos una zona' };
   if ((m = /^zones\[(\d+)\] asks for a symbol and a stack/.exec(message)))
@@ -996,6 +1295,8 @@ const ZONE_CHARS = '1234567890ABCDEFGIJKLMNOQRSTUVWXYZ';
 const BOX_CHARS = 'abcdefghijklmnoqrstuwxyzABCDEFGIJKLMNOQRSTUVWXYZ';
 /** «H» (it reads like a shelf frame) is kept for tall shelves (3+ tiers); other shelf kinds take the rest. */
 const TALL_SHELF_CHARS = 'HKLMNORSTUWXYZ';
+/** Storage racks: one character each. */
+const RACK_CHARS = 'RSTUVWXYZKLMNO';
 const SHELF_CHARS = 'EFGIJQVKLMNORSTUWXYZ';
 const PLANT_CHARS = 'PQRSTUVWXYZ';
 const SPARE_CHARS = '!$%&*;?@[]{}|~_\'"`/\\';
@@ -1013,7 +1314,7 @@ function take(preferred: string, used: Set<string>): string {
 interface RenderEntry {
   char: string;
   text: string;
-  group: 'zona' | 'caja' | 'otro';
+  group: 'zona' | 'caja' | 'estantería' | 'otro';
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -1036,6 +1337,23 @@ function boxText(box: LevelData['boxes'][number], id: string | null): string {
   if (box.kind && box.kind !== 'standard') words.push(`tipo ${box.kind}`);
   if (id !== null) words.push(`(${id})`);
   return words.join(' ');
+}
+
+/**
+ * «estantería frente sur: azul / ▲ + caja coral / libre | …». `boxAt(column, level)` gives the text of the box that
+ * starts in a slot («caja …»), or null.
+ */
+function rackText(rack: LevelRack, id: string | null, boxAt: (column: number, level: number) => string | null): string {
+  const columns = rack.columns.map((slots, column) =>
+    slots
+      .map((slot, level) => {
+        const cue = [slot.color ? COLOR_NAMES[slot.color] : '', slot.symbol ? SYMBOL_GLYPHS[slot.symbol] : ''].filter((w) => w !== '').join(' ');
+        const box = boxAt(column, level);
+        return `${cue === '' ? 'libre' : cue}${box === null ? '' : ` + ${box}`}`;
+      })
+      .join(' / '),
+  );
+  return `estantería frente ${FACING_NAMES[rack.facing]}${id === null ? '' : ` (${id})`}: ${columns.join(' | ')}`;
 }
 
 /** Legend entries in columns; a new line whenever the kind of entry changes. */
@@ -1156,6 +1474,21 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
 
   grid[level.forklift.z][level.forklift.x] = arrowOf(level.forklift.heading);
 
+  // Storage racks: one character each (their entries go after the zones and boxes).
+  const racks = racksOf(level);
+  const rackColumnAt = new Map<number, [number, number]>();
+  const rackChars = racks.map((rack, r) => {
+    const ch = take(RACK_CHARS, used);
+    rack.columns.forEach((_, column) => {
+      const cell = rackCellOf(rack, column);
+      grid[cell.z][cell.x] = ch;
+      rackColumnAt.set(key(cell.x, cell.z), [r, column]);
+    });
+    return ch;
+  });
+  /** Boxes that start in a rack slot (the rest are floor boxes and stacks). */
+  const inRack = (b: LevelData['boxes'][number]) => b.level !== undefined && rackColumnAt.has(key(b.x, b.z));
+
   // Zones and boxes by cell. Legend order = LevelData order: zones first, a box-only cell whenever the next zone
   // carries later boxes (a crossing order, never shipped, cannot be kept and gets normalised by the parser).
   interface Item {
@@ -1163,12 +1496,14 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     boxes: number[];
   }
   const boxesAt = new Map<number, number[]>();
-  level.boxes.forEach((b, i) => boxesAt.set(key(b.x, b.z), [...(boxesAt.get(key(b.x, b.z)) ?? []), i]));
+  level.boxes.forEach((b, i) => {
+    if (!inRack(b)) boxesAt.set(key(b.x, b.z), [...(boxesAt.get(key(b.x, b.z)) ?? []), i]);
+  });
   const itemAt = new Map<number, Item>();
   level.zones.forEach((z, i) => itemAt.set(key(z.x, z.z), { zone: i, boxes: boxesAt.get(key(z.x, z.z)) ?? [] }));
   for (const [cell, boxes] of boxesAt) if (!itemAt.has(cell)) itemAt.set(cell, { zone: null, boxes });
   const zoneItems = level.zones.map((z) => itemAt.get(key(z.x, z.z))!);
-  const boxItems = level.boxes.map((b) => itemAt.get(key(b.x, b.z))!);
+  const boxItems = level.boxes.filter((b) => !inRack(b)).map((b) => itemAt.get(key(b.x, b.z))!);
   const ordered: Item[] = [];
   const done = new Set<Item>();
   let zi = 0;
@@ -1184,6 +1519,7 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
   }
 
   const entries: RenderEntry[] = [];
+  const levelBoxes = level.boxes;
   let zoneCount = 0;
   let boxCount = 0;
   for (const item of ordered) {
@@ -1206,6 +1542,18 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     grid[any.z][any.x] = ch;
     entries.push({ char: ch, text: parts.join(' + '), group: item.zone !== null ? 'zona' : 'caja' });
   }
+
+  // Rack entries, in rack order; their boxes are numbered after the floor boxes (column by column, bottom → top).
+  racks.forEach((rack, r) => {
+    const boxAt = (column: number, level: number) => {
+      const cell = rackCellOf(rack, column);
+      const box = levelBoxes.find((b) => b.x === cell.x && b.z === cell.z && b.level === level);
+      if (!box) return null;
+      boxCount++;
+      return `caja ${boxText(box, box.id === `b${boxCount}` ? null : box.id)}`;
+    };
+    entries.push({ char: rackChars[r], text: rackText(rack, rack.id === `r${r + 1}` ? null : rack.id, boxAt), group: 'estantería' });
+  });
 
   return { grid, legend: layoutLegend([...entries, ...legendTail]) };
 }

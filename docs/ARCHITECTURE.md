@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers) |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids) |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -29,7 +29,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
 | `src/game/**` | **game** | Frame loop, input, wiring, flow between screens |
-| `src/integration/**` | integration | Cross-module tests (e.g. every level played by an autopilot on the real `GameState`) |
+| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves, the vehicle reverse gear and the rack fork steps) |
 | `src/App.tsx`, `src/main.tsx`, `src/styles/base.css` | shared shell | Canvas host + overlay; sets `themeCssVars(theme)` (background gradient + `--ui-*` tokens) from the theme of the level on screen, the same one Game hands the renderer |
 
 Data flow (one direction):
@@ -142,6 +142,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   A level uses symbols iff a box or zone names one (`usesSymbols`); validateLevel then requires stackLimit 1 (no
   recipes, no stacked starts), one box per zone and a complete sorting (`assignBoxes`, augmenting paths). Events keep
   their shape (`boxDropped.correct` = accepted); Game passes the zone's `matchKind` to audio with each event.
+- **Storage racks** (spec: `docs/RACKS.md`; no shipped level yet). `LevelData.racks?` (`LevelRack { id, x, z, w, facing,
+  columns: RackSlot[][] }`, slots bottom → top, cue `{ color?, symbol? }`, none = «libre»; a box starting in a slot is a
+  `LevelBox` with `level`). Rack cells are solid for the body and for floor boxes; loading / unloading only from the
+  front (`facing`), the cues are visible from both faces. Targets = zones + slots with a cue; validateLevel needs one box
+  per target and exactly one complete assignment (up to identical boxes, `core/sorting` `assignmentsOf`), and every
+  target is satisfied only by its destined kind (`ZoneState.destined`, `SlotState.destined`; levels without racks keep
+  `destined: null` and the old rules). `GameSnapshot.slots`, `BoxState.slotId`, `hint.rack` (column faced + selected
+  level, `ready`). `InputFrame.forkStep` (F / V, wheel, pad X / B) steps the selected slot level while at a rack
+  column; `forkHeight` eases to it (`forkRiseRate`); elsewhere the forks stay automatic. The faced column opens for the
+  carried load once the forks stand at the selected level and its slot is empty (walls: back panel + side uprights),
+  and stays open while the load is inside; meanwhile the heading is locked (`ForkliftController.setHeadingLock`) and
+  the level cannot change. Pick / drop act on the selected slot only with the forks at its level; facing a column never
+  drops on the floor. Events keep their shape plus `boxPicked.fromSlotId`, `boxDropped.slotId` (`zoneId: null`),
+  `zoneReleased { zoneId: null, slotId }`.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every zone is satisfied and nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
@@ -160,16 +174,21 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   level). The 24 JSON levels were migrated with a deep-equality proof and deleted: `.level` is the single source.
 - Level ids key saved progress (and seed the decor RNG): never change a shipped id. Box / zone ids are generated
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
-- `src/data/levels/solver.ts` is the only grid model (conservative carrying model, greedy search, exact A* for the
-  fewest box moves). `levels.test.ts`, the autopilot planner (`src/integration/levelsPlayable.test.ts`) and the
-  metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos) all
-  import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
+- `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
+  search, exact A* for the fewest box moves with a consistent bound — swap cycles, dead-end corridors, fixed sorting
+  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells).
+  `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`, run by `levelsPlayable.test.ts` and
+  `racksPlayable.test.ts`) and the metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas, libre,
+  ambiguas, trampas, repartos, callejones, huecos) all import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
   metrics table; `npm run levels:fmt` rewrites files canonically. A `dificultad:` header (e.g. `extra>=2, bloqueos>=1`)
   declares targets that `levels.test.ts` proves against the measured metrics.
 
 ## Level design (levels)
 
-- Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs.
+- Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs. No level may
+  have a dead end («callejones», docs/LEVELS.md; `levels.test.ts` checks every state of a shortest plan).
+- Storage racks (docs/RACKS.md) are loaded by driving straight at a column: its front cell and the cell behind it must
+  be free floor (validateLevel checks the front cell; the solvability tests catch the rest).
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
 - Level 1 is one straight run along the forklift's start heading, so holding W alone (`"vehicle"` mapping) reaches
@@ -327,7 +346,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   restarts on the first input. Turning test mode off on the title drops such a suspended level and shows the real
   "Continuar" level. "Continuar" follows `flow.continueTarget`: a saved last level already cleared, whose next level
   is open but not cleared, moves on to that next level (an old 12-level save leads into levels 13–18).
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, Q/E camera, M mute, T timer, U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, M mute, T timer, U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

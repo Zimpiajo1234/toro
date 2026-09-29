@@ -1,4 +1,5 @@
-import type { BoxState, LevelData, Vec2 } from '../core/types';
+import type { BoxState, Facing, LevelData, Vec2 } from '../core/types';
+import { FACING_X, FACING_Z, racksOf, rackCellOf } from '../core/racks';
 
 /** Axis-aligned rectangle on the floor plane (world units). */
 export interface Rect {
@@ -28,6 +29,47 @@ const SKIN = 1e-6;
  * with the forklift body: the body is eased out (≈0.1 s for a typical 4 cm) instead of popping out in one frame.
  */
 export const BOX_SETTLE_SPEED = 0.4;
+/**
+ * Thickness (u) of the walls of an open rack slot as the carried load meets them: the back panel and the two side
+ * uprights of the column's cell. Thin, so the load (collider radius 0.46 in a 1-wide cell) keeps a few cm of play.
+ */
+export const RACK_WALL = 0.02;
+
+/** A storage rack column as the collision world sees it: the whole cell, and its walls when open for the load. */
+interface RackCollider {
+  cell: Rect;
+  /** Back panel, then the two side uprights (open column: the load only meets these). */
+  walls: readonly [Rect, Rect, Rect];
+}
+
+/** Cell rect and open-slot walls of a rack column whose front looks `facing`. */
+function rackCollider(cell: Rect, facing: Facing): RackCollider {
+  const t = RACK_WALL;
+  const { minX, minZ, maxX, maxZ } = cell;
+  const ox = FACING_X[facing];
+  const oz = FACING_Z[facing];
+  // Back panel: the side away from the front.
+  const back: Rect =
+    ox > 0
+      ? { minX, minZ, maxX: minX + t, maxZ }
+      : ox < 0
+        ? { minX: maxX - t, minZ, maxX, maxZ }
+        : oz > 0
+          ? { minX, minZ, maxX, maxZ: minZ + t }
+          : { minX, minZ: maxZ - t, maxX, maxZ };
+  // Side uprights: the two edges along the front direction.
+  const sides: [Rect, Rect] =
+    ox !== 0
+      ? [
+          { minX, minZ, maxX, maxZ: minZ + t },
+          { minX, minZ: maxZ - t, maxX, maxZ },
+        ]
+      : [
+          { minX, minZ, maxX: minX + t, maxZ },
+          { minX: maxX - t, minZ, maxX, maxZ },
+        ];
+  return { cell, walls: [back, sides[0], sides[1]] };
+}
 
 export function createContact(): Contact {
   return { depth: 0, nx: 0, nz: 0 };
@@ -108,8 +150,10 @@ export function pointRectDistance(px: number, pz: number, minX: number, minZ: nu
 }
 
 /**
- * Static + dynamic obstacles of one level: walls (bounds), shelves, plants and resting boxes (read live from
- * the box list; carried boxes are skipped). Allocation-free queries.
+ * Static + dynamic obstacles of one level: walls (bounds), shelves, plants, storage rack columns and resting boxes
+ * (read live from the box list; carried boxes and boxes in rack slots are skipped). Allocation-free queries.
+ * A rack column is a solid cell for the body; for the carried load it is solid too, unless GameState opened it
+ * (`setRackOpen`: the load enters its slot from the front), when the load only meets its back panel and side uprights.
  */
 export class CollisionWorld {
   readonly bounds: Rect;
@@ -125,15 +169,21 @@ export class CollisionWorld {
    * their own: a stack is one cell, represented by its base.
    */
   private passable = new Uint8Array(0);
+  /** Storage rack columns (GameSnapshot.slots order of their columns: core/racks). */
+  private readonly racks: readonly RackCollider[];
+  /** Per rack column: 1 while the carried load may enter it (see setRackOpen). */
+  private readonly rackOpen: Uint8Array;
   private settling = false;
   private readonly hit = createContact();
   private readonly bodyHit = createContact();
   private readonly loadHit = createContact();
 
-  constructor(bounds: Rect, statics: readonly Rect[], boxSize: number) {
+  constructor(bounds: Rect, statics: readonly Rect[], boxSize: number, racks: readonly { cell: Rect; facing: Facing }[] = []) {
     this.bounds = bounds;
     this.statics = statics;
     this.boxHalf = boxSize / 2;
+    this.racks = racks.map((r) => rackCollider(r.cell, r.facing));
+    this.rackOpen = new Uint8Array(racks.length);
   }
 
   static fromLevel(level: LevelData, boxSize: number): CollisionWorld {
@@ -149,7 +199,36 @@ export class CollisionWorld {
     for (const p of level.decor.plants) {
       statics.push({ minX: p.x - hw + inset, minZ: p.z - hd + inset, maxX: p.x + 1 - hw - inset, maxZ: p.z + 1 - hd - inset });
     }
-    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize);
+    const racks: { cell: Rect; facing: Facing }[] = [];
+    for (const rack of racksOf(level)) {
+      rack.columns.forEach((_, column) => {
+        const c = rackCellOf(rack, column);
+        racks.push({ cell: { minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }, facing: rack.facing });
+      });
+    }
+    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, racks);
+  }
+
+  /** Number of storage rack columns. */
+  get rackCount(): number {
+    return this.racks.length;
+  }
+
+  /** The cell of rack column `index` (world units). */
+  rackCell(index: number): Rect {
+    return this.racks[index].cell;
+  }
+
+  /**
+   * Open (or close) rack column `index` for the carried load: open, the load may enter the cell and only meets the
+   * slot's back panel and side uprights; closed, the whole cell blocks it. The body always meets the whole cell.
+   */
+  setRackOpen(index: number, open: boolean): void {
+    if (index >= 0 && index < this.rackOpen.length) this.rackOpen[index] = open ? 1 : 0;
+  }
+
+  isRackOpen(index: number): boolean {
+    return index >= 0 && index < this.rackOpen.length && this.rackOpen[index] === 1;
   }
 
   /** Boxes are read live from this array every query (only resting ones collide). */
@@ -224,12 +303,25 @@ export class CollisionWorld {
       const s = statics[i];
       if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
     }
+    const racks = this.racks;
+    for (let i = 0; i < racks.length; i++) {
+      if (load && this.rackOpen[i] === 1) {
+        const walls = racks[i].walls;
+        for (let w = 0; w < 3; w++) {
+          const s = walls[w];
+          if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+        }
+      } else {
+        const s = racks[i].cell;
+        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+      }
+    }
     const boxes = this.boxes;
     const insets = this.insets;
     const passable = this.passable;
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i];
-      if (b.carried || b.level > 0 || (load && passable[i] === 1)) continue;
+      if (b.carried || b.level > 0 || b.slotId !== null || (load && passable[i] === 1)) continue;
       const h = i < insets.length ? this.boxHalf - insets[i] : this.boxHalf;
       const x = b.pos.x;
       const z = b.pos.z;
@@ -274,9 +366,10 @@ export class CollisionWorld {
   /**
    * Free space around a point: signed distance to the nearest wall / obstacle / resting box (negative when the
    * point is inside one). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or its stack's base).
-   * `load`: measured for the carried box (stacks with room do not count, see deepestContact).
+   * `load`: measured for the carried box (stacks with room do not count, see deepestContact; an open rack column
+   * counts as its walls). `ignoreRack`: a rack column left out (the one whose slot box is about to be lifted).
    */
-  clearance(px: number, pz: number, ignoreBoxId: string | null = null, load = false): number {
+  clearance(px: number, pz: number, ignoreBoxId: string | null = null, load = false, ignoreRack = -1): number {
     const b = this.bounds;
     let d = Math.min(px - b.minX, b.maxX - px, pz - b.minZ, b.maxZ - pz);
     const statics = this.statics;
@@ -284,11 +377,22 @@ export class CollisionWorld {
       const s = statics[i];
       d = Math.min(d, pointRectDistance(px, pz, s.minX, s.minZ, s.maxX, s.maxZ));
     }
+    const racks = this.racks;
+    for (let i = 0; i < racks.length; i++) {
+      if (i === ignoreRack) continue;
+      if (load && this.rackOpen[i] === 1) {
+        const walls = racks[i].walls;
+        for (let w = 0; w < 3; w++) d = Math.min(d, pointRectDistance(px, pz, walls[w].minX, walls[w].minZ, walls[w].maxX, walls[w].maxZ));
+      } else {
+        const s = racks[i].cell;
+        d = Math.min(d, pointRectDistance(px, pz, s.minX, s.minZ, s.maxX, s.maxZ));
+      }
+    }
     const h = this.boxHalf;
     const boxes = this.boxes;
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
-      if (box.carried || box.level > 0 || box.id === ignoreBoxId || (load && this.passable[i] === 1)) continue;
+      if (box.carried || box.level > 0 || box.slotId !== null || box.id === ignoreBoxId || (load && this.passable[i] === 1)) continue;
       d = Math.min(d, pointRectDistance(px, pz, box.pos.x - h, box.pos.z - h, box.pos.x + h, box.pos.z + h));
     }
     return d;

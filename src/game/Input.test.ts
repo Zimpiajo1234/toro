@@ -351,3 +351,132 @@ describe('Input gamepad', () => {
     expect(input.poll().restartHeld).toBe(false);
   });
 });
+
+interface WheelInit {
+  deltaY: number;
+  deltaMode?: number;
+  ctrlKey?: boolean;
+  timeStamp?: number;
+  target?: object;
+}
+
+function wheelEvent(init: WheelInit): Event {
+  const ev = new Event('wheel', { cancelable: true });
+  Object.assign(ev, { deltaY: init.deltaY, deltaX: 0, deltaMode: init.deltaMode ?? 0, ctrlKey: init.ctrlKey ?? false, metaKey: false });
+  Object.defineProperty(ev, 'timeStamp', { value: init.timeStamp ?? 0 });
+  if (init.target) Object.defineProperty(ev, 'target', { value: init.target });
+  return ev;
+}
+
+describe('Input fork levels (docs/RACKS.md)', () => {
+  const steps = (input: Input, frames: number) => Array.from({ length: frames }, () => input.poll().forkStep);
+
+  it('F / V step one slot up / down on the press (repeats ignored)', () => {
+    const { input, down, up } = setup();
+    down({ code: 'KeyF', key: 'f' });
+    const s = input.poll();
+    expect(s.forkStep).toBe(1);
+    expect(s.any).toBe(true);
+    down({ code: 'KeyF', key: 'f', repeat: true });
+    expect(input.poll().forkStep).toBe(0);
+    up({ code: 'KeyF', key: 'f' });
+    down({ code: 'KeyV', key: 'v' });
+    expect(steps(input, 2)).toEqual([-1, 0]);
+  });
+
+  it('several presses in one frame come out one per frame (two at most), opposite ones cancel', () => {
+    const { input, down, up } = setup();
+    for (let i = 0; i < 3; i++) {
+      down({ code: 'KeyF', key: 'f' });
+      up({ code: 'KeyF', key: 'f' });
+    }
+    expect(steps(input, 4)).toEqual([1, 1, 0, 0]);
+    down({ code: 'KeyF', key: 'f' });
+    down({ code: 'KeyV', key: 'v' });
+    expect(steps(input, 2)).toEqual([0, 0]);
+  });
+
+  it('while playing, one mouse wheel notch is one slot however large its delta (up = up), and the page does not scroll', () => {
+    const { input, win } = setup({ isGameplay: () => true });
+    const up = wheelEvent({ deltaY: -100, timeStamp: 10 });
+    win.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(input.poll().forkStep).toBe(1);
+    win.dispatchEvent(wheelEvent({ deltaY: 360, timeStamp: 20 }));
+    expect(steps(input, 2)).toEqual([-1, 0]);
+    // Firefox reports lines: 3 lines = one notch.
+    win.dispatchEvent(wheelEvent({ deltaY: 3, deltaMode: 1, timeStamp: 30 }));
+    expect(input.poll().forkStep).toBe(-1);
+    // Three quick notches: three slots (queued two at most).
+    for (const t of [40, 41, 42]) win.dispatchEvent(wheelEvent({ deltaY: -120, timeStamp: t }));
+    expect(steps(input, 3)).toEqual([1, 1, 0]);
+  });
+
+  it('trackpad deltas add up to one slot per WHEEL_TRACKPAD_PX; a pause or a change of direction forgets the rest', () => {
+    const { input, win } = setup({ isGameplay: () => true });
+    const small = (deltaY: number, timeStamp: number) => win.dispatchEvent(wheelEvent({ deltaY, timeStamp }));
+    for (let i = 0; i < 11; i++) small(-10, i * 16);
+    expect(input.poll().forkStep).toBe(0); // 110 px so far
+    small(-10, 11 * 16);
+    expect(input.poll().forkStep).toBe(1); // 120 px
+    for (let i = 0; i < 8; i++) small(-10, 300 + i * 16);
+    small(-10, 900); // after a pause: the 80 px before it are gone
+    expect(input.poll().forkStep).toBe(0);
+    for (let i = 0; i < 10; i++) small(-10, 920 + i * 16); // 110 px up…
+    expect(input.poll().forkStep).toBe(0);
+    small(10, 1200); // …then the other way: starts again from 0
+    for (let i = 0; i < 10; i++) small(10, 1210 + i * 16);
+    expect(input.poll().forkStep).toBe(0);
+    small(10, 1400);
+    expect(input.poll().forkStep).toBe(-1);
+  });
+
+  it('leaves the wheel alone off the playing screen, with Ctrl (zoom / pinch) and over a text field', () => {
+    let playing = false;
+    const { input, win } = setup({ isGameplay: () => playing });
+    const title = wheelEvent({ deltaY: -100 });
+    win.dispatchEvent(title);
+    expect(title.defaultPrevented).toBe(false);
+    expect(input.poll().forkStep).toBe(0);
+    playing = true;
+    const zoom = wheelEvent({ deltaY: -100, ctrlKey: true });
+    win.dispatchEvent(zoom);
+    expect(zoom.defaultPrevented).toBe(false);
+    const field = wheelEvent({ deltaY: -100, target: { tagName: 'INPUT', type: 'text' } });
+    win.dispatchEvent(field);
+    expect(field.defaultPrevented).toBe(false);
+    expect(input.poll().forkStep).toBe(0);
+  });
+
+  it('forgets pending steps when the window loses focus, and stops listening after dispose', () => {
+    const { input, win, down } = setup({ isGameplay: () => true });
+    down({ code: 'KeyF', key: 'f' });
+    win.dispatchEvent(new Event('blur'));
+    expect(input.poll().forkStep).toBe(0);
+    input.dispose();
+    const late = wheelEvent({ deltaY: -100 });
+    win.dispatchEvent(late);
+    expect(late.defaultPrevented).toBe(false);
+    expect(input.poll().forkStep).toBe(0);
+  });
+
+  it('merges gamepad X / B with the keys (keys and wheel first)', () => {
+    const frames: GamepadLike[][] = [[pad(2)], [pad()], [pad(1)]];
+    let i = 0;
+    const { input, down } = setup({ gamepads: () => frames[Math.min(i++, frames.length - 1)] });
+    expect(input.poll().forkStep).toBe(1); // X
+    down({ code: 'KeyV', key: 'v' });
+    expect(input.poll().forkStep).toBe(-1); // V
+    expect(input.poll().forkStep).toBe(-1); // B
+  });
+});
+
+function pad(...pressed: number[]): GamepadLike {
+  return {
+    index: 0,
+    connected: true,
+    mapping: 'standard',
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, (_, b) => ({ pressed: pressed.includes(b) })),
+  };
+}

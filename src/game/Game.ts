@@ -2,6 +2,7 @@ import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
 import { zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
 import { LEVELS, getLevel } from '../data/levels';
 import { GameState } from '../logic/GameState';
@@ -68,11 +69,14 @@ export class Game implements GameActions {
   private readonly jumpHold = new Countdown();
   private jumpStep: -1 | 1 = 1;
   /** World-space input handed to the simulation; reused every frame. */
-  private readonly frameInput: InputFrame & { drive: DriveInput } = {
+  private readonly frameInput: InputFrame & { drive: DriveInput; forkStep: -1 | 0 | 1 } = {
     move: { x: 0, z: 0 },
     drive: { throttle: 0, steer: 0 },
     actionPressed: false,
+    forkStep: 0,
   };
+  /** The level on screen has storage racks: F / V, the wheel and pad X / B step the forks there (docs/RACKS.md). */
+  private levelHasRacks = false;
 
   private rt: Runtime | null = null;
   private rafId = 0;
@@ -355,8 +359,10 @@ export class Game implements GameActions {
       inputToWorld(input, rt.renderer.getCameraYaw(), CONTROLS, frame.move);
       inputToDrive(input, CONTROLS, frame.drive);
       frame.actionPressed = input.actionPressed && wasPlaying;
+      frame.forkStep = wasPlaying ? input.forkStep : 0;
       const driving = Math.abs(frame.drive.throttle) > MOVE_EPSILON || Math.abs(frame.drive.steer) > MOVE_EPSILON;
-      if (this.resumeTimerOnInput && (frame.actionPressed || driving || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
+      const forking = frame.forkStep !== 0 && this.levelHasRacks;
+      if (this.resumeTimerOnInput && (frame.actionPressed || driving || forking || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
         // A resumed level's clock picks up on the first input, like a fresh level's.
         this.resumeTimerOnInput = false;
         this.timer.start();
@@ -368,6 +374,7 @@ export class Game implements GameActions {
       frame.drive.throttle = 0;
       frame.drive.steer = 0;
       frame.actionPressed = false;
+      frame.forkStep = 0;
     }
 
     const liftBefore = state.getSnapshot().forklift.forkLift;
@@ -542,10 +549,11 @@ export class Game implements GameActions {
   /* Helpers                                                           */
   /* ---------------------------------------------------------------- */
 
-  /** Kind of match of the zone a drop / restore event is about (the classic color bell for anything else). */
+  /** Kind of match of the zone (or rack slot) a drop / restore event is about (the classic color bell for anything else). */
   private matchOf(event: GameEvent): MatchKind {
     if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
-    return (event.zoneId !== null && this.zoneMatch.get(event.zoneId)) || 'color';
+    const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
+    return (target !== null && this.zoneMatch.get(target)) || 'color';
   }
 
   /** Fresh simulation + scene for a level; resets the timer and any pending completion or suspended level. */
@@ -554,6 +562,7 @@ export class Game implements GameActions {
     this.levelIndex = clamp(index, 0, Math.max(0, LEVELS.length - 1));
     this.level = level;
     this.zoneMatch = zoneMatchKinds(level);
+    this.levelHasRacks = hasRacks(level);
     this.state = new GameState(level);
     rt.renderer.loadLevel(this.state.getSnapshot(), getTheme(level.theme));
     this.timer.reset();

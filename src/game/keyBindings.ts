@@ -12,7 +12,10 @@ export type CommandBinding =
   | 'prevLevel'
   | 'nextLevel'
   /** Title: toggle "Modo prueba" (U). */
-  | 'testMode';
+  | 'testMode'
+  /** In front of a storage rack: fork one slot up (F) / down (V) (docs/RACKS.md). */
+  | 'forkUp'
+  | 'forkDown';
 /** Logical game keys produced by the keyboard. */
 export type KeyBinding = MoveBinding | CommandBinding;
 
@@ -40,6 +43,8 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['PageUp', 'prevLevel'],
   ['PageDown', 'nextLevel'],
   ['KeyU', 'testMode'],
+  ['KeyF', 'forkUp'],
+  ['KeyV', 'forkDown'],
 ]);
 
 /** Fallback on the produced character (lower-cased KeyboardEvent.key) when the code is empty or unbound. */
@@ -67,6 +72,8 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['pageup', 'prevLevel'],
   ['pagedown', 'nextLevel'],
   ['u', 'testMode'],
+  ['f', 'forkUp'],
+  ['v', 'forkDown'],
 ]);
 
 /** Resolve a key event to a game binding. Tolerates missing fields (autofill fires bare `keydown` Events). */

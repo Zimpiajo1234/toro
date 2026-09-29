@@ -28,12 +28,16 @@ export interface GamepadFrame {
   restartHeld: boolean;
   /** Edge: Y. Game only honours it as "Repetir" on the completion card, never mid-play. */
   retryPressed: boolean;
+  /** Edge: X = fork one slot up (+1), B = one slot down (−1), in front of a storage rack (docs/RACKS.md). */
+  forkStep: -1 | 0 | 1;
 }
 
 export const STICK_DEADZONE = 0.2;
 
 // W3C "standard" mapping indices.
 const BTN_A = 0;
+const BTN_B = 1;
+const BTN_X = 2;
 const BTN_Y = 3;
 const BTN_LB = 4;
 const BTN_RB = 5;
@@ -44,7 +48,7 @@ const DPAD_DOWN = 13;
 const DPAD_LEFT = 14;
 const DPAD_RIGHT = 15;
 /** Buttons with edge detection, in the order of the per-pad `prev` arrays. */
-const EDGE_BUTTONS = [BTN_A, BTN_Y, BTN_LB, BTN_RB, BTN_BACK, BTN_START] as const;
+const EDGE_BUTTONS = [BTN_A, BTN_Y, BTN_LB, BTN_RB, BTN_BACK, BTN_START, BTN_X, BTN_B] as const;
 
 function browserGamepads(): ArrayLike<GamepadLike | null> | null {
   if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return null;
@@ -58,7 +62,7 @@ function isPressed(pad: GamepadLike, index: number): boolean {
 
 /**
  * Reads standard-mapping gamepads: left stick (radial deadzone) and d-pad reported separately (they may map to
- * the floor differently), A / Y / LB / RB / Back / Start as edges.
+ * the floor differently), A / Y / LB / RB / Back / Start / X / B as edges.
  */
 export class GamepadReader {
   private readonly source: GamepadSource;
@@ -79,6 +83,7 @@ export class GamepadReader {
     restartPressed: false,
     restartHeld: false,
     retryPressed: false,
+    forkStep: 0,
   };
 
   constructor(source: GamepadSource = browserGamepads, deadzone = STICK_DEADZONE) {
@@ -95,6 +100,7 @@ export class GamepadReader {
     f.restartPressed = false;
     f.restartHeld = false;
     f.retryPressed = false;
+    f.forkStep = 0;
     this.stick.x = this.stick.y = 0;
     this.dpad.x = this.dpad.y = 0;
 
@@ -150,5 +156,7 @@ export class GamepadReader {
     else if (button === BTN_RB) f.rotateCamera = 1;
     else if (button === BTN_BACK) f.restartPressed = true;
     else if (button === BTN_START) f.confirmPressed = true;
+    else if (button === BTN_X) f.forkStep = 1;
+    else if (button === BTN_B) f.forkStep = -1;
   }
 }

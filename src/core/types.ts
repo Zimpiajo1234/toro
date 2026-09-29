@@ -55,9 +55,16 @@ export interface Vec2 {
 /* Level data (authored as text in src/data/levels/*.level, docs/LEVELS.md; parsed + validated into LevelData) */
 /* ------------------------------------------------------------------ */
 
+/** What sorting looks at on a box: its colour and its symbol (two boxes alike in both are interchangeable). */
+export interface ColorSymbol {
+  color: ColorId;
+  symbol: SymbolId;
+}
+
 /**
  * A box of a level. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list order (the
- * first one on the floor, the next on top of it, …; a `.level` file writes it «pila azul,menta»). No height field.
+ * first one on the floor, the next on top of it, …; a `.level` file writes it «pila azul,menta»). No height field for
+ * floor boxes. A box that starts in a storage rack slot has (x, z) = its rack cell and `level` = the slot.
  */
 export interface LevelBox {
   id: string;
@@ -66,7 +73,48 @@ export interface LevelBox {
   symbol?: SymbolId;
   x: number;
   z: number;
+  /** Storage rack slot the box starts in (0 = bottom slot). Only on rack cells; never on floor boxes. */
+  level?: number;
   kind?: BoxKind;
+}
+
+/**
+ * Which way a storage rack's open front looks: its slots are loaded and unloaded only from that side (its cues are
+ * visible from both faces).
+ */
+export const FACINGS = ['north', 'east', 'south', 'west'] as const;
+export type Facing = (typeof FACINGS)[number];
+
+/** Most slots a storage rack column holds (floor slot + 2). */
+export const MAX_RACK_SLOTS = 3;
+
+/**
+ * One slot of a storage rack column: its cue (docs/RACKS.md), shown on the slot's back panel and visible from both
+ * faces of the rack. A colour, a symbol or both (like a zone); neither = «libre», plain storage with no destination.
+ * A box starting in it is a LevelBox with `level`.
+ */
+export interface RackSlot {
+  color?: ColorId;
+  symbol?: SymbolId;
+}
+
+/**
+ * A storage rack (docs/RACKS.md): 1 cell deep, `w` cells wide, 1–3 slots high per column. Access from `facing` only:
+ * it is loaded and unloaded from its front (the floor cell next to each column on the `facing` side); its cues are
+ * visible from both faces. Its cells are solid for the forklift body and for floor boxes; the carried load enters a
+ * column's cell only from the front, at the selected slot level, into an empty slot. A rack facing north / south runs
+ * along x from (x, z); one facing east / west runs along z.
+ */
+export interface LevelRack {
+  id: string;
+  /** First cell: the west-most of a rack facing north / south, the north-most of one facing east / west. */
+  x: number;
+  z: number;
+  /** Cells along the rack (= columns.length). */
+  w: number;
+  facing: Facing;
+  /** Per column (first cell first), its slots bottom → top. */
+  columns: RackSlot[][];
 }
 
 /**
@@ -132,6 +180,11 @@ export interface LevelData {
   boxes: LevelBox[];
   zones: LevelZone[];
   shelves: LevelShelf[];
+  /**
+   * Storage racks (docs/RACKS.md). Omitted when the level has none (validateLevel never adds an empty list, so the
+   * levels without racks are exactly as before).
+   */
+  racks?: LevelRack[];
   decor: {
     plants: LevelPlant[];
     windows: LevelWindow[];
@@ -162,7 +215,9 @@ export interface ForkliftState {
   /**
    * Extra carriage height in stack levels (0 = floor, 1 = on top of one box, …), continuous while it moves.
    * Rises toward the drop height (carrying) or the target box's level (empty), and early enough to clear any stack
-   * the load or the forks are over or about to reach (they never sink into one). Animated by logic; 0 in classic levels.
+   * the load or the forks are over or about to reach (they never sink into one). In front of a storage rack it goes
+   * to the selected slot level (`hint.rack.level`; slot level n sits at height n). Animated by logic; 0 in classic
+   * levels.
    */
   forkHeight: number;
   /** Id of the box on the forks, or null. */
@@ -181,16 +236,19 @@ export interface BoxState {
   kind: BoxKind;
   /** World position of the box center on the floor plane. While carried it follows the forks. */
   pos: Vec2;
-  /** Grid cell when resting (on the floor or on a stack), null while carried. */
+  /** Grid cell when resting (on the floor, on a stack or in a rack slot: its rack cell), null while carried. */
   cell: CellPos | null;
-  /** Height in its stack: 0 = on the floor, 1 = on one box, … (0 while carried). */
+  /** Height in its stack: 0 = on the floor, 1 = on one box, … ; in a rack, its slot level (0 while carried). */
   level: number;
   carried: boolean;
   /** Zone the box is resting on (accepting it or not), or null. */
   zoneId: string | null;
+  /** Storage rack slot the box rests in, or null (always null in levels without racks). */
+  slotId: string | null;
   /**
    * True when resting on a zone and the stack from the floor up to this box fits it so far: the bottom box accepted
-   * by the zone (core/sorting `accepts`), every box above it of the colour its recipe asks for there.
+   * by the zone (core/sorting `accepts`), every box above it of the colour its recipe asks for there. In levels with
+   * racks: the box rests alone on its zone, or in its slot, and is the destined one (zone / slot `satisfied`).
    */
   correct: boolean;
 }
@@ -216,25 +274,88 @@ export interface ZoneState {
   stack: string[];
   /** Top box resting on this zone (accepted or not), or null. */
   occupiedBy: string | null;
-  /** True when the zone holds exactly what it asks for: an accepted bottom box and, above it, the recipe's colours. */
+  /**
+   * True when the zone holds exactly what it asks for: an accepted bottom box and, above it, the recipe's colours.
+   * Levels with racks: exactly one box, of the `destined` kind (a box that merely fits `accepts` leaves it neutral).
+   */
   satisfied: boolean;
   /**
    * Colour the zone needs next while its stack is a correct, unfinished prefix, else null (also null for an empty
    * zone that asks no colour). Whether the zone would take a given box next: core/sorting `takesNext`.
    */
   next: ColorId | null;
+  /**
+   * Levels with racks: the kind of box the level's unique solution puts here (docs/RACKS.md); only that one satisfies
+   * it. null in levels without racks (satisfied by `accepts`, as always).
+   */
+  destined: ColorSymbol | null;
+}
+
+/**
+ * One slot of a storage rack (docs/RACKS.md), in GameSnapshot.slots: every rack, column by column, bottom → top.
+ * Whether a carried box fits its cue (what breathes): core/sorting `cueFits`; whether it is the destined one (what
+ * lights it): `isDestined`.
+ */
+export interface SlotState {
+  /** `${rackId}:${column}:${level}` (core/racks `slotIdOf`). */
+  id: string;
+  rackId: string;
+  /** Column along the rack (0 = its first cell, see LevelRack). */
+  column: number;
+  /** Height: 0 = bottom slot. The fork level that reaches it and the box's `level` inside it. */
+  level: number;
+  /** The rack cell of this column. */
+  cell: CellPos;
+  /** Floor cell in front of the column: where the forklift stands, facing the rack, to load or unload it. */
+  front: CellPos;
+  facing: Facing;
+  /** World position of the rack cell's centre. */
+  pos: Vec2;
+  /**
+   * The slot's cue (on its back panel, visible from both faces of the rack): a colour, a symbol or both; null =
+   * «libre» (plain storage, never a target).
+   */
+  accepts: ZoneCriteria | null;
+  /** The kind of box the level's unique solution puts here; null for a «libre» slot. Only it lights the slot. */
+  destined: ColorSymbol | null;
+  /** Box resting in the slot, or null. */
+  occupiedBy: string | null;
+  /** Holds its destined box (never true for a «libre» slot). */
+  satisfied: boolean;
+}
+
+/**
+ * Levels with racks: the rack column the forklift faces (on or approaching its front cell, turned toward it) and the
+ * slot level selected with F / V, the mouse wheel or gamepad X / B.
+ */
+export interface RackHint {
+  rackId: string;
+  column: number;
+  /** Slots in this column (1–3). */
+  levels: number;
+  /** Selected slot level (0 = bottom): the forks go there and pick / drop act on that slot. */
+  level: number;
+  /** The slot at that level. */
+  slotId: string;
+  /**
+   * Empty forks: that slot holds a box (also `targetBoxId`). Carrying: it is empty, so the action drops the box into
+   * it (`dropCell` = the rack cell, `dropLevel` = the slot level).
+   */
+  ready: boolean;
 }
 
 /** Guidance the render layer uses to teach through design (no text). */
 export interface InteractionHint {
   /** Box that would be picked up if the action were pressed now. */
   targetBoxId: string | null;
-  /** While carrying: the cell the box would be dropped on (null if nowhere valid). */
+  /** While carrying: the cell the box would be dropped on (null if nowhere valid; a rack cell for a slot). */
   dropCell: CellPos | null;
   /** While carrying: the zone at dropCell, if any. */
   dropZoneId: string | null;
-  /** While carrying: height the box would land at on dropCell (0 = floor, 1 = on one box, …). */
+  /** While carrying: height the box would land at on dropCell (0 = floor, 1 = on one box, …; a slot's level). */
   dropLevel: number;
+  /** Levels with racks: the rack column faced and the selected slot, or null (always null without racks). */
+  rack: RackHint | null;
 }
 
 export interface GameSnapshot {
@@ -242,9 +363,11 @@ export interface GameSnapshot {
   forklift: ForkliftState;
   boxes: BoxState[];
   zones: ZoneState[];
+  /** Storage rack slots (empty in levels without racks). */
+  slots: SlotState[];
   hint: InteractionHint;
   completed: boolean;
-  /** Number of zones currently satisfied / total zones. */
+  /** Targets currently satisfied / total: the zones, plus the slots with a cue in levels with racks. */
   progress: { satisfied: number; total: number };
 }
 
@@ -260,34 +383,57 @@ export interface InputFrame {
   drive?: { throttle: number; steer: number };
   /** True only on the frame the action button was pressed (edge). */
   actionPressed: boolean;
+  /**
+   * Edge: fork one slot level up (+1: F, mouse wheel up, gamepad X) or down (−1: V, wheel down, gamepad B). Acts only
+   * in front of a storage rack (elsewhere the fork height is automatic). Optional: omitted = 0.
+   */
+  forkStep?: -1 | 0 | 1;
 }
 
-/** Events produced by GameState.update(). Consumed by render (feedback), audio and game/UI. */
+/**
+ * Events produced by GameState.update(). Consumed by render (feedback), audio and game/UI. Storage rack slots only
+ * add optional fields (`fromSlotId`, `slotId`), present only when the event is about a slot, so events in levels
+ * without racks are exactly as before.
+ */
 export type GameEvent =
   | { type: 'firstInput' }
-  | { type: 'boxPicked'; boxId: string; fromZoneId: string | null; /** Height it was lifted from. */ level: number }
+  | {
+      type: 'boxPicked';
+      boxId: string;
+      fromZoneId: string | null;
+      /** Height it was lifted from (a rack slot's level). */
+      level: number;
+      /** The rack slot it was lifted from (only then present). */
+      fromSlotId?: string;
+    }
   | {
       type: 'boxDropped';
       boxId: string;
       cell: CellPos;
+      /** Zone it landed on; null on plain floor and in a rack slot. */
       zoneId: string | null;
-      /** Height it landed at (0 = floor). */
+      /** Height it landed at (0 = floor; a rack slot's level). */
       level: number;
       /**
        * This drop completed its zone: a single-box zone now holds a box it accepts (classic: one of its colour), a
-       * stack zone its recipe.
+       * stack zone its recipe. Levels with racks: its zone or slot now holds its destined box.
        */
       correct: boolean;
-      /** Recipe length of that zone (1 = classic zone), 0 when not on a zone. */
+      /** Recipe length of that zone (1 = classic zone), 0 when not on a zone. 1 in a slot with a cue, 0 in a «libre» one. */
       recipeLength: number;
-      /** 1-based count of satisfied zones after this drop (for rising chimes). */
+      /** 1-based count of satisfied zones (and slots) after this drop (for rising chimes). */
       satisfiedCount: number;
       total: number;
+      /** The rack slot it landed in (only then present; `cell` is the rack cell). */
+      slotId?: string;
     }
   /** Action pressed but nothing to do (no box in reach / no free cell). Feedback must stay gentle. */
   | { type: 'actionIdle'; carrying: boolean }
-  /** A satisfied zone stopped being satisfied (its box lifted, or one stacked on top). Neutral, never negative. */
-  | { type: 'zoneReleased'; zoneId: string; boxId: string }
+  /**
+   * A satisfied zone stopped being satisfied (its box lifted, or one stacked on top). Neutral, never negative. For a
+   * rack slot (its box lifted), `zoneId` is null and `slotId` names the slot.
+   */
+  | { type: 'zoneReleased'; zoneId: string | null; boxId: string; slotId?: string }
   /**
    * Lifting a box (`boxId`) off a zone left it satisfied again: the wrong box on top came off (stacking levels
    * only). Positive, like a completing drop; the counts are as in boxDropped.
