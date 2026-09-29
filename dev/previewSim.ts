@@ -1,7 +1,8 @@
 /**
- * Dev-only stand-in for GameState: builds a GameSnapshot from level data and scripts simple motion
- * (the forklift drives in a circle) plus pick / drop, so the render layer can be inspected alone.
- * Not part of the production build.
+ * Dev-only stand-in for GameState: starts from the real GameState's initial snapshot (stacked starts, recipe
+ * zones) and scripts simple motion (the forklift drives in a circle) plus pick / drop with the same stack rules
+ * (top box only, drops on stacks with room, zones derived from their recipe), so the render layer can be
+ * inspected alone. Not part of the production build.
  */
 import { GAME_CONFIG } from '../src/config';
 import { approach, degToRad } from '../src/core/math';
@@ -17,53 +18,14 @@ import {
   type LevelData,
   type ZoneState,
 } from '../src/core/types';
+import { forkRiseRate } from '../src/logic/forkRise';
+import { GameState } from '../src/logic/GameState';
 
 const cfg = GAME_CONFIG.forklift;
 
+/** The real starting snapshot (box stack levels, zone stack / satisfied / next), detached from its GameState. */
 export function snapshotFromLevel(level: LevelData): GameSnapshot {
-  const zones: ZoneState[] = level.zones.map((z) => ({
-    id: z.id,
-    color: z.color,
-    cell: { x: z.x, z: z.z },
-    pos: cellToWorld(z, level.size),
-    occupiedBy: null,
-    satisfied: false,
-  }));
-  const boxes: BoxState[] = level.boxes.map((b) => {
-    const zone = zones.find((z) => z.cell.x === b.x && z.cell.z === b.z) ?? null;
-    const correct = zone !== null && zone.color === b.color;
-    if (zone) {
-      zone.occupiedBy = b.id;
-      zone.satisfied = correct;
-    }
-    return {
-      id: b.id,
-      color: b.color,
-      kind: b.kind ?? 'standard',
-      pos: cellToWorld(b, level.size),
-      cell: { x: b.x, z: b.z },
-      carried: false,
-      zoneId: zone?.id ?? null,
-      correct,
-    };
-  });
-  return {
-    level,
-    forklift: {
-      pos: cellToWorld(level.forklift, level.size),
-      heading: degToRad(level.forklift.heading),
-      speed: 0,
-      forkLift: 0,
-      carrying: null,
-      wheelSpin: 0,
-      steer: 0,
-    },
-    boxes,
-    zones,
-    hint: { targetBoxId: null, dropCell: null, dropZoneId: null },
-    completed: false,
-    progress: { satisfied: zones.filter((z) => z.satisfied).length, total: zones.length },
-  };
+  return structuredClone(new GameState(level).getSnapshot());
 }
 
 export class PreviewSim {
@@ -73,9 +35,11 @@ export class PreviewSim {
   private angle = 0;
   private t = 0;
   private readonly blocked = new Set<string>();
+  private readonly stackLimit: number;
 
   constructor(readonly level: LevelData) {
     this.snapshot = snapshotFromLevel(level);
+    this.stackLimit = level.stackLimit ?? 1;
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.blocked.add(cellKey({ x, z }));
     for (const p of level.decor.plants) this.blocked.add(cellKey(p));
@@ -120,50 +84,65 @@ export class PreviewSim {
       carried.pos.z = fork.z;
     }
     this.updateHint(fork);
+    // Carriage height like GameState: toward the drop height while carrying, the target box's level while empty.
+    const target = f.carrying
+      ? s.hint.dropCell
+        ? s.hint.dropLevel
+        : 0
+      : (s.boxes.find((b) => b.id === s.hint.targetBoxId)?.level ?? 0);
+    f.forkHeight = approach(f.forkHeight, target, forkRiseRate(GAME_CONFIG, Math.max(f.forkHeight, target)) * dt);
     return [];
   }
 
   pick(): GameEvent[] {
     const s = this.snapshot;
     if (s.forklift.carrying) return [];
-    const fork = this.forkPoint();
-    const box = this.nearestBox(fork, 1.3);
+    const box = this.nearestBox(this.forkPoint(), 1.3);
     if (!box) return [{ type: 'actionIdle', carrying: false }];
-    const events: GameEvent[] = [];
-    const zone = box.zoneId ? s.zones.find((z) => z.id === box.zoneId) : undefined;
-    if (zone) {
-      if (zone.satisfied) events.push({ type: 'zoneReleased', zoneId: zone.id, boxId: box.id });
-      zone.occupiedBy = null;
-      zone.satisfied = false;
-    }
+    const fromZoneId = box.zoneId;
+    const fromLevel = box.level;
+    const { released, restored } = this.lift(box);
     box.carried = true;
-    box.cell = null;
-    box.zoneId = null;
-    box.correct = false;
     s.forklift.carrying = box.id;
     this.refreshProgress();
-    events.unshift({ type: 'boxPicked', boxId: box.id, fromZoneId: zone?.id ?? null });
+    const events: GameEvent[] = [{ type: 'boxPicked', boxId: box.id, fromZoneId, level: fromLevel }];
+    if (released) events.push({ type: 'zoneReleased', zoneId: released.id, boxId: box.id });
+    if (restored) {
+      events.push({
+        type: 'zoneRestored',
+        zoneId: restored.id,
+        boxId: box.id,
+        recipeLength: restored.recipe.length,
+        satisfiedCount: s.progress.satisfied,
+        total: s.progress.total,
+      });
+    }
     return events;
   }
 
-  /** Drop on the cell under the fork (or `cell` when given, e.g. to test a zone). */
+  /** Drop on the cell under the fork (or `cell` when given, e.g. to test a zone): on the floor or on a stack with room. */
   drop(cell?: CellPos): GameEvent[] {
     const s = this.snapshot;
     const box = s.boxes.find((b) => b.id === s.forklift.carrying);
     if (!box) return [];
     const target = cell ?? worldToCell(this.forkPoint(), this.level.size);
-    if (!this.isFree(target)) return [{ type: 'actionIdle', carrying: true }];
-    const zone = s.zones.find((z) => z.cell.x === target.x && z.cell.z === target.z) ?? null;
+    const level = this.dropLevel(target);
+    if (level < 0) return [{ type: 'actionIdle', carrying: true }];
+    const zone = this.zoneAt(target);
     box.carried = false;
     box.cell = { ...target };
+    box.level = level;
     const p = cellToWorld(target, this.level.size);
     box.pos.x = p.x;
     box.pos.z = p.z;
     box.zoneId = zone?.id ?? null;
-    box.correct = zone !== null && zone.color === box.color;
+    box.correct = false;
+    let released = false;
     if (zone) {
-      zone.occupiedBy = box.id;
-      zone.satisfied = box.correct;
+      const was = zone.satisfied;
+      zone.stack.push(box.id);
+      this.refreshZone(zone);
+      released = was && !zone.satisfied;
     }
     s.forklift.carrying = null;
     this.refreshProgress();
@@ -172,12 +151,15 @@ export class PreviewSim {
         type: 'boxDropped',
         boxId: box.id,
         cell: { ...target },
-        zoneId: zone?.id ?? null,
-        correct: box.correct,
+        zoneId: box.zoneId,
+        level,
+        correct: zone !== null && zone.satisfied,
+        recipeLength: zone ? zone.recipe.length : 0,
         satisfiedCount: s.progress.satisfied,
         total: s.progress.total,
       },
     ];
+    if (released && zone) events.push({ type: 'zoneReleased', zoneId: zone.id, boxId: box.id });
     if (s.progress.satisfied === s.progress.total && !s.completed) {
       s.completed = true;
       events.push({ type: 'levelComplete' });
@@ -185,19 +167,64 @@ export class PreviewSim {
     return events;
   }
 
-  /** Teleport the matching box of a zone onto it (quick way to preview satisfied zones). */
+  /**
+   * Teleport free boxes onto a zone, one recipe step at a time, while it needs a color and a box of that color
+   * sits on top of some stack (quick way to preview satisfied zones and stacks). A wrong stack is left alone.
+   */
   solveZone(zoneId: string): GameEvent[] {
     const s = this.snapshot;
     const zone = s.zones.find((z) => z.id === zoneId);
-    if (!zone || zone.satisfied) return [];
-    const box = s.boxes.find((b) => b.color === zone.color && !b.correct && !b.carried);
-    if (!box) return [];
+    const events: GameEvent[] = [];
+    if (!zone) return events;
     const was = s.forklift.carrying;
-    s.forklift.carrying = box.id;
-    box.carried = true;
-    const events = this.drop(zone.cell);
-    s.forklift.carrying = was === box.id ? null : was;
+    while (zone.next !== null && this.dropLevel(zone.cell) >= 0) {
+      const need = zone.next;
+      const box = s.boxes.find((b) => b.color === need && !b.carried && !b.correct && this.isTop(b));
+      if (!box) break;
+      this.lift(box);
+      box.carried = true;
+      s.forklift.carrying = box.id;
+      events.push(...this.drop(zone.cell));
+    }
+    s.forklift.carrying = was;
     return events;
+  }
+
+  /**
+   * Take `box` (a stack top) off its cell and zone; returns the zone it stopped satisfying, or the zone that is
+   * satisfied again because a wrong box came off its top (like GameState's zoneReleased / zoneRestored).
+   */
+  private lift(box: BoxState): { released: ZoneState | null; restored: ZoneState | null } {
+    const zone = box.zoneId ? (this.snapshot.zones.find((z) => z.id === box.zoneId) ?? null) : null;
+    let released: ZoneState | null = null;
+    let restored: ZoneState | null = null;
+    if (zone) {
+      const was = zone.satisfied;
+      zone.stack.pop();
+      this.refreshZone(zone);
+      if (was && !zone.satisfied) released = zone;
+      else if (!was && zone.satisfied) restored = zone;
+    }
+    box.cell = null;
+    box.level = 0;
+    box.zoneId = null;
+    box.correct = false;
+    return { released, restored };
+  }
+
+  /** Same derivation as GameState: satisfied iff the stack equals the recipe, `next` while it is a correct prefix. */
+  private refreshZone(zone: ZoneState): void {
+    const boxes = this.snapshot.boxes;
+    let prefix = true;
+    zone.stack.forEach((id, i) => {
+      const box = boxes.find((b) => b.id === id);
+      prefix = prefix && box !== undefined && i < zone.recipe.length && zone.recipe[i] === box.color;
+      if (box) box.correct = prefix;
+    });
+    const n = zone.stack.length;
+    zone.occupiedBy = n > 0 ? zone.stack[n - 1] : null;
+    zone.satisfied = prefix && n === zone.recipe.length;
+    zone.next = prefix && n < zone.recipe.length ? zone.recipe[n] : null;
   }
 
   private forkPoint(): { x: number; z: number } {
@@ -206,11 +233,12 @@ export class PreviewSim {
     return { x: f.pos.x + fwd.x * cfg.forkReach, z: f.pos.z + fwd.z * cfg.forkReach };
   }
 
+  /** Nearest box on top of its stack (only those can be picked). */
   private nearestBox(p: { x: number; z: number }, maxDist: number): BoxState | undefined {
     let best: BoxState | undefined;
     let bestD = maxDist;
     for (const b of this.snapshot.boxes) {
-      if (b.carried) continue;
+      if (!this.isTop(b)) continue;
       const d = Math.hypot(b.pos.x - p.x, b.pos.z - p.z);
       if (d < bestD) {
         bestD = d;
@@ -220,21 +248,39 @@ export class PreviewSim {
     return best;
   }
 
-  private isFree(c: CellPos): boolean {
+  private height(c: CellPos): number {
+    let n = 0;
+    for (const b of this.snapshot.boxes) if (!b.carried && b.cell && b.cell.x === c.x && b.cell.z === c.z) n++;
+    return n;
+  }
+
+  private isTop(b: BoxState): boolean {
+    return !b.carried && b.cell !== null && b.level === this.height(b.cell) - 1;
+  }
+
+  /** Height a box would land at on `c` (0 = floor), or -1 when the cell is blocked or its stack is full. */
+  private dropLevel(c: CellPos): number {
     const { width, depth } = this.level.size;
-    if (c.x < 0 || c.z < 0 || c.x >= width || c.z >= depth) return false;
-    if (this.blocked.has(cellKey(c))) return false;
-    return !this.snapshot.boxes.some((b) => !b.carried && b.cell && b.cell.x === c.x && b.cell.z === c.z);
+    if (c.x < 0 || c.z < 0 || c.x >= width || c.z >= depth) return -1;
+    if (this.blocked.has(cellKey(c))) return -1;
+    const h = this.height(c);
+    return h < this.stackLimit ? h : -1;
+  }
+
+  private zoneAt(c: CellPos): ZoneState | null {
+    return this.snapshot.zones.find((z) => z.cell.x === c.x && z.cell.z === c.z) ?? null;
   }
 
   private updateHint(fork: { x: number; z: number }): void {
     const s = this.snapshot;
+    s.hint.dropLevel = 0;
     if (s.forklift.carrying) {
       const cell = worldToCell(fork, this.level.size);
-      const free = this.isFree(cell);
+      const level = this.dropLevel(cell);
       s.hint.targetBoxId = null;
-      s.hint.dropCell = free ? cell : null;
-      s.hint.dropZoneId = free ? (s.zones.find((z) => z.cell.x === cell.x && z.cell.z === cell.z)?.id ?? null) : null;
+      s.hint.dropCell = level >= 0 ? cell : null;
+      s.hint.dropZoneId = level >= 0 ? (this.zoneAt(cell)?.id ?? null) : null;
+      s.hint.dropLevel = Math.max(0, level);
     } else {
       s.hint.targetBoxId = this.nearestBox(fork, 0.9)?.id ?? null;
       s.hint.dropCell = null;

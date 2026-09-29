@@ -26,3 +26,6 @@ export function formatPrecise(ms: number): string {
   const tenths = Math.floor(safeMs(ms) / 100 + EPSILON);
   return `${minutesSeconds(Math.floor(tenths / 10))}.${tenths % 10}`;
 }
+
+/** Tooltip of the "Modo prueba" switch and HUD tag: what it opens and how to jump levels while playing. */
+export const TEST_MODE_TIP = 'Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente';

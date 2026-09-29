@@ -5,12 +5,13 @@
  * this proves the real controls agree with it.
  *
  * Planner: greedy search over "move one box" steps (same conservative carrying model as levels.test.ts:
- * forward only, the box in the cell ahead, 90° turns need two cells of clearance), replanned from the live
- * state after every drop. Driver: closed-loop steering toward cell centers with world-space input.
+ * forward only, the box in the cell ahead, 90° turns need two cells of clearance; state = the color stack on
+ * every cell, a move lifts a stack's top box and drops it on the floor or on a stack with room), replanned from
+ * the live state after every drop. Driver: closed-loop steering toward cell centers with world-space input.
  */
 import { describe, expect, it } from 'vitest';
 import { angleDelta } from '../core/math';
-import { cellToWorld, worldToCell, type ColorId, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
+import { COLOR_IDS, cellToWorld, worldToCell, type ColorId, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
 import { LEVELS } from '../data/levels';
 import { GameState } from '../logic/GameState';
 
@@ -25,16 +26,24 @@ class Grid {
   readonly cellCount: number;
   readonly solid: Uint8Array;
   readonly zoneColor: (ColorId | null)[];
+  /** Zone recipe per cell as color codes bottom → top, or ''. */
+  readonly recipe: string[];
+  readonly stackLimit: number;
   constructor(level: LevelData) {
     this.width = level.size.width;
     this.depth = level.size.depth;
     this.cellCount = this.width * this.depth;
     this.solid = new Uint8Array(this.cellCount);
     this.zoneColor = new Array<ColorId | null>(this.cellCount).fill(null);
+    this.recipe = new Array<string>(this.cellCount).fill('');
+    this.stackLimit = level.stackLimit ?? 1;
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
     for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
-    for (const zone of level.zones) this.zoneColor[this.index(zone.x, zone.z)] = zone.color;
+    for (const zone of level.zones) {
+      this.zoneColor[this.index(zone.x, zone.z)] = zone.color;
+      this.recipe[this.index(zone.x, zone.z)] = (zone.recipe ?? [zone.color]).map(colorCode).join('');
+    }
   }
   index(x: number, z: number) {
     return z * this.width + x;
@@ -49,11 +58,36 @@ class Grid {
   }
 }
 
-function occupancyOf(grid: Grid, boxCells: ArrayLike<number>): Int16Array {
+/** One character per color (index in COLOR_IDS): a stack is a string of these, bottom → top. */
+function colorCode(c: ColorId): string {
+  return String(COLOR_IDS.indexOf(c));
+}
+
+/** Per cell: the stack resting there as color codes bottom → top ('' = empty). */
+type Stacks = string[];
+
+/** Live stacks from the snapshot (resting boxes by cell, ordered by level). */
+function liveStacks(grid: Grid, snap: GameSnapshot): Stacks {
+  const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
+  const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
+  for (const b of resting) stacks[grid.index(b.cell!.x, b.cell!.z)] += colorCode(b.color);
+  return stacks;
+}
+
+function occupancyOf(grid: Grid, stacks: Stacks): Int16Array {
   const occ = new Int16Array(grid.cellCount).fill(-1);
-  for (let i = 0; i < boxCells.length; i++) if (boxCells[i] >= 0) occ[boxCells[i]] = i;
+  for (let c = 0; c < grid.cellCount; c++) if (stacks[c].length > 0) occ[c] = 0;
   return occ;
 }
+function correctPrefix(grid: Grid, stacks: Stacks, cell: number): number {
+  const recipe = grid.recipe[cell];
+  const stack = stacks[cell];
+  let n = 0;
+  while (n < stack.length && n < recipe.length && stack[n] === recipe[n]) n++;
+  return n;
+}
+const canStackOn = (grid: Grid, stacks: Stacks, cell: number) =>
+  cell >= 0 && grid.solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < grid.stackLimit;
 const isFree = (grid: Grid, occ: Int16Array, cell: number) => cell >= 0 && grid.solid[cell] === 0 && occ[cell] === -1;
 
 function reachableFrom(grid: Grid, occ: Int16Array, start: number): Uint8Array {
@@ -71,37 +105,46 @@ function reachableFrom(grid: Grid, occ: Int16Array, start: number): Uint8Array {
   return region;
 }
 
-/** BFS over carry poses; returns pose chains (cell*4+dir) per drop cell. */
-function carrySearch(grid: Grid, occ: Int16Array, starts: number[]): Map<number, number[]> {
+/**
+ * BFS over carry poses; returns pose chains (cell*4+dir) per drop cell. A drop on a stack ends with one extra
+ * pose (a forward step or a turn) that brings the stack ahead; that pose is never expanded.
+ */
+function carrySearch(grid: Grid, occ: Int16Array, stacks: Stacks, starts: number[]): Map<number, number[]> {
   const parent = new Int32Array(grid.cellCount * 4).fill(-2);
   const queue: number[] = [];
   for (const s of starts) if (parent[s] === -2) (parent[s] = -1), queue.push(s);
-  const best = new Map<number, number>();
+  const best = new Map<number, number[]>();
+  const chainTo = (end: number, extra: number | null) => {
+    const chain: number[] = extra === null ? [] : [extra];
+    for (let p = end; p !== -1; p = parent[p]) chain.push(p);
+    return chain.reverse();
+  };
   for (let q = 0; q < queue.length; q++) {
     const pose = queue[q];
     const cell = pose >> 2;
     const dir = pose & 3;
     const front = grid.step(cell, dir);
-    if (!best.has(front)) best.set(front, pose);
+    if (!best.has(front)) best.set(front, chainTo(pose, null));
     const visit = (p: number) => {
       if (parent[p] === -2) {
         parent[p] = pose;
         queue.push(p);
       }
     };
-    if (isFree(grid, occ, grid.step(front, dir))) visit(front * 4 + dir);
+    if (isFree(grid, occ, front)) {
+      const ahead = grid.step(front, dir);
+      if (isFree(grid, occ, ahead)) visit(front * 4 + dir);
+      else if (canStackOn(grid, stacks, ahead) && !best.has(ahead)) best.set(ahead, chainTo(pose, front * 4 + dir));
+    }
     for (const turn of TURNS) {
       const next = (dir + turn) % 4;
-      if (isFree(grid, occ, grid.step(cell, next)) && isFree(grid, occ, grid.step(front, next))) visit(cell * 4 + next);
+      if (!isFree(grid, occ, grid.step(front, next))) continue;
+      const side = grid.step(cell, next);
+      if (isFree(grid, occ, side)) visit(cell * 4 + next);
+      else if (canStackOn(grid, stacks, side) && !best.has(side)) best.set(side, chainTo(pose, cell * 4 + next));
     }
   }
-  const chains = new Map<number, number[]>();
-  for (const [front, end] of best) {
-    const chain: number[] = [];
-    for (let p = end; p !== -1; p = parent[p]) chain.push(p);
-    chains.set(front, chain.reverse());
-  }
-  return chains;
+  return best;
 }
 
 function pickupStarts(grid: Grid, region: Uint8Array, from: number): number[] {
@@ -114,53 +157,72 @@ function pickupStarts(grid: Grid, region: Uint8Array, from: number): number[] {
 }
 
 interface Move {
-  box: number;
+  /** Cell whose top box is lifted. */
+  from: number;
   drop: number;
 }
 
+/** Stacks after lifting the top of `from` (and the occupancy that goes with them). */
+function lift(stacks: Stacks, from: number): Stacks {
+  const out = stacks.slice();
+  out[from] = out[from].slice(0, -1);
+  return out;
+}
+
+/**
+ * Boxes not yet part of a correct recipe prefix on their zone: each must be moved at least once, so this is a
+ * lower bound on the moves still needed (on single-box recipes: boxes not on a zone of their own color).
+ */
+function misplacedCount(grid: Grid, stacks: Stacks, total: number): number {
+  let placed = 0;
+  for (let c = 0; c < grid.cellCount; c++) if (grid.recipe[c]) placed += correctPrefix(grid, stacks, c);
+  return total - placed;
+}
+
 /** Full box-move sequence from the given layout (greedy best-first), or null. */
-function planMoves(level: LevelData, grid: Grid, boxCells: Int32Array, forklift: number): Move[] | null {
-  const colors = level.boxes.map((b) => b.color);
-  const misplaced = (cells: Int32Array) => colors.reduce((n, c, i) => (grid.zoneColor[cells[i]] === c ? n : n + 1), 0);
-  const keyOf = (cells: Int32Array, region: Uint8Array) =>
-    [...new Set(colors)].map((color) => colors.flatMap((c, i) => (c === color ? [cells[i]] : [])).sort((a, b) => a - b).join(',')).join('|') +
-    `@${region.indexOf(1)}`;
+function planMoves(level: LevelData, grid: Grid, stacks0: Stacks, forklift: number): Move[] | null {
+  const total = level.boxes.length;
+  const misplaced = (stacks: Stacks) => misplacedCount(grid, stacks, total);
+  const keyOf = (stacks: Stacks, region: Uint8Array) => `${stacks.join('/')}@${region.indexOf(1)}`;
   interface Node {
-    cells: Int32Array;
+    stacks: Stacks;
     forklift: number;
     moves: Move[];
   }
-  const buckets: Node[][] = Array.from({ length: colors.length + 1 }, () => []);
+  const buckets: Node[][] = Array.from({ length: total + 1 }, () => []);
   const seen = new Set<string>();
-  const push = (cells: Int32Array, fl: number, moves: Move[], region: Uint8Array) => {
-    const key = keyOf(cells, region);
+  const push = (stacks: Stacks, fl: number, moves: Move[], region: Uint8Array) => {
+    const key = keyOf(stacks, region);
     if (seen.has(key)) return;
     seen.add(key);
-    buckets[misplaced(cells)].push({ cells, forklift: fl, moves });
+    buckets[misplaced(stacks)].push({ stacks, forklift: fl, moves });
   };
-  const occ0 = occupancyOf(grid, boxCells);
-  push(boxCells, forklift, [], reachableFrom(grid, occ0, forklift));
+  push(stacks0, forklift, [], reachableFrom(grid, occupancyOf(grid, stacks0), forklift));
   for (let expansions = 0; expansions < 6000; expansions++) {
     const bi = buckets.findIndex((b) => b.length > 0);
     if (bi < 0) return null;
     const node = buckets[bi].pop()!;
     if (bi === 0) return node.moves;
-    const occ = occupancyOf(grid, node.cells);
+    const occ = occupancyOf(grid, node.stacks);
     const region = reachableFrom(grid, occ, node.forklift);
-    for (let i = 0; i < colors.length; i++) {
-      const from = node.cells[i];
-      occ[from] = -1;
-      const chains = carrySearch(grid, occ, pickupStarts(grid, region, from));
+    for (let from = 0; from < grid.cellCount; from++) {
+      const stack = node.stacks[from];
+      if (stack.length === 0) continue;
+      const box = stack[stack.length - 1];
+      const lifted = lift(node.stacks, from);
+      occ[from] = lifted[from].length > 0 ? 0 : -1;
+      const chains = carrySearch(grid, occ, lifted, pickupStarts(grid, region, from));
       for (const [drop, chain] of chains) {
-        if (drop === from || !isFree(grid, occ, drop)) continue;
-        const next = node.cells.slice();
-        next[i] = drop;
-        occ[drop] = i;
+        if (drop === from || drop < 0 || grid.solid[drop] === 1 || lifted[drop].length >= grid.stackLimit) continue;
+        const next = lifted.slice();
+        next[drop] += box;
+        const before = occ[drop];
+        occ[drop] = 0;
         const cell = chain[chain.length - 1] >> 2;
-        push(next, cell, [...node.moves, { box: i, drop }], reachableFrom(grid, occ, cell));
-        occ[drop] = -1;
+        push(next, cell, [...node.moves, { from, drop }], reachableFrom(grid, occ, cell));
+        occ[drop] = before;
       }
-      occ[from] = i;
+      occ[from] = 0;
     }
   }
   return null;
@@ -282,38 +344,43 @@ function autopilot(level: LevelData, dt: number): Outcome {
   const grid = new Grid(level);
   let moves = 0;
   let queue: Move[] = [];
-  /** Box cells the remaining plan expects; any mismatch with the live state triggers a replan. */
-  let expected: Int32Array | null = null;
+  /** Stacks the remaining plan expects; any mismatch with the live state triggers a replan. */
+  let expected: Stacks | null = null;
   const fail = (note: string): Outcome => ({ solved: false, seconds: pilot.seconds, moves, note });
   for (let iter = 0; iter < 60; iter++) {
     const snap = pilot.snap;
     if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '' };
-    const cells = Int32Array.from(snap.boxes, (b) => (b.cell ? grid.index(b.cell.x, b.cell.z) : -1));
-    const occ = occupancyOf(grid, cells);
+    const stacks = liveStacks(grid, snap);
+    const occ = occupancyOf(grid, stacks);
     const fc = worldToCell(snap.forklift.pos, level.size);
     const fcell = grid.index(fc.x, fc.z);
-    if (!expected || queue.length === 0 || cells.some((c, i) => c !== expected![i])) {
-      const planned = planMoves(level, grid, cells, fcell);
+    if (!expected || queue.length === 0 || stacks.some((c, i) => c !== expected![i])) {
+      const planned = planMoves(level, grid, stacks, fcell);
       if (!planned || planned.length === 0) return fail(`no plan at iter ${iter} from cell ${fc.x},${fc.z}`);
       queue = planned;
     }
     const plan = queue.shift()!;
-    expected = cells.slice();
-    expected[plan.box] = plan.drop;
-    const box = snap.boxes[plan.box];
-    const from = cells[plan.box];
+    const from = plan.from;
+    const lifted = lift(stacks, from);
+    expected = lifted.slice();
+    expected[plan.drop] += stacks[from][stacks[from].length - 1];
+    const fromCell = { x: from % grid.width, z: Math.floor(from / grid.width) };
+    const box = snap.boxes
+      .filter((b) => b.cell && b.cell.x === fromCell.x && b.cell.z === fromCell.z)
+      .sort((a, b) => b.level - a.level)[0];
     const region = reachableFrom(grid, occ, fcell);
-    occ[from] = -1;
     const starts = pickupStarts(grid, region, from);
+    occ[from] = lifted[from].length > 0 ? 0 : -1;
     // Choose the approach whose carry chain reaches the drop.
     let bestChain: number[] | null = null;
     let bestEmpty: number[] | null = null;
     for (const s of starts) {
-      const chain = carrySearch(grid, occ, [s]).get(plan.drop);
+      const chain = carrySearch(grid, occ, lifted, [s]).get(plan.drop);
       if (!chain) continue;
-      occ[from] = plan.box;
+      const liftedOcc = occ[from];
+      occ[from] = 0;
       const path = emptyPath(grid, occ, fcell, s >> 2);
-      occ[from] = -1;
+      occ[from] = liftedOcc;
       if (!path) continue;
       if (!bestChain || path.length + chain.length < bestEmpty!.length + bestChain.length) {
         bestChain = chain;
@@ -376,7 +443,20 @@ describe('every shipped level is playable with the real controls', () => {
       const out = autopilot(level, dt);
       expect(out.note).toBe('');
       expect(out.solved).toBe(true);
-      expect(out.moves).toBeGreaterThanOrEqual(level.boxes.filter((b) => !level.zones.some((z) => z.x === b.x && z.z === b.z && z.color === b.color)).length);
+      const grid = new Grid(level);
+      const start = liveStacks(grid, new GameState(level).getSnapshot());
+      expect(out.moves).toBeGreaterThanOrEqual(misplacedCount(grid, start, level.boxes.length));
     });
   }
+
+  it('the move bound still counts boxes starting on a zone of another color (classic levels)', () => {
+    const classic = LEVELS.filter((level) => level.stackLimit === 1);
+    expect(classic.length).toBeGreaterThanOrEqual(12);
+    for (const level of classic) {
+      const grid = new Grid(level);
+      const start = liveStacks(grid, new GameState(level).getSnapshot());
+      const offZone = level.boxes.filter((b) => !level.zones.some((z) => z.x === b.x && z.z === b.z && z.color === b.color));
+      expect(misplacedCount(grid, start, level.boxes.length), level.id).toBe(offZone.length);
+    }
+  });
 });

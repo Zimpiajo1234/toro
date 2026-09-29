@@ -8,6 +8,7 @@ import {
   type LevelShelf,
   type WallSide,
 } from '../core/types';
+import { GAME_CONFIG } from '../config';
 
 /**
  * Parses and validates raw level JSON into a fully-defaulted LevelData.
@@ -100,10 +101,23 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
 
   // Zones
   const zoneIds = new Set<string>();
-  const zoneCells = new Map<string, ColorId>();
+  const zoneCells = new Map<string, ColorId[]>();
   const zones = arr(r.zones, 'zones').map((z, i) => {
     const o = obj(z, `zones[${i}]`);
-    const zone = { id: str(o.id, `zones[${i}].id`), color: color(o.color, `zones[${i}]`), x: int(o.x, `zones[${i}].x`), z: int(o.z, `zones[${i}].z`) };
+    const zoneColor = color(o.color, `zones[${i}]`);
+    const recipe =
+      o.recipe === undefined
+        ? [zoneColor]
+        : arr(o.recipe, `zones[${i}].recipe`).map((c, j) => color(c, `zones[${i}].recipe[${j}]`));
+    if (recipe.length === 0) fail(`zones[${i}].recipe must not be empty`);
+    if (recipe[0] !== zoneColor) fail(`zones[${i}].color must equal recipe[0] (the bottom box)`);
+    const zone = {
+      id: str(o.id, `zones[${i}].id`),
+      color: zoneColor,
+      x: int(o.x, `zones[${i}].x`),
+      z: int(o.z, `zones[${i}].z`),
+      ...(o.recipe === undefined ? {} : { recipe }),
+    };
     if (zoneIds.has(zone.id)) fail(`duplicate zone id "${zone.id}"`);
     zoneIds.add(zone.id);
     if (!inBounds(zone.x, zone.z)) fail(`zone "${zone.id}" out of bounds`);
@@ -111,14 +125,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (blocked.has(k)) fail(`zone "${zone.id}" is inside an obstacle`);
     if (zoneCells.has(k)) fail(`two zones share cell ${k}`);
     if (k === cellKey(forklift)) fail(`zone "${zone.id}" is under the forklift start`);
-    zoneCells.set(k, zone.color);
+    zoneCells.set(k, recipe);
     return zone;
   });
   if (zones.length === 0) fail('a level needs at least one zone');
 
-  // Boxes
+  // Boxes. Several boxes on one cell form a stack, bottom → top in list order.
   const boxIds = new Set<string>();
-  const boxCells = new Set<string>();
+  const stacks = new Map<string, ColorId[]>();
   const boxes = arr(r.boxes, 'boxes').map((b, i) => {
     const o = obj(b, `boxes[${i}]`);
     const kind: BoxKind =
@@ -133,20 +147,37 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (!inBounds(box.x, box.z)) fail(`box "${box.id}" out of bounds`);
     const k = cellKey(box);
     if (blocked.has(k)) fail(`box "${box.id}" is inside an obstacle`);
-    if (boxCells.has(k)) fail(`two boxes share cell ${k}`);
     if (k === cellKey(forklift)) fail(`box "${box.id}" is under the forklift start`);
-    boxCells.add(k);
+    const stack = stacks.get(k);
+    if (stack) stack.push(box.color);
+    else stacks.set(k, [box.color]);
     return box;
   });
 
-  // Every color must have exactly as many boxes as zones.
+  // Stack limit: explicit, else the global max when the level uses stacking at all, else 1 (classic levels).
+  const tallestRecipe = Math.max(...[...zoneCells.values()].map((rec) => rec.length));
+  const tallestStart = Math.max(0, ...[...stacks.values()].map((st) => st.length));
+  const stacking = tallestRecipe > 1 || tallestStart > 1;
+  const stackLimit =
+    r.stackLimit === undefined ? (stacking ? GAME_CONFIG.stack.maxHeight : 1) : int(r.stackLimit, 'stackLimit');
+  if (stackLimit < 1 || stackLimit > GAME_CONFIG.stack.maxHeight)
+    fail(`stackLimit must be between 1 and ${GAME_CONFIG.stack.maxHeight}`);
+  if (tallestRecipe > stackLimit) fail(`a zone recipe is taller than stackLimit ${stackLimit}`);
+  for (const [k, st] of stacks) {
+    if (st.length > stackLimit) fail(stackLimit === 1 ? `two boxes share cell ${k}` : `stack at ${k} is taller than stackLimit ${stackLimit}`);
+  }
+
+  // Box colors must be exactly the colors the recipes ask for (as a multiset).
   const count = new Map<ColorId, number>();
   for (const b of boxes) count.set(b.color, (count.get(b.color) ?? 0) + 1);
-  for (const z of zones) count.set(z.color, (count.get(z.color) ?? 0) - 1);
+  for (const rec of zoneCells.values()) for (const c of rec) count.set(c, (count.get(c) ?? 0) - 1);
   for (const [c, n] of count) if (n !== 0) fail(`color "${c}" has ${n > 0 ? 'more boxes than zones' : 'more zones than boxes'}`);
 
-  // Must not start solved.
-  const solved = boxes.every((b) => zoneCells.get(cellKey(b)) === b.color);
+  // Must not start solved: every zone's stack equal to its recipe.
+  const solved = [...zoneCells].every(([k, rec]) => {
+    const st = stacks.get(k);
+    return st !== undefined && st.length === rec.length && st.every((c, i) => c === rec[i]);
+  });
   if (solved) fail('level starts already solved');
 
   return {
@@ -159,6 +190,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     zones,
     shelves,
     decor: { plants, windows },
+    stackLimit,
     theme: typeof r.theme === 'string' && r.theme ? r.theme : 'default',
   };
 }

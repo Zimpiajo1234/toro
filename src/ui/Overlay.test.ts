@@ -12,6 +12,7 @@ const noopActions: GameActions = {
   toTitle() {},
   toggleMute() {},
   toggleTimer() {},
+  toggleTestMode() {},
 };
 
 /** Server-renders the overlay for a given state (no DOM in the test env; effects do not run). */
@@ -55,6 +56,22 @@ describe('Overlay', () => {
     expect(html).toContain('Mejor 0:38.9');
     expect(html).toContain('girar cámara');
     expect(html).not.toContain('Reiniciar nivel');
+  });
+
+  it('title footer: a discreet "Modo prueba" switch reflecting the setting; HUD shows a faint tag', () => {
+    const off = render({ screen: 'title', levels, levelCount: 3 });
+    expect(off).toMatch(/<button type="button" class="title__test" aria-pressed="false"[^>]*>.*Modo prueba<\/button>/);
+    const on = render({ screen: 'title', levels, levelCount: 3, testMode: true });
+    expect(on).toContain('class="title__test is-on" aria-pressed="true"');
+    expect(on).toContain('title="Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente"');
+    const hud = render({ screen: 'playing', levelIndex: 2, testMode: true });
+    // Faint visible word; screen readers hear "Nivel 3, modo prueba" (no run-on "Nivel 3prueba").
+    expect(hud).toContain(
+      '<span class="hud-level__test" title="Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente">' +
+        '<span aria-hidden="true">prueba</span>' +
+        '<span class="ui-visually-hidden">, modo prueba</span></span>',
+    );
+    expect(render({ screen: 'playing', levelIndex: 2 })).not.toContain('prueba');
   });
 
   it('title footer shows the saved mute state, without announcing it on load', () => {
@@ -106,21 +123,36 @@ describe('Overlay', () => {
       screen: 'complete',
       levelIndex: 0,
       levelName: 'Primer pedido',
-      result: { timeMs: 42_300, bestMs: 42_300, isNewBest: true, message: 'Buen trabajo', isLast: false },
+      result: { timeMs: 42_300, bestMs: 42_300, isNewBest: true, message: 'Buen trabajo', isLast: false, practice: false },
     });
     expect(html).toContain('Buen trabajo</h2>');
     expect(html).toContain('<dt>Tiempo</dt><dd>0:42.3</dd>');
     expect(html).toContain('<dt>Mejor tiempo</dt><dd>0:42.3</dd>');
+    expect(html).not.toContain('no se guarda');
     expect(html).toContain('Nuevo mejor tiempo');
     expect(html).toContain('>Siguiente almacén</button>');
     expect(html).toContain('>Repetir</button>');
     expect(html).toMatch(/class="ui-layer hud is-dimmed"[^>]*inert=""/);
   });
 
+  it('complete, level open only through "Modo prueba": its time, no best time, and a quiet "not kept" note', () => {
+    const result = { timeMs: 42_300, bestMs: 42_300, isNewBest: false, message: 'Buen trabajo', isLast: false, practice: false };
+    const html = render({ screen: 'complete', result: { ...result, practice: true } });
+    expect(html).toContain('class="card__stats card__stats--single ui-enter ui-enter--d1"');
+    expect(html).toContain('<dt>Tiempo</dt><dd>0:42.3</dd>');
+    expect(html).not.toContain('Mejor tiempo');
+    expect(html).toContain('>Modo prueba · este tiempo no se guarda</p>');
+    // A genuinely open level (times kept) and a hidden timer (no times at all) carry no note.
+    expect(render({ screen: 'complete', result: { ...result, practice: false } })).not.toContain('no se guarda');
+    const hidden = render({ screen: 'complete', showTimer: false, result: { ...result, practice: true } });
+    expect(hidden).not.toContain('no se guarda');
+    expect(hidden).not.toContain('0:42.3');
+  });
+
   it('last level offers the way home', () => {
     const html = render({
       screen: 'complete',
-      result: { timeMs: 50_000, bestMs: 40_000, isNewBest: false, message: 'Todo en su sitio', isLast: true },
+      result: { timeMs: 50_000, bestMs: 40_000, isNewBest: false, message: 'Todo en su sitio', isLast: true, practice: false },
     });
     expect(html).toContain('Todos los almacenes están en orden.');
     expect(html).toContain('>Volver al inicio</button>');

@@ -516,6 +516,49 @@
 .title__sep {
   opacity: 0.6;
 }
+/* "Modo prueba": a quiet footer switch, same weight as the hints around it. */
+.title__test {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--ui-text-soft) 35%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.8;
+  transition:
+    opacity 0.25s ease,
+    background-color 0.25s ease;
+}
+.title__test:hover,
+.title__test:focus-visible {
+  opacity: 1;
+}
+.title__test-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  transition: background-color 0.25s ease;
+}
+.title__test.is-on {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ui-panel) 60%, transparent);
+}
+.title__test.is-on .title__test-dot {
+  background: currentColor;
+}
+/* Faint but findable (≈3.4:1 over the panel, the ≥3:1 rule for discreet elements). */
+.hud-level__test {
+  margin-left: 6px;
+  pointer-events: auto; /* its tooltip lists the level-jump keys */
+  font-size: 0.72em;
+  font-weight: 700;
+  opacity: 0.7;
+}
 .title__footer-icon {
   width: 16px;
   height: 16px;
@@ -713,6 +756,15 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.005em;
 }
+/* A "Modo prueba" run has no best time: its one tile keeps the usual size, centred. */
+.card__stats--single {
+  grid-template-columns: minmax(0, calc(50% - 4px));
+  justify-content: center;
+}
+/* Quiet note under that tile: the time is not kept. */
+.card__practice {
+  margin-top: 8px;
+}
 
 .card__badge {
   display: inline-flex;
@@ -857,6 +909,10 @@
   .title__wordmark {
     font-size: clamp(48px, 14vh, 80px);
   }
+  /* All 18 dots on one row (18 × 26 + 17 × 2 = 502 px) keep the diorama band; narrow windows still wrap. */
+  .level-dots {
+    max-width: 520px;
+  }
   .card-layer {
     padding-bottom: max(clamp(10px, 3vh, 16px), env(safe-area-inset-bottom, 0px));
   }
@@ -872,6 +928,9 @@
   .card__line {
     margin-top: 2px;
     font-size: 13px;
+  }
+  .card__practice {
+    margin-top: 6px;
   }
   .card__stats {
     margin-top: 8px;
@@ -929,6 +988,15 @@
     border: 0;
     background: GrayText;
     opacity: 1;
+  }
+  /* "Modo prueba" on / off: the switch's dot fills, redrawn the same way. */
+  .title__test-dot {
+    forced-color-adjust: none;
+    border-color: ButtonText;
+    background: Canvas;
+  }
+  .title__test.is-on .title__test-dot {
+    background: ButtonText;
   }
 }
 

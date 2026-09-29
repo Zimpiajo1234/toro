@@ -41,7 +41,7 @@ const actions = {
   load,
   pickOrDrop: () => emit(sim.snapshot.forklift.carrying ? sim.drop() : sim.pick()),
   solveZone: () => {
-    const zone = sim.snapshot.zones.find((z) => !z.satisfied);
+    const zone = sim.snapshot.zones.find((z) => z.next !== null);
     if (zone) emit(sim.solveZone(zone.id));
   },
   solveAll: () => {

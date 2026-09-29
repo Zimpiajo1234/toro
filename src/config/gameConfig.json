@@ -20,6 +20,10 @@
     "size": 0.78,
     "dropLandSec": 0.26
   },
+  "stack": {
+    "maxHeight": 3,
+    "forkRiseSpeed": 3.2
+  },
   "snap": {
     "zoneMagnetRadius": 0.9
   },

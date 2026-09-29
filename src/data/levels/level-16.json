@@ -1,0 +1,29 @@
+{
+  "id": "al-reves",
+  "order": 16,
+  "name": "Al revés",
+  "size": { "width": 10, "depth": 7 },
+  "forklift": { "x": 7, "z": 3, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "lavender", "x": 3, "z": 3 },
+    { "id": "b2", "color": "coral", "x": 3, "z": 3 },
+    { "id": "b3", "color": "blue", "x": 6, "z": 5 },
+    { "id": "b4", "color": "mint", "x": 8, "z": 5 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "coral", "x": 3, "z": 3, "recipe": ["coral", "lavender"] },
+    { "id": "z2", "color": "blue", "x": 6, "z": 5, "recipe": ["blue", "mint"] }
+  ],
+  "shelves": [{ "x": 3, "z": 0, "w": 3, "d": 1, "tiers": 3 }],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 9, "z": 0 },
+      { "x": 0, "z": 6 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 7, "width": 2 },
+      { "wall": "west", "at": 2, "width": 3 }
+    ]
+  }
+}

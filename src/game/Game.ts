@@ -5,6 +5,7 @@ import { GAME_CONFIG } from '../config';
 import { LEVELS, getLevel } from '../data/levels';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
+import { forkRiseRate } from '../logic/forkRise';
 import { Timer } from '../logic/Timer';
 import { GameRenderer } from '../render/GameRenderer';
 import { AudioEngine } from '../audio/AudioEngine';
@@ -17,6 +18,7 @@ import {
   Countdown,
   buildLevelSummaries,
   continueIndexAfter,
+  continueTarget,
   resolveStartLevel,
   shouldShowHint,
   type SavedProgress,
@@ -61,6 +63,9 @@ export class Game implements GameActions {
   private readonly confirmGrace = new Countdown();
   /** R / pad Back held while there is work to lose. */
   private readonly restartHold = new Countdown();
+  /** "Modo prueba" level-jump key held while there is work to lose; `jumpStep` is its direction. */
+  private readonly jumpHold = new Countdown();
+  private jumpStep: -1 | 1 = 1;
   /** World-space input handed to the simulation; reused every frame. */
   private readonly frameInput: InputFrame & { drive: DriveInput } = {
     move: { x: 0, z: 0 },
@@ -97,6 +102,7 @@ export class Game implements GameActions {
     this.toTitle = this.toTitle.bind(this);
     this.toggleMute = this.toggleMute.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
+    this.toggleTestMode = this.toggleTestMode.bind(this);
   }
 
   /** Start the frame loop and show the title screen. */
@@ -140,7 +146,8 @@ export class Game implements GameActions {
       showHint: false,
       showTimer: settings.showTimer,
       muted: settings.muted,
-      ...this.progressSummary(rt),
+      testMode: settings.testMode,
+      ...this.progressSummary(rt, settings.testMode),
     });
 
     // Another tab finished a level: the title's dots and "Continuar" follow it (ProgressStore re-reads storage).
@@ -160,6 +167,7 @@ export class Game implements GameActions {
     this.completeDelay.cancel();
     this.confirmGrace.cancel();
     this.restartHold.cancel();
+    this.jumpHold.cancel();
     this.timer.stop();
     this.state = null;
     this.suspended = false;
@@ -177,13 +185,17 @@ export class Game implements GameActions {
     if (!rt) return;
     this.unlockAudio(rt); // called from a click / keydown, so this is a user gesture
     rt.audio.uiClick();
-    const index = resolveStartLevel(levelIndex, this.savedProgress(rt), LEVELS.length);
+    // "Continuar" (no level asked for; a click event may come through as the argument) resumes the level left with
+    // Esc, even one only "Modo prueba" opened (never saved as the last level).
+    const resumeSuspended = typeof levelIndex !== 'number' && this.suspended && this.level !== null;
+    const index = resumeSuspended ? this.levelIndex : resolveStartLevel(levelIndex, this.savedProgress(rt), LEVELS.length);
     rt.renderer.setIdleOrbit(false);
     // The level left with Esc picks up exactly where it was; any other level (or a finished one) loads fresh.
     const resume = this.suspended && index === this.levelIndex && this.level !== null;
     this.suspended = false;
     const level = resume && this.level ? this.level : this.loadLevel(rt, index);
-    rt.progress.setLastLevel(index);
+    // "Modo prueba" may open a level that is still locked: it never becomes the saved "Continuar" target.
+    if (this.isGenuinelyOpen(rt, index)) rt.progress.setLastLevel(index);
     this.elapsedThrottle.markPublished(this.timer.elapsedMs);
     this.store.set({
       screen: 'playing',
@@ -231,6 +243,7 @@ export class Game implements GameActions {
     this.resumeTimerOnInput = leavingPlay && (this.timer.running || this.resumeTimerOnInput);
     this.timer.stop();
     this.restartHold.cancel();
+    this.jumpHold.cancel();
     this.confirmGrace.cancel();
     this.pendingResult = null;
     let index = this.levelIndex;
@@ -273,6 +286,37 @@ export class Game implements GameActions {
     const showTimer = !this.store.get().showTimer;
     rt.progress.setSettings({ showTimer });
     this.store.set({ showTimer });
+  }
+
+  /** "Modo prueba": every level dot opens; turning it off shows the real (untouched) unlock state again. */
+  toggleTestMode(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const testMode = !this.store.get().testMode;
+    rt.progress.setSettings({ testMode });
+    if (!testMode && this.suspended && !this.isGenuinelyOpen(rt, this.levelIndex)) {
+      // A still-locked level left mid-way cannot stay behind the title as the "Continuar" target: show the real one.
+      this.suspended = false;
+      const index = resolveStartLevel(undefined, this.savedProgress(rt), LEVELS.length);
+      const level = this.loadLevel(rt, index);
+      this.store.set({ testMode, levelIndex: index, levelName: level.name, ...this.progressSummary(rt, testMode) });
+      return;
+    }
+    this.store.set({ testMode, ...this.progressSummary(rt, testMode) });
+  }
+
+  /** "Modo prueba" while playing: load the previous / next level fresh (timer reset). */
+  private jumpLevel(step: -1 | 1): void {
+    const index = clamp(this.levelIndex + step, 0, LEVELS.length - 1);
+    if (index === this.levelIndex) return;
+    this.suspended = false;
+    this.start(index);
+  }
+
+  /** The level is open without "Modo prueba" (index within the real unlock progress). */
+  private isGenuinelyOpen(rt: Runtime, index: number): boolean {
+    return index === 0 || index <= rt.progress.getHighestUnlocked();
   }
 
   /* ---------------------------------------------------------------- */
@@ -324,6 +368,7 @@ export class Game implements GameActions {
     }
 
     const liftBefore = state.getSnapshot().forklift.forkLift;
+    const heightBefore = state.getSnapshot().forklift.forkHeight;
     const events = state.update(dt, frame);
     const snapshot = state.getSnapshot();
     for (let i = 0; i < events.length; i++) this.dispatch(rt, events[i], snapshot);
@@ -336,9 +381,15 @@ export class Game implements GameActions {
 
     const forklift = snapshot.forklift;
     const cfg = GAME_CONFIG.forklift;
+    // The climb slows with height (rate set by the higher of the current and target levels; while rising the target
+    // is the next whole level up): normalise by that rate so a slower climb whines just as clearly.
+    const climb = forklift.forkHeight - heightBefore;
+    const climbRate = forkRiseRate(GAME_CONFIG, climb > 0 ? Math.ceil(forklift.forkHeight) : heightBefore);
     rt.audio.setMotor(
       speed01(forklift.speed, cfg.maxSpeed),
-      forkMotion01(forklift.forkLift - liftBefore, dt, cfg.forkLiftSpeed),
+      // The servo answers both the carry lift and the climb to a stack's height, and sits higher up a stack.
+      Math.max(forkMotion01(forklift.forkLift - liftBefore, dt, cfg.forkLiftSpeed), forkMotion01(climb, dt, climbRate)),
+      forklift.forkHeight,
     );
     rt.renderer.update(snapshot, dt);
   }
@@ -347,20 +398,26 @@ export class Game implements GameActions {
   private handleCommands(rt: Runtime, input: InputSample, confirm: boolean, dt: number): void {
     if (input.mutePressed) this.toggleMute();
     if (input.timerPressed) this.toggleTimer();
+    const testMode = this.store.get().testMode;
     if (input.rotateCamera !== 0) rt.renderer.rotateCamera(input.rotateCamera);
     switch (this.store.get().screen) {
       case 'title':
-        if (confirm) this.start();
+        if (input.testModePressed) this.toggleTestMode();
+        else if (confirm) this.start();
         break;
-      case 'playing':
+      case 'playing': {
         if (this.completeDelay.active) {
-          this.restartHold.cancel(); // the level is done: let the celebration play out
-        } else if (input.backPressed) {
-          this.toTitle();
-        } else if (this.restartRequested(input, dt)) {
-          this.restart();
+          // The level is done: let the celebration play out.
+          this.restartHold.cancel();
+          this.jumpHold.cancel();
+          break;
         }
+        const step = testMode ? this.levelJumpRequested(input, dt) : 0;
+        if (step !== 0) this.jumpLevel(step);
+        else if (input.backPressed) this.toTitle();
+        else if (this.restartRequested(input, dt)) this.restart();
         break;
+      }
       case 'complete':
         if (this.confirmGrace.active) break; // a stray press must not skip the card before it can be read
         if (input.restartPressed || input.retryPressed) this.restart();
@@ -389,6 +446,26 @@ export class Game implements GameActions {
       return false;
     }
     return this.restartHold.tick(dt);
+  }
+
+  /**
+   * "Modo prueba" level jump ([ / ], PageUp / PageDown), guarded like R: instant while nothing has been moved yet,
+   * held for `flow.restartHoldSec` once a box was picked (PageDown sits by the arrows, ] by Enter), with the wait
+   * shown on the HUD's ↺ fill. Returns the step to take this frame, or 0.
+   */
+  private levelJumpRequested(input: InputSample, dt: number): -1 | 0 | 1 {
+    if (input.levelStep !== 0) {
+      if (!this.workAtStake) return input.levelStep;
+      this.jumpStep = input.levelStep;
+      this.jumpHold.arm(GAME_CONFIG.flow.restartHoldSec);
+      return 0;
+    }
+    if (!this.jumpHold.active) return 0;
+    if (input.levelStepHeld !== this.jumpStep) {
+      this.jumpHold.cancel();
+      return 0;
+    }
+    return this.jumpHold.tick(dt) ? this.jumpStep : 0;
   }
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
@@ -421,12 +498,21 @@ export class Game implements GameActions {
     if (!level) return;
     this.timer.stop();
     this.restartHold.cancel();
+    this.jumpHold.cancel();
     this.publishElapsed(true);
     const timeMs = Math.round(this.timer.elapsedMs);
-    const record = rt.progress.record(level.id, timeMs);
     const isLast = this.levelIndex >= LEVELS.length - 1;
-    if (!isLast) rt.progress.unlock(this.levelIndex + 1);
-    rt.progress.setLastLevel(continueIndexAfter(this.levelIndex, LEVELS.length));
+    // A level only "Modo prueba" opened leaves the real progress untouched: a stored time would unlock the next one
+    // (a completed level always unlocks its successor), so its time is shown but not recorded.
+    const genuine = this.isGenuinelyOpen(rt, this.levelIndex);
+    const previousBest = rt.progress.getBest(level.id);
+    const record = genuine
+      ? rt.progress.record(level.id, timeMs)
+      : { bestMs: Math.min(timeMs, previousBest ?? timeMs), isNewBest: false, previousBestMs: previousBest };
+    if (genuine) {
+      if (!isLast) rt.progress.unlock(this.levelIndex + 1);
+      rt.progress.setLastLevel(continueIndexAfter(this.levelIndex, LEVELS.length));
+    }
 
     this.pendingResult = {
       timeMs,
@@ -435,6 +521,7 @@ export class Game implements GameActions {
       isNewBest: record.isNewBest && record.previousBestMs !== null,
       message: this.messages.next(),
       isLast,
+      practice: !genuine,
     };
     this.store.set(this.progressSummary(rt));
     this.completeDelay.arm(GAME_CONFIG.flow.completeDelaySec);
@@ -464,6 +551,7 @@ export class Game implements GameActions {
     this.completeDelay.cancel();
     this.confirmGrace.cancel();
     this.restartHold.cancel();
+    this.jumpHold.cancel();
     this.pendingResult = null;
     this.workAtStake = false;
     this.suspended = false;
@@ -471,10 +559,14 @@ export class Game implements GameActions {
     return level;
   }
 
-  /** Drives the soft fill on the HUD's ↺ pill while R / pad Back is held (0 when no hold is running). */
+  /**
+   * Drives the soft fill on the HUD's ↺ pill while R / pad Back (or a "Modo prueba" level-jump key) is held
+   * (0 when no hold is running).
+   */
   private publishRestartHold(): void {
     const total = GAME_CONFIG.flow.restartHoldSec;
-    const hold = this.restartHold.active && total > 0 ? clamp(1 - this.restartHold.secondsLeft / total, 0, 1) : 0;
+    const countdown = this.restartHold.active ? this.restartHold : this.jumpHold;
+    const hold = countdown.active && total > 0 ? clamp(1 - countdown.secondsLeft / total, 0, 1) : 0;
     if (hold === this.publishedHold) return;
     if (hold !== 0 && hold !== 1 && Math.abs(hold - this.publishedHold) < HOLD_STEP) return;
     this.publishedHold = hold;
@@ -492,17 +584,22 @@ export class Game implements GameActions {
   }
 
   private savedProgress(rt: Runtime): SavedProgress {
+    const { progress } = rt;
+    const highestUnlocked = progress.getHighestUnlocked();
+    const cleared = (index: number) => index >= 0 && index < LEVELS.length && progress.getBest(LEVELS[index].id) !== null;
     return {
-      lastLevel: rt.progress.getLastLevel(),
-      highestUnlocked: rt.progress.getHighestUnlocked(),
-      hasProgress: rt.progress.hasProgress(),
+      // A save from before new levels were added: its final level, already cleared, leads on to the first new one.
+      lastLevel: continueTarget(progress.getLastLevel(), highestUnlocked, cleared),
+      highestUnlocked,
+      hasProgress: progress.hasProgress(),
     };
   }
 
-  private progressSummary(rt: Runtime): Pick<UIState, 'levels' | 'canContinue'> {
+  private progressSummary(rt: Runtime, testMode = this.store.get().testMode): Pick<UIState, 'levels' | 'canContinue'> {
     const { progress } = rt;
+    const highest = testMode ? LEVELS.length - 1 : progress.getHighestUnlocked();
     return {
-      levels: buildLevelSummaries(LEVELS, (id) => progress.getBest(id), progress.getHighestUnlocked()),
+      levels: buildLevelSummaries(LEVELS, (id) => progress.getBest(id), highest),
       // A level left mid-way can always be continued, even on a fresh save.
       canContinue: progress.hasProgress() || this.suspended,
     };

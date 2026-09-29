@@ -14,7 +14,7 @@ interface CompletionCardProps {
 
 /**
  * Compact card at the bottom center after a level (the tidied warehouse stays in view above it):
- * positive message, time, best time, next / repeat.
+ * positive message, time, best time, next / repeat. A "Modo prueba" run shows its time only, marked as not kept.
  */
 export function CompletionCard({ store, actions, show }: CompletionCardProps) {
   const liveResult = useStore(store, (s) => s.result);
@@ -55,6 +55,8 @@ interface CardBodyProps {
 function CardBody({ store, actions, active, result, levelIndex, levelName }: CardBodyProps) {
   // Times belong to the optional timer: if the player hid it, the card stays purely celebratory.
   const showTimes = useStore(store, (s) => s.showTimer);
+  // A level only "Modo prueba" opened keeps no time: no best to show, and the card says so.
+  const practice = result.practice === true;
   const titleId = useId();
   const primaryRef = useRef<HTMLButtonElement>(null);
   useAutoFocus(primaryRef, active);
@@ -72,16 +74,21 @@ function CardBody({ store, actions, active, result, levelIndex, levelName }: Car
       {result.isLast && <p className="card__line">Todos los almacenes están en orden.</p>}
 
       {showTimes && (
-        <dl className="card__stats ui-enter ui-enter--d1">
+        <dl className={`card__stats${practice ? ' card__stats--single' : ''} ui-enter ui-enter--d1`}>
           <div className="card__stat">
             <dt>Tiempo</dt>
             <dd>{formatPrecise(result.timeMs)}</dd>
           </div>
-          <div className="card__stat">
-            <dt>Mejor tiempo</dt>
-            <dd>{formatPrecise(result.bestMs)}</dd>
-          </div>
+          {!practice && (
+            <div className="card__stat">
+              <dt>Mejor tiempo</dt>
+              <dd>{formatPrecise(result.bestMs)}</dd>
+            </div>
+          )}
         </dl>
+      )}
+      {showTimes && practice && (
+        <p className="card__line card__practice ui-enter ui-enter--d2">Modo prueba · este tiempo no se guarda</p>
       )}
       {showTimes && result.isNewBest && (
         <p className="card__badge ui-enter ui-enter--d3">

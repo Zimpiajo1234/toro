@@ -204,7 +204,7 @@ describe('Game restart guard', () => {
   it('needs R held for restartHoldSec once a box was picked; releasing early cancels', () => {
     const { game, store } = setup();
     game.start(0);
-    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     const before = sim.states.length;
 
     tap('KeyR', 'r'); // a slip next to E
@@ -227,7 +227,7 @@ describe('Game restart guard', () => {
   it('publishes the hold progress for the HUD fill, and clears it on release', () => {
     const { game, store } = setup();
     game.start(0);
-    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     press('KeyR', 'r');
     advance(GAME_CONFIG.flow.restartHoldSec * 0.5);
     const mid = store.get().restartHold;
@@ -241,7 +241,7 @@ describe('Game restart guard', () => {
   it('keeps the HUD restart a single click', () => {
     const { game } = setup();
     game.start(0);
-    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     const before = sim.states.length;
     game.restart();
     expect(sim.states).toHaveLength(before + 1);
@@ -296,7 +296,7 @@ describe('Game completion', () => {
   it('R on the card repeats the level at once', () => {
     const { game, store } = setup();
     game.start(0);
-    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     completeLevel(store);
     advance(GAME_CONFIG.flow.completeDelaySec + GAME_CONFIG.flow.confirmGraceSec + 0.1);
     const before = sim.states.length;
@@ -318,13 +318,42 @@ describe('Game completion', () => {
   });
 });
 
+describe('Game "Continuar" with an older save', () => {
+  it('leads a player who cleared the whole earlier game into the first new level', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    // Written by the 12-level build: every level cleared, the last one (then final) kept as "Continuar".
+    const classic = LEVELS.slice(0, 12);
+    items.set(
+      'toro.progress.v1',
+      JSON.stringify({
+        version: 1,
+        rankings: Object.fromEntries(classic.map((l) => [l.id, [60_000]])),
+        highestUnlocked: 11,
+        lastLevel: 11,
+        lastLevelId: classic[11].id,
+        settings: { muted: false, showTimer: true },
+      }),
+    );
+    const { game, store } = setup();
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: 12, levelName: LEVELS[12].name, canContinue: true });
+    game.start();
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 12 });
+    expect(current().level.id).toBe(LEVELS[12].id);
+  });
+});
+
 describe('Game back to title', () => {
   it('Esc mid-level keeps the arrangement and the paused time; "Continuar" resumes it', () => {
     const { game, store } = setup();
     game.start(0);
     const level = current();
     emit({ type: 'firstInput' });
-    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     advance(1);
     tap('Escape', 'Escape');
     expect(store.get().screen).toBe('title');
@@ -427,3 +456,195 @@ describe('Game without WebGL', () => {
   });
 });
 
+
+describe('Game: modo prueba', () => {
+  const unlockedCount = (levels: { unlocked: boolean }[]) => levels.filter((l) => l.unlocked).length;
+  const completeLevel = () => {
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+  };
+
+  it('opens every level dot while on, and turning it off shows the real locked state again', () => {
+    const { game, store } = setup();
+    expect(store.get().testMode).toBe(false);
+    expect(unlockedCount(store.get().levels)).toBe(1);
+    game.toggleTestMode();
+    expect(store.get().testMode).toBe(true);
+    expect(unlockedCount(store.get().levels)).toBe(LEVELS.length);
+    game.toggleTestMode();
+    expect(store.get().testMode).toBe(false);
+    expect(unlockedCount(store.get().levels)).toBe(1);
+  });
+
+  it('U toggles it on the title only', () => {
+    const { game, store } = setup();
+    tap('KeyU', 'u');
+    expect(store.get().testMode).toBe(true);
+    game.start(0);
+    tap('KeyU', 'u');
+    expect(store.get().testMode).toBe(true);
+  });
+
+  it('every level (including the stacking chapter) can be started, fresh', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    for (let i = 0; i < LEVELS.length; i++) {
+      game.toTitle();
+      game.start(i);
+      expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: i, levelName: LEVELS[i].name });
+      expect(current().level.id).toBe(LEVELS[i].id);
+    }
+  });
+
+  it('[ / ] (and PageUp / PageDown) jump levels while playing, only in test mode', () => {
+    const { game, store } = setup();
+    game.start(0);
+    tap('BracketRight', ']');
+    expect(store.get().levelIndex).toBe(0);
+
+    game.toTitle();
+    game.toggleTestMode();
+    game.start(0);
+    const before = sim.states.length;
+    tap('BracketRight', ']');
+    expect(store.get().levelIndex).toBe(1);
+    expect(sim.states.length).toBe(before + 1); // a fresh level
+    expect(store.get()).toMatchObject({ elapsedMs: 0, timerStarted: false });
+    tap('PageDown', 'PageDown');
+    expect(store.get().levelIndex).toBe(2);
+    tap('BracketLeft', '[');
+    tap('PageUp', 'PageUp');
+    tap('PageUp', 'PageUp');
+    expect(store.get().levelIndex).toBe(0); // clamped at the first level
+  });
+
+  it('never changes unlock progress: a level opened only by test mode records no time and unlocks nothing', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(5);
+    emit({ type: 'firstInput' }); // a real, recordable time
+    advance(0.5);
+    completeLevel();
+    expect(store.get().screen).toBe('complete');
+    expect(store.get().result?.timeMs).toBeGreaterThan(0);
+    expect(store.get().result?.isNewBest).toBe(false);
+    expect(store.get().result?.practice).toBe(true); // the card says the time is not kept
+    game.toTitle();
+    expect(store.get().levelIndex).toBe(0); // "Continuar" still leads to the real last level
+    game.toggleTestMode();
+    expect(unlockedCount(store.get().levels)).toBe(1);
+    expect(store.get().levels[5].bestMs).toBeNull();
+    expect(store.get().canContinue).toBe(false);
+  });
+
+  it('Esc → "Continuar" resumes a level only test mode opened, without saving it as the last level', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(5);
+    const level = current();
+    emit({ type: 'firstInput' });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    tap('Escape', 'Escape');
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: 5, canContinue: true });
+
+    game.start();
+    expect(current()).toBe(level); // same simulation, nothing reloaded
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 5, levelName: LEVELS[5].name, timerStarted: true });
+    expect(store.get().canContinue).toBe(false); // the saved progress is still a fresh save
+
+    tap('Escape', 'Escape');
+    tap('Enter', 'Enter'); // confirm on the title resumes too
+    expect(current()).toBe(level);
+    expect(store.get().levelIndex).toBe(5);
+  });
+
+  it('turning it off drops a suspended level it opened and shows the real "Continuar" level', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(5);
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    tap('Escape', 'Escape');
+    game.toggleTestMode();
+    expect(store.get()).toMatchObject({ screen: 'title', testMode: false, levelIndex: 0, levelName: LEVELS[0].name, canContinue: false });
+    expect(current().level.id).toBe(LEVELS[0].id);
+    game.start();
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 0 });
+    expect(current().level.id).toBe(LEVELS[0].id);
+  });
+
+  it('turning it off keeps a suspended level that is genuinely open', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(0);
+    const level = current();
+    tap('Escape', 'Escape');
+    game.toggleTestMode();
+    expect(store.get()).toMatchObject({ testMode: false, levelIndex: 0, canContinue: true });
+    game.start();
+    expect(current()).toBe(level);
+  });
+
+  it('a level jump needs a hold once a box was picked (shown on the ↺ fill); releasing early cancels', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(0);
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    const level = current();
+
+    tap('BracketRight', ']'); // a slip next to Enter
+    advance(1);
+    expect(current()).toBe(level);
+    expect(store.get().restartHold).toBe(0);
+
+    press('PageDown', 'PageDown');
+    advance(GAME_CONFIG.flow.restartHoldSec * 0.5);
+    expect(current()).toBe(level);
+    expect(store.get().restartHold).toBeGreaterThan(0.3);
+    release('PageDown', 'PageDown');
+    advance(1 / 60);
+    expect(store.get().restartHold).toBe(0);
+    advance(GAME_CONFIG.flow.restartHoldSec);
+    expect(current()).toBe(level);
+
+    press('PageDown', 'PageDown');
+    advance(GAME_CONFIG.flow.restartHoldSec * 1.2);
+    expect(store.get().levelIndex).toBe(1);
+    expect(current().level.id).toBe(LEVELS[1].id);
+    release('PageDown', 'PageDown');
+    advance(1 / 60);
+    expect(store.get().restartHold).toBe(0);
+
+    // The fresh level has nothing to lose: instant again.
+    tap('BracketLeft', '[');
+    expect(store.get().levelIndex).toBe(0);
+  });
+
+  it('a genuinely open level still records its best time and unlocks the next one', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(0);
+    emit({ type: 'firstInput' }); // starts the timer
+    advance(0.5);
+    completeLevel();
+    expect(store.get().result?.practice).toBe(false);
+    game.toTitle();
+    expect(store.get().levels[0].bestMs).not.toBeNull();
+    game.toggleTestMode();
+    expect(unlockedCount(store.get().levels)).toBe(2);
+  });
+
+  it('persists the setting', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    const first = setup();
+    first.game.toggleTestMode();
+    first.game.dispose();
+    const second = setup();
+    expect(second.store.get().testMode).toBe(true);
+    expect(unlockedCount(second.store.get().levels)).toBe(LEVELS.length);
+  });
+});

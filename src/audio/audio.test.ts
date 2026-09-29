@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC } from './AudioEngine';
+import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC, RELEASE_AFTER_LAND_SEC, RESTORE_AFTER_PICK_SEC } from './AudioEngine';
 import type { AudioGraph } from './graph';
+import { BellInstrument } from './instruments/bell';
 import { PadInstrument } from './instruments/pad';
 import { completionArpeggio, midiToFreq } from './music/harmony';
 import { biquadQ, filter } from './nodes';
 import { centsToRatio, chance, mulberry32, pick, range, vary, weightedIndex } from './random';
-import { SfxPlayer } from './sfx';
+import { MotorSound } from './motor';
+import { LEVEL_PITCH, SfxPlayer } from './sfx';
 import { FakeAudioContext, FakeBiquad, FakeEventTarget, FakeGain, FakeOscillator, type FakeParam } from './testing/fakeAudio';
 import { VoicePool, type Voice } from './voices';
 
@@ -79,9 +81,10 @@ describe('AudioEngine without Web Audio', () => {
     await expect(engine.unlock()).resolves.toBeUndefined();
     engine.setScene('playing');
     engine.setMotor(0.5, 0.2);
-    engine.setMotor(Number.NaN, -1);
-    engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null });
-    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', correct: true, satisfiedCount: 1, total: 2 });
+    engine.setMotor(0.5, 0.2, 1.5);
+    engine.setMotor(Number.NaN, -1, Number.NaN);
+    engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 0 });
+    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 2 });
     engine.handleEvent({ type: 'levelComplete' });
     engine.uiClick();
     expect(engine.getDebugInfo().state).toBe('unavailable');
@@ -161,6 +164,28 @@ describe('SfxPlayer', () => {
     expect(peak).toBeLessThanOrEqual(0.32);
   });
 
+  it('a drop on a box knocks lighter and higher per level; a completed stack climbs into its chime', () => {
+    const bandsOf = (level: number) => {
+      const { ctx, sfx } = setup();
+      sfx.drop(0, null, false, level);
+      return ctx.ofKind(FakeBiquad).filter((b) => b.type === 'bandpass').map((b) => b.frequency.value);
+    };
+    const floor = Math.max(...bandsOf(0));
+    const one = Math.max(...bandsOf(1));
+    const two = Math.max(...bandsOf(2));
+    expect(one).toBeGreaterThan(floor);
+    expect(two).toBeGreaterThan(one);
+    expect(two).toBeLessThan(1400); // soft, never shrill
+
+    const { sfx } = setup();
+    const strike = vi.spyOn(BellInstrument.prototype, 'strike');
+    sfx.drop(0, 79, false, 2, [74, 76, 79]);
+    expect(strike.mock.calls.map((c) => c[0])).toEqual([74, 76, 79]);
+    const times = strike.mock.calls.map((c) => c[1]);
+    expect(times[1]).toBeGreaterThan(times[0]);
+    expect(times[2]).toBeGreaterThan(times[1]);
+  });
+
   it('starts the level-complete swell on the given downbeat and hands its bass over when it ends', () => {
     const { sfx } = setup();
     const play = vi.spyOn(PadInstrument.prototype, 'play');
@@ -172,6 +197,34 @@ describe('SfxPlayer', () => {
     expect(t0).toBe(2.4);
     expect(duration).toBe(3.43);
     expect(options?.bassOverlap).toBe(0);
+  });
+});
+
+describe('MotorSound fork servo', () => {
+  function setup() {
+    const ctx = new FakeAudioContext();
+    const motor = new MotorSound(ctx.asContext(), ctx.createGain() as unknown as AudioNode);
+    const servo = ctx.ofKind(FakeOscillator).find((o) => o.type === 'triangle' && o.frequency.value === 300);
+    const target = (p: FakeParam | undefined) => p?.events.filter((e) => e.kind === 'target').at(-1)?.value;
+    const servoGain = () => ((servo?.outputs[0] as FakeBiquad).outputs[0] as FakeGain).gain;
+    return { motor, freq: () => target(servo?.frequency), level: () => target(servoGain()) };
+  }
+
+  it('sits a little higher per stack level, at the same level, and is unchanged on the floor', () => {
+    const { motor, freq, level } = setup();
+    motor.set(0, 1);
+    expect(freq()).toBeCloseTo(460, 9);
+    expect(level()).toBeCloseTo(0.05, 9);
+    motor.set(0, 1, 0);
+    expect(freq()).toBeCloseTo(460, 9);
+    motor.set(0, 1, 1);
+    expect(freq()).toBeCloseTo(460 * (1 + LEVEL_PITCH), 9);
+    motor.set(0, 1, 2);
+    expect(freq()).toBeCloseTo(460 * (1 + 2 * LEVEL_PITCH), 9);
+    expect(level()).toBeCloseTo(0.05, 9);
+    expect(freq()).toBeLessThan(700); // soft, under the servo's low-pass
+    motor.set(0, 1, Number.NaN);
+    expect(freq()).toBeCloseTo(460, 9);
   });
 });
 
@@ -260,7 +313,7 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
     const ctx = FakeAudioContext.instances[0];
     engine.setScene('playing');
     await play(ctx, 1);
-    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', correct: true, satisfiedCount: 1, total: 2 });
+    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 2 });
     expect(drop).toHaveBeenCalledTimes(1);
     expect(drop.mock.calls[0][0]).toBeCloseTo(ctx.currentTime + DROP_LAND_SEC, 9);
     expect(drop.mock.calls[0][1]).not.toBeNull();
@@ -288,6 +341,90 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
     expect(engine.getDebugInfo().progressionId).not.toBe('resolve');
     await play(ctx, swellAt + 0.05);
     expect(engine.getDebugInfo().progressionId).toBe('resolve');
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('waits for a completed stack to climb into its final chime (and second strike) before the level-complete arpeggio', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const strike = vi.spyOn(BellInstrument.prototype, 'strike');
+    const levelComplete = vi.spyOn(SfxPlayer.prototype, 'levelComplete');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    // Every phase of the 8th-note grid (an 8th is ≈ 0.43 s at 70 BPM).
+    for (let i = 0; i < 10; i++) {
+      await play(ctx, ctx.currentTime + 0.05);
+      strike.mockClear();
+      levelComplete.mockClear();
+      engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', level: 2, correct: true, recipeLength: 3, satisfiedCount: 2, total: 2 });
+      const dropStrikes = strike.mock.calls.map((c) => c[1]);
+      expect(dropStrikes).toHaveLength(4); // two stack notes, the chime, its second strike
+      engine.handleEvent({ type: 'levelComplete' });
+      const [at] = levelComplete.mock.calls[0];
+      expect(at).toBeGreaterThanOrEqual(Math.max(...dropStrikes) + 0.05 - 1e-9);
+    }
+    // A classic final drop afterwards is back to the plain wait.
+    levelComplete.mockClear();
+    engine.handleEvent({ type: 'boxDropped', boxId: 'c', cell: { x: 2, z: 1 }, zoneId: 'y', level: 0, correct: true, recipeLength: 1, satisfiedCount: 2, total: 2 });
+    engine.handleEvent({ type: 'levelComplete' });
+    const [plainAt] = levelComplete.mock.calls[0];
+    expect(plainAt).toBeLessThanOrEqual(ctx.currentTime + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC + 0.5);
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('chimes a zone satisfied again by lifting a wrong top box, after the pickup knock and without a flourish', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const chime = vi.spyOn(SfxPlayer.prototype, 'chime');
+    const strike = vi.spyOn(BellInstrument.prototype, 'strike');
+    const levelComplete = vi.spyOn(SfxPlayer.prototype, 'levelComplete');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    engine.handleEvent({ type: 'boxPicked', boxId: 'w', fromZoneId: 'z', level: 2 });
+    engine.handleEvent({ type: 'zoneRestored', zoneId: 'z', boxId: 'w', recipeLength: 2, satisfiedCount: 1, total: 3 });
+    expect(chime).toHaveBeenCalledTimes(1);
+    const [at, midi, final, stack] = chime.mock.calls[0];
+    expect(at).toBeCloseTo(ctx.currentTime + RESTORE_AFTER_PICK_SEC, 9);
+    expect(final).toBe(false);
+    expect(stack).toHaveLength(2);
+    expect(strike.mock.calls.map((c) => c[0])).toEqual([stack![0], midi]); // climbs into the chime, no second strike
+    expect(levelComplete).not.toHaveBeenCalled();
+
+    chime.mockClear();
+    engine.handleEvent({ type: 'zoneRestored', zoneId: 'y', boxId: 'v', recipeLength: 1, satisfiedCount: 2, total: 3 });
+    expect(chime.mock.calls[0][3]).toBeNull(); // a single-box recipe: just the chime
+    expect(warn).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('ticks a zone released by a box stacked on top when that box lands; a pick-up releases at once', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const tick = vi.spyOn(SfxPlayer.prototype, 'tick');
+    const engine = new AudioEngine();
+    await engine.unlock();
+    const ctx = FakeAudioContext.instances[0];
+    engine.setScene('playing');
+    await play(ctx, 1);
+    engine.handleEvent({ type: 'boxDropped', boxId: 'c', cell: { x: 1, z: 1 }, zoneId: 'z', level: 1, correct: false, recipeLength: 1, satisfiedCount: 0, total: 2 });
+    engine.handleEvent({ type: 'zoneReleased', zoneId: 'z', boxId: 'c' });
+    expect(tick).toHaveBeenCalledTimes(1);
+    expect(tick.mock.calls[0][0]).toBeCloseTo(ctx.currentTime + DROP_LAND_SEC + RELEASE_AFTER_LAND_SEC, 9);
+    expect(tick.mock.calls[0][1]).toBe('release');
+
+    await play(ctx, ctx.currentTime + 1);
+    engine.handleEvent({ type: 'boxPicked', boxId: 'c', fromZoneId: 'z', level: 1 });
+    engine.handleEvent({ type: 'zoneReleased', zoneId: 'z', boxId: 'c' });
+    expect(tick).toHaveBeenCalledTimes(2);
+    expect(tick.mock.calls[1][0]).toBe(ctx.currentTime);
     expect(warn).not.toHaveBeenCalled();
     engine.dispose();
   });

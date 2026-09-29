@@ -165,6 +165,10 @@ export class ProgressStore {
       settings.showTimer = patch.showTimer;
       changed = true;
     }
+    if (typeof patch.testMode === 'boolean' && patch.testMode !== settings.testMode) {
+      settings.testMode = patch.testMode;
+      changed = true;
+    }
     if (changed) this.save();
   }
 

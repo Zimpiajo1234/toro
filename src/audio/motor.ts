@@ -1,8 +1,12 @@
 import { disconnectAll, filter, gain, glideParam, osc } from './nodes';
+import { LEVEL_PITCH } from './sfx';
 
 /** Parameter changes smaller than these are not sent (keeps the automation timeline tiny). */
 const SPEED_EPSILON = 0.004;
 const FORK_EPSILON = 0.01;
+const HEIGHT_EPSILON = 0.02;
+/** Highest fork height the servo pitch follows (stacks are at most 3 boxes: levels 0‥2). */
+const MAX_HEIGHT = 4;
 
 /**
  * Continuous electric-motor bed: two soft oscillators (plus a whisper of whine) through a low-pass
@@ -20,6 +24,7 @@ export class MotorSound {
   private readonly nodes: AudioNode[];
   private lastSpeed = -1;
   private lastFork = -1;
+  private lastHeight = 0;
 
   constructor(private readonly ctx: BaseAudioContext, out: AudioNode) {
     this.humGain = gain(ctx, 0);
@@ -50,8 +55,12 @@ export class MotorSound {
     for (const o of [this.humA, this.humB, this.whine, this.servo]) o.start(t);
   }
 
-  /** speed01 / forkMotion01 in 0‥1. Smoothing is done by the audio thread (setTargetAtTime). */
-  set(speed01: number, forkMotion01: number): void {
+  /**
+   * speed01 / forkMotion01 in 0‥1; forkHeight = the forks' stack height (0 = floor, fractional while climbing):
+   * the servo sits a little higher per level, like the pickup servo. Smoothing is done by the audio thread
+   * (setTargetAtTime).
+   */
+  set(speed01: number, forkMotion01: number, forkHeight = 0): void {
     const now = this.ctx.currentTime;
     const s = clamp01(speed01);
     if (Math.abs(s - this.lastSpeed) > SPEED_EPSILON || (s === 0 && this.lastSpeed !== 0)) {
@@ -64,10 +73,12 @@ export class MotorSound {
       glideParam(this.humFilter.frequency, 220 + 520 * s, now, 0.15);
     }
     const f = clamp01(forkMotion01);
-    if (Math.abs(f - this.lastFork) > FORK_EPSILON || (f === 0 && this.lastFork !== 0)) {
+    const h = Number.isFinite(forkHeight) ? Math.min(Math.max(0, forkHeight), MAX_HEIGHT) : 0;
+    if (Math.abs(f - this.lastFork) > FORK_EPSILON || Math.abs(h - this.lastHeight) > HEIGHT_EPSILON || (f === 0 && this.lastFork !== 0)) {
       this.lastFork = f;
+      this.lastHeight = h;
       glideParam(this.servoGain.gain, 0.05 * f, now, f > 0 ? 0.06 : 0.12);
-      glideParam(this.servo.frequency, 300 + 160 * f, now, 0.1);
+      glideParam(this.servo.frequency, (300 + 160 * f) * (1 + LEVEL_PITCH * h), now, 0.1);
     }
   }
 

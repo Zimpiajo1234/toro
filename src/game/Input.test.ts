@@ -14,6 +14,9 @@ interface KeyInit {
   key?: string;
   repeat?: boolean;
   ctrlKey?: boolean;
+  altKey?: boolean;
+  /** AltGr held: Windows reports it as Ctrl+Alt, with `getModifierState('AltGraph')` true. */
+  altGraph?: boolean;
   /** Pretend the event was dispatched on this element (e.g. a focused button). */
   target?: object;
 }
@@ -24,10 +27,11 @@ function key(type: 'keydown' | 'keyup', init: KeyInit): Event {
     code: init.code ?? '',
     key: init.key ?? '',
     repeat: init.repeat ?? false,
-    ctrlKey: init.ctrlKey ?? false,
+    ctrlKey: init.ctrlKey ?? init.altGraph ?? false,
     metaKey: false,
-    altKey: false,
+    altKey: init.altKey ?? init.altGraph ?? false,
     isComposing: false,
+    getModifierState: (k: string) => k === 'AltGraph' && init.altGraph === true,
   });
   if (init.target) Object.defineProperty(ev, 'target', { value: init.target });
   return ev;
@@ -143,6 +147,37 @@ describe('Input keyboard', () => {
     const ev = down({ code: 'KeyR', key: 'r', ctrlKey: true });
     expect(ev.defaultPrevented).toBe(false);
     expect(input.poll().restartPressed).toBe(false);
+  });
+
+  it('accepts AltGr for the level-jump keys only ([ / ] on Spanish, German and most ISO layouts)', () => {
+    const { input, down } = setup();
+    down({ code: 'BracketRight', key: ']', altGraph: true }); // Spanish: AltGr + the "+" key
+    expect(input.poll().levelStep).toBe(1);
+    down({ code: 'Digit8', key: '[', altGraph: true }); // German: AltGr + 8
+    expect(input.poll().levelStep).toBe(-1);
+    down({ code: 'BracketLeft', key: '[', ctrlKey: true, altKey: true }); // a real Ctrl+Alt shortcut
+    expect(input.poll().levelStep).toBe(0);
+    const r = down({ code: 'KeyR', key: 'r', altGraph: true }); // every other key keeps leaving AltGr alone
+    expect(r.defaultPrevented).toBe(false);
+    expect(input.poll().restartPressed).toBe(false);
+  });
+
+  it('tracks level-jump keys as held until released (hold-to-jump), the latest press winning', () => {
+    const { input, down, up, win } = setup();
+    down({ code: 'PageDown', key: 'PageDown' });
+    const first = input.poll();
+    expect([first.levelStep, first.levelStepHeld]).toEqual([1, 1]);
+    const held = input.poll();
+    expect([held.levelStep, held.levelStepHeld, held.any]).toEqual([0, 1, true]);
+    down({ code: 'BracketLeft', key: '[' });
+    expect(input.poll().levelStepHeld).toBe(-1);
+    up({ code: 'BracketLeft', key: '[' });
+    expect(input.poll().levelStepHeld).toBe(1);
+    up({ code: 'PageDown', key: 'PageDown' });
+    expect(input.poll().levelStepHeld).toBe(0);
+    down({ code: 'PageUp', key: 'PageUp' });
+    win.dispatchEvent(new Event('blur'));
+    expect(input.poll().levelStepHeld).toBe(0);
   });
 
   it('releases every key on window blur and when the tab is hidden', () => {

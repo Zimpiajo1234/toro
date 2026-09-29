@@ -24,6 +24,8 @@ export const FORKLIFT_LAYOUT = {
 export interface ForkliftGeometry {
   chassis: BufferGeometry;
   carriage: BufferGeometry;
+  /** Telescoping inner mast stage: only shown while the forks reach up to a stack. */
+  innerMast: BufferGeometry;
   wheel: BufferGeometry;
   eyes: BufferGeometry;
 }
@@ -40,6 +42,7 @@ export function buildForkliftGeometry(theme: Theme, sizes: ForkliftSizes): Forkl
   return {
     chassis: buildChassis(theme),
     carriage: buildCarriage(theme, sizes.forkReach + sizes.boxSize * 0.38),
+    innerMast: buildInnerMast(theme),
     wheel: buildWheel(theme, sizes.wheelRadius),
     eyes: buildEyes(theme),
   };
@@ -87,6 +90,16 @@ function buildChassis(theme: Theme): BufferGeometry {
   for (const x of [-L.eyeX, L.eyeX]) {
     p.add(new CylinderGeometry(0.064, 0.064, 0.05, 12), c.accent, { x, y: L.eyeY, z: L.eyeZ - 0.027, rx: Math.PI / 2 });
   }
+  return p.build();
+}
+
+/** Inner mast stage (two slim rails + top bar) just in front of the outer rails, same footprint in y at rest. */
+function buildInnerMast(theme: Theme): BufferGeometry {
+  const c = theme.forklift;
+  const z = FORKLIFT_LAYOUT.mastZ + 0.045;
+  const p = new PartList();
+  for (const x of [-0.13, 0.13]) p.block(c.mast, x - 0.02, x + 0.02, 0.12, 1.02, z - 0.015, z + 0.015);
+  p.block(c.mast, -0.15, 0.15, 0.98, 1.02, z - 0.015, z + 0.015);
   return p.build();
 }
 

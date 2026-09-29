@@ -192,6 +192,32 @@ export function pentatonicNote(tonicMidi: number, degree: number): number {
 }
 
 /**
+ * Short rising figure for a completed stack zone: `n` pentatonic notes (one per box, bottom → top) ending on
+ * the zone's chime (see chimeNote), so the stack "climbs" into the same note a single zone would ring.
+ * Without a chord the notes are consecutive scale degrees. With the sounding `chord`, a lower degree that is an
+ * avoid note over it is skipped (the figure walks down to the next safe one), so the climb never clashes.
+ * n ≤ 1 is just the chime.
+ */
+export function stackArpeggio(keyPc: number, satisfiedCount: number, total: number, n: number, chord?: Chord): number[] {
+  const top = chimeNote(keyPc, satisfiedCount, total, chord);
+  const tonic = lowestAtOrAbove(keyPc, 67);
+  let degree = -12;
+  while (degree < 12 && pentatonicNote(tonic, degree) < top) degree++;
+  const count = Math.max(1, Math.round(n));
+  const safe = chord ? melodyPitchClasses(keyPc, chord) : null;
+  const isSafe = (d: number) => !safe || safe.includes(pitchClass(pentatonicNote(tonic, d)));
+  const notes = [top];
+  let d = degree;
+  for (let k = 1; k < count; k++) {
+    // Bounded walk: every chord leaves at least two safe pentatonic tones, so it never runs far.
+    d--;
+    while (!isSafe(d) && d > degree - 10) d--;
+    notes.unshift(pentatonicNote(tonic, d));
+  }
+  return notes;
+}
+
+/**
  * Chime for the n-th satisfied zone: climbs the key's pentatonic scale one step per zone so that the
  * final zone always lands on the upper tonic (a small, satisfying resolution). With the sounding `chord`,
  * a middle-zone degree that is an avoid note over it steps down to the nearest safe one (a repeated pitch

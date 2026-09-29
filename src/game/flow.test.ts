@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LevelData } from '../core/types';
-import { Countdown, buildLevelSummaries, continueIndexAfter, resolveStartLevel, shouldShowHint } from './flow';
+import { Countdown, buildLevelSummaries, continueIndexAfter, continueTarget, resolveStartLevel, shouldShowHint } from './flow';
 
 const fresh = { lastLevel: 0, highestUnlocked: 0, hasProgress: false };
 
@@ -55,6 +55,22 @@ describe('continueIndexAfter', () => {
   it('points at the next level, staying on the last one at the end', () => {
     expect(continueIndexAfter(0, 5)).toBe(1);
     expect(continueIndexAfter(4, 5)).toBe(4);
+  });
+});
+
+describe('continueTarget', () => {
+  const clearedUpTo = (last: number) => (i: number) => i <= last;
+
+  it('moves a cleared last level on to the open, never-cleared next one (a save from before new levels)', () => {
+    // 12 classic levels all cleared, saved while level 12 was the final one: level 13 is open.
+    expect(continueTarget(11, 12, clearedUpTo(11))).toBe(12);
+  });
+
+  it('keeps the saved level otherwise', () => {
+    expect(continueTarget(3, 3, clearedUpTo(2))).toBe(3); // the usual case: the next level to clear
+    expect(continueTarget(2, 5, clearedUpTo(4))).toBe(2); // a replay: the next level is cleared too
+    expect(continueTarget(7, 7, clearedUpTo(7))).toBe(7); // everything cleared: nothing after the last level
+    expect(continueTarget(0, 0, () => false)).toBe(0); // fresh save
   });
 });
 

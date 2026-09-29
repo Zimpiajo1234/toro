@@ -1,0 +1,24 @@
+{
+  "id": "primero-la-base",
+  "order": 14,
+  "name": "Primero la base",
+  "stackLimit": 2,
+  "size": { "width": 8, "depth": 6 },
+  "forklift": { "x": 1, "z": 4, "heading": 180 },
+  "boxes": [
+    { "id": "b1", "color": "yellow", "x": 1, "z": 2 },
+    { "id": "b2", "color": "blue", "x": 5, "z": 4 }
+  ],
+  "zones": [{ "id": "z1", "color": "yellow", "x": 5, "z": 2, "recipe": ["yellow", "blue"] }],
+  "shelves": [{ "x": 3, "z": 0, "w": 2, "d": 1 }],
+  "decor": {
+    "plants": [
+      { "x": 7, "z": 0 },
+      { "x": 0, "z": 5 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 5, "width": 2 },
+      { "wall": "west", "at": 2, "width": 2 }
+    ]
+  }
+}

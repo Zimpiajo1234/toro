@@ -118,6 +118,13 @@ export class CollisionWorld {
   private boxes: readonly BoxState[] = [];
   /** Per box: how much its collider is currently shrunk on every side (settling after a drop), 0 = full size. */
   private insets = new Float64Array(0);
+  /**
+   * Per box: 1 when it is the base of a stack the carried load may pass over (stack levels only; GameState opens
+   * a stack with room once the forks are high enough and keeps it open while the load is over it). The load
+   * collider ignores such stacks; the body still collides. Boxes above the floor (level > 0) never collide on
+   * their own: a stack is one cell, represented by its base.
+   */
+  private passable = new Uint8Array(0);
   private settling = false;
   private readonly hit = createContact();
   private readonly bodyHit = createContact();
@@ -149,7 +156,18 @@ export class CollisionWorld {
   setBoxes(boxes: readonly BoxState[]): void {
     this.boxes = boxes;
     this.insets = new Float64Array(boxes.length);
+    this.passable = new Uint8Array(boxes.length);
     this.settling = false;
+  }
+
+  /** Mark a stack base as one the carried load can pass over (see `passable`). */
+  setPassable(index: number, passable: boolean): void {
+    if (index >= 0 && index < this.passable.length) this.passable[index] = passable ? 1 : 0;
+  }
+
+  /** Whether the carried load currently passes over this stack base (see `passable`). */
+  isPassable(index: number): boolean {
+    return index >= 0 && index < this.passable.length && this.passable[index] === 1;
   }
 
   /**
@@ -190,8 +208,11 @@ export class CollisionWorld {
     this.settling = any;
   }
 
-  /** Deepest overlap of a circle with walls, static obstacles and resting boxes (settling ones shrunk). 0 = free. */
-  deepestContact(cx: number, cz: number, r: number, out: Contact): number {
+  /**
+   * Deepest overlap of a circle with walls, static obstacles and resting boxes (settling ones shrunk). 0 = free.
+   * `load`: the circle is the carried box, which passes over stacks that still have room.
+   */
+  deepestContact(cx: number, cz: number, r: number, out: Contact, load = false): number {
     out.depth = 0;
     out.nx = 0;
     out.nz = 0;
@@ -205,9 +226,10 @@ export class CollisionWorld {
     }
     const boxes = this.boxes;
     const insets = this.insets;
+    const passable = this.passable;
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i];
-      if (b.carried) continue;
+      if (b.carried || b.level > 0 || (load && passable[i] === 1)) continue;
       const h = i < insets.length ? this.boxHalf - insets[i] : this.boxHalf;
       const x = b.pos.x;
       const z = b.pos.z;
@@ -235,7 +257,7 @@ export class CollisionWorld {
       let nx = this.bodyHit.nx;
       let nz = this.bodyHit.nz;
       if (loadRadius > 0) {
-        const d = this.deepestContact(pos.x + fx * loadOffset, pos.z + fz * loadOffset, loadRadius, this.loadHit);
+        const d = this.deepestContact(pos.x + fx * loadOffset, pos.z + fz * loadOffset, loadRadius, this.loadHit, true);
         if (d > depth) {
           depth = d;
           nx = this.loadHit.nx;
@@ -251,9 +273,10 @@ export class CollisionWorld {
 
   /**
    * Free space around a point: signed distance to the nearest wall / obstacle / resting box (negative when the
-   * point is inside one). `ignoreBoxId` excludes one box (e.g. the one about to be lifted).
+   * point is inside one). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or its stack's base).
+   * `load`: measured for the carried box (stacks with room do not count, see deepestContact).
    */
-  clearance(px: number, pz: number, ignoreBoxId: string | null = null): number {
+  clearance(px: number, pz: number, ignoreBoxId: string | null = null, load = false): number {
     const b = this.bounds;
     let d = Math.min(px - b.minX, b.maxX - px, pz - b.minZ, b.maxZ - pz);
     const statics = this.statics;
@@ -265,7 +288,7 @@ export class CollisionWorld {
     const boxes = this.boxes;
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
-      if (box.carried || box.id === ignoreBoxId) continue;
+      if (box.carried || box.level > 0 || box.id === ignoreBoxId || (load && this.passable[i] === 1)) continue;
       d = Math.min(d, pointRectDistance(px, pz, box.pos.x - h, box.pos.z - h, box.pos.x + h, box.pos.z + h));
     }
     return d;

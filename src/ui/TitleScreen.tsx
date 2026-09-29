@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { useStore, type Store } from '../core/store';
+import { TEST_MODE_TIP } from './format';
 import { SoundIcon, ToroMark } from './icons';
 import { onScreen, useAutoFocus } from './interaction';
 import { Keycap } from './Keycap';
@@ -48,9 +49,32 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
           <span>
             <Keycap>Esc</Keycap> inicio
           </span>
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
+          <TestModeToggle store={store} actions={actions} />
         </p>
       </div>
     </Presence>
+  );
+}
+
+/** Discreet footer switch: "Modo prueba" opens every level (U toggles it too). */
+function TestModeToggle({ store, actions }: { store: Store<UIState>; actions: GameActions }) {
+  const on = useStore(store, (s) => s.testMode);
+  return (
+    <button
+      type="button"
+      className={`title__test${on ? ' is-on' : ''}`}
+      aria-pressed={on}
+      title={TEST_MODE_TIP}
+      // A mouse press leaves focus on "Empezar / Continuar": the next Enter / Space starts, never re-toggles.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onScreen(store, 'title', () => actions.toggleTestMode())}
+    >
+      <span className="title__test-dot" aria-hidden="true" />
+      Modo prueba
+    </button>
   );
 }
 

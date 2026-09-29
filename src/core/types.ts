@@ -35,6 +35,10 @@ export interface Vec2 {
 /* Level data (authored as JSON in src/data/levels/*.json)             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A box in the level JSON. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list
+ * order (the first one on the floor, the next on top of it, …). There is no explicit height field.
+ */
 export interface LevelBox {
   id: string;
   color: ColorId;
@@ -45,9 +49,12 @@ export interface LevelBox {
 
 export interface LevelZone {
   id: string;
+  /** Pad color. With a recipe it must equal recipe[0] (the first box that goes down). */
   color: ColorId;
   x: number;
   z: number;
+  /** Stack this zone asks for, bottom → top. Omitted in JSON = [color] (one box, the classic rule). */
+  recipe?: ColorId[];
 }
 
 /** Rectangular obstacle covering cells [x, x + w) × [z, z + d). */
@@ -92,6 +99,12 @@ export interface LevelData {
     plants: LevelPlant[];
     windows: LevelWindow[];
   };
+  /**
+   * Tallest stack allowed (boxes per cell). Omitted in JSON: gameConfig `stack.maxHeight` when the level uses
+   * stacking (a recipe longer than 1 or a stacked start), else 1 — classic levels never stack.
+   * validateLevel always fills it; hand-built LevelData without it counts as 1.
+   */
+  stackLimit?: number;
   /** Theme id registered in src/themes (checked by src/integration/themes.test.ts). Defaults to 'default'. */
   theme: string;
 }
@@ -109,6 +122,12 @@ export interface ForkliftState {
   speed: number;
   /** Current fork height 0 (down) … 1 (carrying height). Animated by logic. */
   forkLift: number;
+  /**
+   * Extra carriage height in stack levels (0 = floor, 1 = on top of one box, …), continuous while it moves.
+   * Rises toward the drop height (carrying) or the target box's level (empty), and early enough to clear any stack
+   * the load or the forks are over or about to reach (they never sink into one). Animated by logic; 0 in classic levels.
+   */
+  forkHeight: number;
   /** Id of the box on the forks, or null. */
   carrying: string | null;
   /** Accumulated wheel rotation (radians) for visuals. */
@@ -123,12 +142,14 @@ export interface BoxState {
   kind: BoxKind;
   /** World position of the box center on the floor plane. While carried it follows the forks. */
   pos: Vec2;
-  /** Grid cell when resting on the floor, null while carried. */
+  /** Grid cell when resting (on the floor or on a stack), null while carried. */
   cell: CellPos | null;
+  /** Height in its stack: 0 = on the floor, 1 = on one box, … (0 while carried). */
+  level: number;
   carried: boolean;
   /** Zone the box is resting on (any color), or null. */
   zoneId: string | null;
-  /** True when resting on a zone of the same color. */
+  /** True when resting on a zone and the stack from the floor up to this box matches the zone's recipe so far. */
   correct: boolean;
 }
 
@@ -137,10 +158,16 @@ export interface ZoneState {
   color: ColorId;
   cell: CellPos;
   pos: Vec2;
-  /** Box resting on this zone (any color), or null. */
+  /** Stack this zone asks for, bottom → top (length 1 = classic zone). */
+  recipe: ColorId[];
+  /** Box ids resting on this zone, bottom → top. */
+  stack: string[];
+  /** Top box resting on this zone (any color), or null. */
   occupiedBy: string | null;
-  /** True when occupied by a box of the same color. */
+  /** True when the stack's colors equal the recipe exactly. */
   satisfied: boolean;
+  /** Color the zone needs next (its stack is a correct, unfinished prefix of the recipe), else null. */
+  next: ColorId | null;
 }
 
 /** Guidance the render layer uses to teach through design (no text). */
@@ -151,6 +178,8 @@ export interface InteractionHint {
   dropCell: CellPos | null;
   /** While carrying: the zone at dropCell, if any. */
   dropZoneId: string | null;
+  /** While carrying: height the box would land at on dropCell (0 = floor, 1 = on one box, …). */
+  dropLevel: number;
 }
 
 export interface GameSnapshot {
@@ -181,22 +210,40 @@ export interface InputFrame {
 /** Events produced by GameState.update(). Consumed by render (feedback), audio and game/UI. */
 export type GameEvent =
   | { type: 'firstInput' }
-  | { type: 'boxPicked'; boxId: string; fromZoneId: string | null }
+  | { type: 'boxPicked'; boxId: string; fromZoneId: string | null; /** Height it was lifted from. */ level: number }
   | {
       type: 'boxDropped';
       boxId: string;
       cell: CellPos;
       zoneId: string | null;
-      /** Dropped on a zone of its own color. */
+      /** Height it landed at (0 = floor). */
+      level: number;
+      /** This drop completed its zone (stack now equals the recipe; classic: a zone of its own color). */
       correct: boolean;
+      /** Recipe length of that zone (1 = classic zone), 0 when not on a zone. */
+      recipeLength: number;
       /** 1-based count of satisfied zones after this drop (for rising chimes). */
       satisfiedCount: number;
       total: number;
     }
   /** Action pressed but nothing to do (no box in reach / no free cell). Feedback must stay gentle. */
   | { type: 'actionIdle'; carrying: boolean }
-  /** A correctly placed box was lifted again (zone no longer satisfied). Neutral, never negative. */
+  /** A satisfied zone stopped being satisfied (its box lifted, or one stacked on top). Neutral, never negative. */
   | { type: 'zoneReleased'; zoneId: string; boxId: string }
+  /**
+   * Lifting a box (`boxId`) off a zone left it satisfied again: the wrong box on top came off (stacking levels
+   * only). Positive, like a completing drop; the counts are as in boxDropped.
+   */
+  | {
+      type: 'zoneRestored';
+      zoneId: string;
+      boxId: string;
+      /** Recipe length of that zone. */
+      recipeLength: number;
+      /** 1-based count of satisfied zones after this pick (for rising chimes). */
+      satisfiedCount: number;
+      total: number;
+    }
   | { type: 'levelComplete' };
 
 export type GameEventType = GameEvent['type'];

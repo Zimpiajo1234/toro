@@ -32,6 +32,10 @@ interface ToneHit {
 
 /** Non-musical SFX vary pitch and gain by ±5 %; musical ones only by a few cents. */
 const VARIANCE = 0.05;
+/** Per stack level: knocks and servo rise by this share (a box on a box sounds lighter, never shrill). */
+export const LEVEL_PITCH = 0.12;
+/** Gap between the notes of a completed stack's figure (s): it pushes that drop's chime back by (n − 1) gaps. */
+export const STACK_NOTE_GAP = 0.085;
 
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
@@ -57,13 +61,18 @@ export class SfxPlayer {
     return this.pool.size + this.bell.activeVoices + this.swell.activeVoices;
   }
 
-  /** Light wooden knock + a soft servo glide as the forks take the box. */
-  pickup(t: number): void {
+  /**
+   * Light wooden knock + a soft servo glide as the forks take the box. `level` = stack height it was lifted from:
+   * higher up, the knock and servo sit a little higher and the servo glides a little longer.
+   */
+  pickup(t: number, level = 0): void {
     const r = this.rng;
-    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1150, VARIANCE), q: 3.2, peak: vary(r, 0.5, VARIANCE), attack: 0.002, tau: 0.018 });
+    const lift = 1 + LEVEL_PITCH * Math.max(0, level);
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1150 * lift, VARIANCE), q: 3.2, peak: vary(r, 0.5, VARIANCE), attack: 0.002, tau: 0.018 });
     this.toneHit(t, { type: 'sine', freq: vary(r, 196, VARIANCE), freqEnd: vary(r, 150, VARIANCE), glideSec: 0.06, peak: vary(r, 0.34, VARIANCE), attack: 0.003, tau: 0.05 });
-    const servo = vary(r, 210, VARIANCE);
-    this.toneHit(t + 0.03, { type: 'triangle', freq: servo, freqEnd: servo * 1.42, glideSec: 0.3, peak: vary(r, 0.045, VARIANCE), attack: 0.06, hold: 0.18, tau: 0.07, lowpass: 900 });
+    const servo = vary(r, 210 * lift, VARIANCE);
+    const glide = 0.3 * (1 + 0.25 * Math.max(0, level));
+    this.toneHit(t + 0.03, { type: 'triangle', freq: servo, freqEnd: servo * 1.42, glideSec: glide, peak: vary(r, 0.045, VARIANCE), attack: 0.06, hold: 0.18, tau: 0.07, lowpass: 900 });
   }
 
   /**
@@ -71,14 +80,38 @@ export class SfxPlayer {
    * harmonic and a short felt layer around 600 Hz, so the drop reads as clearly on laptop speakers as
    * on headphones (where the sub alone would boom).
    */
-  drop(t: number, chimeMidi: number | null, final = false): void {
+  drop(t: number, chimeMidi: number | null, final = false, level = 0, stackNotes: readonly number[] | null = null): void {
     const r = this.rng;
-    this.toneHit(t, { type: 'sine', freq: vary(r, 118, VARIANCE), freqEnd: vary(r, 62, VARIANCE), glideSec: 0.12, peak: vary(r, 0.3, VARIANCE), attack: 0.004, tau: 0.09, lowpass: 400 });
-    this.toneHit(t, { type: 'sine', freq: vary(r, 236, VARIANCE), freqEnd: vary(r, 124, VARIANCE), glideSec: 0.12, peak: vary(r, 0.2, VARIANCE), attack: 0.004, tau: 0.07 });
-    this.noiseHit(t, { type: 'lowpass', freq: vary(r, 380, VARIANCE), q: 0.6, peak: vary(r, 0.3, VARIANCE), attack: 0.003, tau: 0.04 });
-    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 600, VARIANCE), q: 1, peak: vary(r, 0.3, VARIANCE), attack: 0.003, tau: 0.04 });
+    if (level <= 0) {
+      this.toneHit(t, { type: 'sine', freq: vary(r, 118, VARIANCE), freqEnd: vary(r, 62, VARIANCE), glideSec: 0.12, peak: vary(r, 0.3, VARIANCE), attack: 0.004, tau: 0.09, lowpass: 400 });
+      this.toneHit(t, { type: 'sine', freq: vary(r, 236, VARIANCE), freqEnd: vary(r, 124, VARIANCE), glideSec: 0.12, peak: vary(r, 0.2, VARIANCE), attack: 0.004, tau: 0.07 });
+      this.noiseHit(t, { type: 'lowpass', freq: vary(r, 380, VARIANCE), q: 0.6, peak: vary(r, 0.3, VARIANCE), attack: 0.003, tau: 0.04 });
+      this.noiseHit(t, { type: 'bandpass', freq: vary(r, 600, VARIANCE), q: 1, peak: vary(r, 0.3, VARIANCE), attack: 0.003, tau: 0.04 });
+    } else {
+      // Box on a box: a lighter wooden "toc", a little higher per level; less sub (nothing hits the floor).
+      const k = 1 + LEVEL_PITCH * level;
+      this.toneHit(t, { type: 'sine', freq: vary(r, 150 * k, VARIANCE), freqEnd: vary(r, 92 * k, VARIANCE), glideSec: 0.08, peak: vary(r, 0.2, VARIANCE), attack: 0.004, tau: 0.06, lowpass: 520 });
+      this.toneHit(t, { type: 'sine', freq: vary(r, 300 * k, VARIANCE), freqEnd: vary(r, 180 * k, VARIANCE), glideSec: 0.08, peak: vary(r, 0.16, VARIANCE), attack: 0.003, tau: 0.05 });
+      this.noiseHit(t, { type: 'bandpass', freq: vary(r, 760 * k, VARIANCE), q: 1.4, peak: vary(r, 0.28, VARIANCE), attack: 0.002, tau: 0.03 });
+      this.noiseHit(t, { type: 'lowpass', freq: vary(r, 480 * k, VARIANCE), q: 0.6, peak: vary(r, 0.16, VARIANCE), attack: 0.003, tau: 0.03 });
+    }
     if (chimeMidi === null) return;
-    const at = t + range(r, 0.04, 0.06);
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, stackNotes);
+  }
+
+  /**
+   * A zone's warm chime at `t` (after a correct drop's knock, or on its own when lifting a wrong top box leaves the
+   * zone satisfied again). A completed stack first climbs through one soft note per box into it.
+   */
+  chime(t: number, chimeMidi: number, final = false, stackNotes: readonly number[] | null = null): void {
+    const r = this.rng;
+    let at = t;
+    if (stackNotes && stackNotes.length > 1) {
+      for (let i = 0; i < stackNotes.length - 1; i++) {
+        this.bell.strike(stackNotes[i], at, vary(r, 0.42 + 0.06 * i, VARIANCE), { decay: 1.1 });
+        at += STACK_NOTE_GAP;
+      }
+    }
     this.bell.strike(chimeMidi, at, vary(r, 0.75, VARIANCE));
     // The last zone adds a soft second strike a fourth below (the chord's fifth) for a fuller resolve.
     if (final) this.bell.strike(chimeMidi - 5, at + 0.09, vary(r, 0.4, VARIANCE), { decay: 1.3 });

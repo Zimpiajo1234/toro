@@ -11,6 +11,8 @@ export interface LevelResult {
   message: string;
   /** True when the level just finished was the last one. */
   isLast: boolean;
+  /** The level was open only through "Modo prueba": its time is shown but not kept (no best time). */
+  practice: boolean;
 }
 
 export interface LevelSummary {
@@ -35,11 +37,16 @@ export interface UIState {
   muted: boolean;
   /** Transient control hint on the first level(s); hidden after the first successful drop. */
   showHint: boolean;
-  /** 0 … 1 while R / pad Back is held to restart a level with work at stake (drawn as a fill on the ↺ pill). */
+  /**
+   * 0 … 1 while R / pad Back (or, in "Modo prueba", a level-jump key) is held with work at stake (drawn as a fill
+   * on the ↺ pill).
+   */
   restartHold: number;
   levels: LevelSummary[];
   /** A saved game exists (title shows "Continuar"). */
   canContinue: boolean;
+  /** "Modo prueba" (persisted): every level dot is open and [ / ] jump between levels while playing. */
+  testMode: boolean;
 }
 
 /** Commands the UI can issue. Implemented by game/Game.ts. */
@@ -54,6 +61,8 @@ export interface GameActions {
   toTitle(): void;
   toggleMute(): void;
   toggleTimer(): void;
+  /** Title: turn "Modo prueba" on / off (never changes the real unlock progress). */
+  toggleTestMode(): void;
 }
 
 export const initialUIState: UIState = {
@@ -70,6 +79,7 @@ export const initialUIState: UIState = {
   restartHold: 0,
   levels: [],
   canContinue: false,
+  testMode: false,
 };
 
 export function createUIStore(): Store<UIState> {

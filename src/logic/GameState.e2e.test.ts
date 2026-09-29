@@ -57,7 +57,7 @@ describe.each([1 / 60, 1 / 30, 1 / 20])('end-to-end at dt = %f', (dt) => {
     expect(s.timer.running).toBe(true);
     s.until(() => snap.forklift.speed === 0, IDLE);
     expect(snap.hint.targetBoxId).toBe('b1');
-    expect(s.step({ ...IDLE, actionPressed: true })).toEqual([{ type: 'boxPicked', boxId: 'b1', fromZoneId: null }]);
+    expect(s.step({ ...IDLE, actionPressed: true })).toEqual([{ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 }]);
 
     // Drive toward the zone until the drop preview sits on it, and drop while still rolling.
     s.until(() => snap.hint.dropZoneId === 'z1', east);
@@ -65,7 +65,7 @@ describe.each([1 / 60, 1 / 30, 1 / 20])('end-to-end at dt = %f', (dt) => {
     expect(snap.forklift.forkLift).toBeGreaterThan(0.5);
     const done = s.step(move(1, 0, true));
     expect(done).toEqual([
-      { type: 'boxDropped', boxId: 'b1', cell: { x: 5, z: 2 }, zoneId: 'z1', correct: true, satisfiedCount: 1, total: 1 },
+      { type: 'boxDropped', boxId: 'b1', cell: { x: 5, z: 2 }, zoneId: 'z1', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 1 },
       { type: 'levelComplete' },
     ]);
     expect(snap.completed).toBe(true);
