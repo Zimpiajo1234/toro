@@ -1,17 +1,20 @@
 # 6 · Un toque de coral
-id: un-toque-de-coral
+id: un-toque-de-coral-v2
 limit: 1
-ventanas: norte 4-6, oeste 5-6
+ventanas: norte 3-6, oeste 2-3
+dificultad: extra>=2, bloqueos>=2, libre<=80, movimientos<=10
+nota: La zona coral del fondo del pasillo queda detrás de la amarilla, que ya está bien: sácala, mete la coral y vuelve a ponerla.
 
   01234567890
-0 p.........p
-1 ...12345...
+0 p........#1
+1 ..3.4.5..#2
 2 ...........
-3 .....v.....
-4 .###...###.
-5 ...........
-6 .a..b..c.d.
-7 ......e....
+3 ....^......
+4 ...........
+5 .####.####.
+6 ..a.....b..
+7 p.........p
 
-1 = zona azul        2 = zona menta       3 = zona amarillo    4 5 = zona coral
-a = caja coral       b = caja amarillo    c = caja menta       d = caja coral       e = caja azul
+1 = zona coral                 2 = zona amarillo + caja amarillo
+3 = zona azul                  4 = zona menta + caja azul     5 = zona coral + caja menta
+a b = caja coral

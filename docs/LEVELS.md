@@ -139,13 +139,16 @@ lista mientras otra zona anterior tiene una de antes (se conservan ids y casilla
 
 Se miden en el **modelo conservador de carga** (el mismo que usan los tests de solubilidad y el piloto automático):
 la carretilla va de centro en centro de casilla mirando a uno de 4 lados, la caja cargada ocupa la casilla de
-delante, solo avanza (sin marcha atrás) y un giro de 90° con carga necesita libre la casilla nueva de delante y la
-diagonal que barre la caja (un cuadrado 2×2 libre). Las pilas bloquean como cajas, salvo como destino. El juego real
-es más permisivo (desliza, traza curvas, da marcha atrás): lo que el modelo resuelve, un jugador lo resuelve.
+delante, avanza o retrocede en línea recta (la marcha atrás de S: libre la casilla de detrás) y un giro de 90° con
+carga necesita libre la casilla nueva de delante y la diagonal que barre la caja (un cuadrado 2×2 libre). Las pilas
+bloquean como cajas, salvo como destino. El juego real es más permisivo (desliza, traza curvas): lo que el modelo
+resuelve, un jugador lo resuelve. Con la marcha atrás en el modelo, `movimientos` y `extra` valen también para quien
+usa S (un pasillo estrecho no se «salta» dando marcha atrás). `LevelGrid(level, { reverse: false })` da el modelo
+antiguo, solo hacia delante, para comparar.
 
 | Nombre (`dificultad:`) | Qué mide |
 |---|---|
-| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (voraz y luego ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa: cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver), y una más si ninguna caja puede colocarse ya o hay una trampa. Si agota su presupuesto (`--estados`, 150 000 por defecto: segundos incluso en un nivel grande hecho para ser difícil) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
+| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (un poco de voraz y luego búsqueda ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa (y que un movimiento nunca baja en más de uno: tests en `metrics.test.ts`): cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver); una más si ninguna caja puede colocarse ya o hay una trampa; una más por cada **corro cerrado** (cajas en zonas ajenas sin ninguna zona libre de esos colores, como dos cajas cambiadas; en símbolos, con destinos fijos, cajas cada una en el destino de otra); y las que exige el orden de un **pasillo sin salida** (lo que está más cerca de la boca tiene que salir para llenar el fondo: una caja ya colocada delante de una zona vacía del fondo sale y vuelve, +2). Si agota su presupuesto (`--estados`, 150 000 por defecto) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
 | `obligadas` | Cajas que tienen que moverse al menos una vez: las que no forman parte de la base correcta de su zona (en una pila, la parte de abajo que ya encaja cuenta como colocada). |
 | `extra` | `movimientos − obligadas`: aparcar, reordenar una pila, deshacer una trampa. |
 | `bloqueos` | Cajas que hay que apartar antes de poder usar otra cosa: **tapan** (están sobre una zona sin encajar en ella, o encima de una caja que tiene que moverse) o **cierran paso** (quitándolas, la carretilla vacía llega junto a una caja o una zona libre a la que antes no llegaba). |
@@ -154,9 +157,33 @@ es más permisivo (desliza, traza curvas, da marcha atrás): lo que el modelo re
 | `ambiguas` | Cajas con más de un destino posible (zonas distintas, o pisos distintos de pilas; zonas idénticas cuentan una vez). |
 | `trampas` | Niveles con símbolos: colocaciones aceptadas (tipo de caja → tipo de zona) que dejan a otra caja sin zona. |
 | `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). En otros niveles no aplica. |
+| `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
 | `cajas`, `zonas` | Cuántas hay. |
 
-Coste: los 24 niveles de hoy se miden en ~0,6 s, todos exactos.
+Coste: `npm run levels` mide los 24 niveles, todos exactos, en ~15 s (sobre todo la búsqueda de callejones; el
+mínimo de movimientos, menos de 1 s por nivel).
+
+## Callejones
+
+Un **callejón** es un estado del que ya no se puede terminar: el jugador tendría que reiniciar (R). Ningún nivel puede
+tener uno, y los tests lo comprueban (`levels.test.ts`, «no dead ends»).
+
+- **Cómo se busca** (`solver.deadEnds`): se parte de los estados de un plan mínimo (así se cubre primero cualquier
+  despiste en cualquier momento de una buena partida) y se exploran en anchura. De cada estado se prueban **todos** los
+  movimientos posibles. Un movimiento que se puede deshacer (volver a llevar la caja a donde estaba, con la carretilla
+  en la misma zona del suelo: `carryBackTo`) lleva a un estado tan bueno como el de partida; cualquier otro recibe una
+  comprobación completa (voraz y luego la búsqueda exacta, con presupuesto). Resultado: callejones encontrados (demostrados:
+  todo lo alcanzable desde ellos se recorrió), estados sin decidir, estados explorados y si la búsqueda llegó a todos.
+- **Por qué siempre sale 0**: con la marcha atrás, **todo movimiento se puede deshacer** (se recorren las mismas
+  posturas al revés: avanzar ↔ retroceder, girar ↔ girar al otro lado, con la misma diagonal libre), así que desde
+  cualquier estado alcanzable se puede volver al principio y de ahí terminar. La búsqueda lo confirma en cada nivel y
+  avisaría si una regla nueva (una puerta de un solo sentido, una caja que no se puede volver a coger) lo rompiera.
+- **Sin marcha atrás sí los hay**: con `reverse: false`, el nivel 14 tiene uno (dos cajas empujadas al rincón entre la
+  estantería y la planta solo salen marcha atrás). No es un callejón para el jugador, que tiene S, pero explica por qué
+  el modelo incluye la marcha atrás.
+- Los tests exploran todos los estados de un plan mínimo de cada nivel (cada movimiento posible desde cada uno) y
+  exigen 0 callejones, 0 sin decidir y que todos esos movimientos se puedan deshacer. `npm run levels` explora 60
+  estados por nivel (`--callejones N` para más).
 
 ## Objetivos de dificultad
 
@@ -168,7 +195,52 @@ Métricas de la tabla, comparaciones `>= <= = > <` (también `≥ ≤`), número
 (`levels.test.ts`) miden cada nivel que declara objetivos y fallan si alguno no está **demostrado**: una cota «≥ n»
 demuestra `>=`/`>` pero no `<=`, `<` ni `=` (sube `--estados` o simplifica el nivel). Solo buscan movimientos si algún
 objetivo habla de `movimientos` o `extra`, y paran en cuanto cada objetivo queda demostrado o descartado. Una métrica
-que no aplica (`repartos` sin símbolos) nunca se cumple.
+que no aplica (`repartos` sin símbolos) nunca se cumple. `callejones` también se puede pedir (`callejones=0`), pero
+en un nivel grande la búsqueda no llega a todos los estados, así que solo demuestra `>=`: el «ninguno» de todos los
+niveles lo garantiza el test de arriba.
+
+## Curva de dificultad
+
+Objetivos que cada nivel declara (`dificultad:`) y lo que mide hoy (`npm run levels`). Los niveles 1, 2, 3, 13, 14, 16,
+19, 20 y 23 no cambian; los demás se rediseñaron (2026-09-29) para que pidan pensar: ninguno pide conducir con
+precisión ni hacer viajes largos (cada uno lleva además un tope de `movimientos`, ~2× las obligadas, ~3× en los
+finales), y todos tienen id nuevo `…-v2` para que los tiempos de la versión fácil no cuenten.
+
+| Nivel | Objetivos | Medido (mov. · extra · bloq. · estr. · libre) | La idea |
+|---|---|---|---|
+| 1 Primer encargo | — | 1 · 0 · 0 · 0 · 91 % | Una caja recta delante. |
+| 2 Dos colores | — | 2 · 0 · 0 · 0 · 92 % | Dos colores. |
+| 3 Rincón tranquilo | — | 3 · 0 · 0 · 0 · 87 % | Tres cajas y la primera estantería. |
+| 4 Pequeño desorden | extra≥1, bloqueos≥1, mov.≤6 | 4 · 1 · 3 · 0 · 86 % | Corro de tres: ninguna caja en su zona y ninguna zona libre; se aparca una. |
+| 5 Cruce de pasillos | extra≥1, bloqueos≥1, mov.≤8 | 5 · 1 · 4 · 4 · 83 % | Dos cambios que comparten las zonas amarillas: aparcando una sola caja, las cuatro encajan en cadena. |
+| 6 Un toque de coral | extra≥2, bloqueos≥2, libre≤80, mov.≤10 | 6 · 2 · 3 · 7 · 80 % | Primer pasillo sin salida: la coral del fondo está detrás de la amarilla ya colocada, que sale y vuelve. |
+| 7 Estanterías en fila | extra≥2, bloqueos≥2, libre≤80, mov.≤12 | 8 · 2 · 4 · 2 · 78 % | Dos cajas cambiadas dentro de un pasillo sin salida: salen las dos y entran en orden, primero la del fondo. |
+| 8 Una cosa lleva a otra | extra≥2, bloqueos≥2, libre≤80, mov.≤12 | 8 · 2 · 6 · 10 · 78 % | Cadena de seis cajas cuya única zona libre está al fondo de un pasillo, tras la amarilla; la coral suelta es una tentación que cierra el corro. |
+| 9 Tarde de lavanda | extra≥3, estrechas≥3, libre≤75, mov.≤16 | 11 · 3 · 8 · 6 · 74 % | Llega la lavanda: cambiada con la azul en un pasillo de tres (salen las dos) y un corro de seis sin hueco. |
+| 10 Mudanza a medias | extra≥3, estrechas≥3, libre≤75, mov.≤10 | 7 · 3 · 5 · 9 · 75 % | Media mudanza hecha; el corro de cuatro se cierra con la caja del fondo de un pasillo, tras la lavanda colocada. |
+| 11 Pasillos de luz | extra≥4, bloqueos≥3, libre≤70, mov.≤16 | 12 · 4 · 8 · 14 · 70 % | Dos pasillos sin salida: una pareja cambiada y una coral colocada que tapa la zona que abre la cadena de lavandas y amarillas. |
+| 12 El gran almacén | extra≥4, bloqueos≥3, libre≤70, mov.≤24 | 13 · 5 · 9 · 13 · 70 % | Pasillo de tres al revés (se vacía entero) y un corro de siete sin hueco. |
+| 13 Una encima de otra | — | 1 · 0 · 0 · 0 · 90 % | La primera pila. |
+| 14 Primero la base | — | 2 · 0 · 0 · 0 · 88 % | El orden de la pila. |
+| 15 Dos pilas | extra≥1, mov.≤8 | 5 · 1 · 2 · 1 · 87 % | Cada zona tiene encima la base de la otra: se aparca una base. |
+| 16 Al revés | — | 5 · 2 · 2 · 0 · 87 % | Desmontar una pila hecha al revés. |
+| 17 Torre de tres | extra≥3, mov.≤8 | 7 · 3 · 4 · 0 · 92 % | La lavanda ocupa la base de la torre y la azul está debajo de todo en la zona menta: aparcar en el orden en que volverán. |
+| 18 El gran apilado | extra≥4, bloqueos≥2, mov.≤21 | 12 · 5 · 6 · 0 · 91 % | Dos torres empezadas mal: una se desmonta entera y otra desde la mitad. |
+| 19 Lo que dice la tapa | — | 3 · 0 · 0 · 0 · 90 % | Zonas por símbolo. |
+| 20 Color o forma | — | 4 · 0 · 0 · 0 · 89 % | Zonas por color y por símbolo. |
+| 21 Dos sitios posibles | trampas≥1, extra≥1, mov.≤8 | 5 · 1 · 2 · 0 · 87 % | Coral ■ y azul ● cambiadas: la zona ■ parece el hueco para la coral, pero es el único sitio del amarillo ■. |
+| 22 Justo esa | bloqueos≥1, mov.≤6 | 4 · 0 · 1 · 2 · 86 % | Solo zonas exactas, y la azul ▲ cierra el rincón de la menta ●. |
+| 23 La muestra | — | 4 · 0 · 0 · 0 · 91 % | Muestra de la lógica: los tres tipos de zona y la trampa clásica. |
+| 24 El gran reparto | extra≥3, trampas≥3, mov.≤21 | 10 · 3 · 3 · 3 · 86 % | Tres cajas con dos sitios y un solo reparto, un cambio en las zonas de color y la cruz al fondo de un pasillo tras la coral ■. |
+
+Cada capítulo sube sin saltos (movimientos extra): clásico, del 3 al 12, 0 → 1 → 1 → 2 → 2 → 2 → 3 → 3 → 4 → 5;
+apilar 0 → 0 → 1 → 2 → 3 → 5; símbolos 0 → 0 → 1 → 0 → 0 → 3 (el 22 enseña zonas exactas con un bloqueo y el 23 es la
+muestra, sin cambios). Cómo se consigue sin tedio: bloqueos
+«sokoban» (una caja tapa una zona o cierra un pasillo, el orden importa), pasillos de una casilla donde no se gira con
+carga (la entrada decide cómo sale la caja; la marcha atrás vale y el modelo la tiene en cuenta), corros cerrados que
+obligan a aparcar, pilas que hay que desmontar y más ambigüedad de símbolos. Las cajas y zonas iniciales están siempre
+a la vista de la cámara (los pasillos sin salida van contra los bordes este o sur) y, en los niveles rediseñados, la
+carretilla sale mirando la primera tarea, conduciendo hacia el fondo.
 
 ## Herramientas
 
@@ -177,6 +249,7 @@ npm run levels                  # todos: mapa, leyenda y métricas de cada nivel
 npm run levels -- 23            # uno en detalle (por número, #posición, id o archivo): texto, métricas,
                                 #   objetivos, un plan mínimo movimiento a movimiento y las casillas estrechas
 npm run levels -- 23 --estados 1000000  # más presupuesto para la búsqueda exacta
+npm run levels -- 23 --callejones 2000  # explorar más estados buscando callejones (60 por defecto)
 npm run levels:fmt              # reescribe los .level en forma canónica
 npm run levels:fmt -- --check   # solo avisa (código de salida 1) de los que no lo están
 ```
@@ -188,12 +261,15 @@ consola muestra mal los símbolos, usa Windows Terminal (UTF-8).
 
 1. Copia un archivo parecido (`level-23.level` → `level-25.level`); cambia número y nombre del título y pon un `id`
    nuevo (en minúsculas con guiones; no lo cambies después: guarda los tiempos).
-2. Dibuja el mapa y la leyenda. Para editar un nivel existente, cambia solo el mapa y la leyenda: `id` y número se
-   quedan.
+2. Dibuja el mapa y la leyenda. Para retocar un nivel existente, cambia solo el mapa y la leyenda: `id` y número se
+   quedan. Si el puzle cambia de verdad (otro nivel, no un retoque), dale un id nuevo (`…-v2`): los tiempos del
+   anterior no valen para el nuevo, y el desbloqueo, que va por posición, se conserva.
 3. `npm run levels -- 25`: mira las métricas y el plan; ajusta hasta que midan lo que buscas y fíjalo con
    `dificultad:`.
 4. `npm test`: además de validar, comprueba las reglas de diseño (plantas y ventanas, nada escondido tras una
-   estantería, solubilidad, el piloto automático lo juega con los controles reales a 60 y 20 fps) y los objetivos.
+   estantería, solubilidad, sin callejones, el piloto automático lo juega con los controles reales a 60 y 20 fps) y
+   los objetivos. Una caja puede cerrar el paso a propósito: lo que queda detrás basta con que se alcance al apartar
+   las cajas a las que ya se llega.
 5. Añadir, quitar o reordenar niveles: actualiza la lista `SHIPPED` de `src/data/levels/levels.test.ts` (ids y
    números a propósito: de ellos dependen tiempos guardados y desbloqueos) y los tests de capítulo si cambian.
 6. Opcional: `npm run levels:fmt` para dejarlo en forma canónica.

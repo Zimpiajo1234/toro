@@ -1,21 +1,22 @@
 # 18 · El gran apilado
-id: el-gran-apilado
+id: el-gran-apilado-v2
 limit: 3
-ventanas: norte 3-4, norte 7-9, oeste 3-4
+ventanas: norte 3-4, norte 6-8, oeste 3-4
+dificultad: extra>=4, bloqueos>=2, movimientos<=21
+nota: Dos torres empezadas con mal pie: una hay que desmontarla entera y la otra desde la mitad; aparca cada caja donde no estorbe a la que tiene que volver antes.
 
   012345678901
 0 p..........p
-1 ........d...
-2 ..1...a..<..
+1 ............
+2 ..1...<..2..
 3 ............
 4 .....###....
-5 ..2......b..
-6 ....c.......
-7 .e.....3..f.
-8 p..5.4......
+5 ............
+6 ..3...a..4..
+7 ............
+8 p..........p
 
-1 = zona pila coral,menta,azul
-a = pila azul,coral
-2 = zona pila amarillo,lavanda + caja amarillo                       3 = zona azul
-4 = zona menta         5 = zona coral
-b = caja lavanda       c d = caja menta       e = caja azul          f = caja coral
+1 = zona pila coral,menta,coral + pila menta,coral,coral
+2 = zona pila amarillo,lavanda,amarillo + pila amarillo,amarillo,lavanda
+3 4 = zona azul
+a = pila azul,azul

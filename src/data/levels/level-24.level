@@ -1,20 +1,23 @@
 # 24 · El gran reparto
-id: el-gran-reparto
+id: el-gran-reparto-v2
 limit: 1
-ventanas: norte 3-5, norte 7-8, oeste 3-5
+ventanas: norte 2-5, oeste 3-5
+dificultad: extra>=3, trampas>=3, movimientos<=21
+nota: Tres cajas con dos sitios y un solo reparto bueno; además azul ▲ y amarillo ◆ están en la zona de color de la otra, y la cruz espera al fondo del pasillo, detrás de la coral ■ ya colocada.
 
   012345678901
-0 p..........p
-1 .1.2.3.4.5..
+0 p.........#1
+1 .3.4.5.6..#2
 2 ............
-3 .6...e.g.##.
-4 ...f........
-5 .7...h.b.d..
-6 ....c.......
-7 .8.......a.<
-8 p...........
+3 .7..........
+4 ....a...b...
+5 .8.........^
+6 ....c...d.e.
+7 ............
+8 p.......##.p
 
-1 = zona ▲             2 = zona lavanda ▲     3 = zona azul          4 = zona menta ●
-5 = zona ◆             6 = zona amarillo      7 = zona coral ■       8 = zona ✚
-a = caja lavanda ✚     b = caja azul ▲        c = caja menta ▲       d = caja amarillo ◆
-e = caja coral ◆       f = caja menta ●       g = caja coral ■       h = caja lavanda ▲
+1 = zona ✚            2 = zona coral ■ + caja coral ■             3 = zona ▲
+4 = zona lavanda ▲    5 = zona azul + caja amarillo ◆             6 = zona menta ●      7 = zona ◆
+8 = zona amarillo + caja azul ▲
+a = caja lavanda ✚    b = caja menta ▲      c = caja coral ◆      d = caja menta ●
+e = caja lavanda ▲

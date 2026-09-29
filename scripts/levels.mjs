@@ -2,7 +2,8 @@
  * Level tooling (docs/LEVELS.md):
  *   npm run levels                   every level: map, legend and metrics, then a summary table
  *   npm run levels -- 23 la-muestra  those levels in detail (order number, #position, id or file name)
- *   npm run levels -- 23 --estados 2000000  raise the work budget of the exact move search (default 400 000)
+ *   npm run levels -- 23 --estados 2000000  raise the work budget of the exact move search (default 150 000)
+ *   npm run levels -- 23 --callejones 2000  explore more states in the dead-end check (default 60 per level)
  *   npm run levels:fmt               rewrite every src/data/levels/*.level in its canonical form
  *   npm run levels:fmt -- --check    only report the files that are not canonical (exit code 1)
  *
@@ -20,6 +21,7 @@ const argv = process.argv.slice(2);
 const fmt = argv.includes('--fmt');
 const check = argv.includes('--check');
 let maxWork;
+let deadEndStates;
 const names = [];
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i];
@@ -29,7 +31,12 @@ for (let i = 0; i < argv.length; i++) {
     if (!Number.isInteger(maxWork) || maxWork < 1) fail('--estados necesita un número entero, p. ej. --estados 2000000');
     continue;
   }
-  if (arg.startsWith('--')) fail(`opción desconocida ${arg} (usa --estados N, o --check con levels:fmt)`);
+  if (arg === '--callejones') {
+    deadEndStates = Number(argv[++i]);
+    if (!Number.isInteger(deadEndStates) || deadEndStates < 1) fail('--callejones necesita un número entero, p. ej. --callejones 2000');
+    continue;
+  }
+  if (arg.startsWith('--')) fail(`opción desconocida ${arg} (usa --estados N, --callejones N, o --check con levels:fmt)`);
   names.push(arg);
 }
 
@@ -79,7 +86,13 @@ try {
   } else {
     const { LEVEL_SOURCES } = await server.ssrLoadModule('/src/data/levels/index.ts');
     const { levelsReport } = await server.ssrLoadModule('/src/data/levels/report.ts');
-    process.stdout.write(levelsReport(LEVEL_SOURCES, names, { timings: true, ...(maxWork === undefined ? {} : { maxWork }) }));
+    process.stdout.write(
+      levelsReport(LEVEL_SOURCES, names, {
+        timings: true,
+        ...(maxWork === undefined ? {} : { maxWork }),
+        ...(deadEndStates === undefined ? {} : { deadEndStates }),
+      }),
+    );
   }
 } catch (error) {
   // Authoring mistakes arrive as "file:line:column: motivo"; no stack trace needed.

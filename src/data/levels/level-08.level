@@ -1,20 +1,22 @@
 # 8 · Una cosa lleva a otra
-id: una-cosa-lleva-a-otra
+id: una-cosa-lleva-a-otra-v2
 limit: 1
-ventanas: norte 4-7, oeste 5-6
+ventanas: norte 2-5, oeste 5-6
+dificultad: extra>=2, bloqueos>=2, libre<=80, movimientos<=12
+nota: Cada caja ocupa la zona de otra y la única libre está al fondo del pasillo, tras la amarilla: sácala, empieza allí la cadena y devuélvela al final.
 
   012345678901
-0 p.HH....HH.p
-1 ............
-2 ...12345....
-3 ......^.....
-4 ............
-5 .6.#####..a.
-6 .7..........
-7 ....b..c....
-8 .........d..
+0 p.........#1
+1 ..........#2
+2 .7.6.5.4.3..
+3 ............
+4 .###.##.###.
+5 ...........^
+6 ..a.........
+7 ....####....
+8 p..........p
 
-1 = zona amarillo + caja menta                          2 3 = zona menta + caja coral
-4 5 = zona coral            6 7 = zona azul
-a = caja amarillo           b = caja azul               c = caja menta              d = caja azul
-H = estantería 3 alturas
+1 = zona coral                 2 = zona amarillo + caja amarillo
+3 = zona azul + caja coral     4 = zona menta + caja azul     5 = zona coral + caja menta
+6 = zona azul + caja menta     7 = zona menta + caja azul
+a = caja coral

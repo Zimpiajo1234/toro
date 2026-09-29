@@ -1,19 +1,22 @@
 # 7 · Estanterías en fila
-id: estanterias-en-fila
+id: estanterias-en-fila-v2
 limit: 1
-ventanas: norte 3-4, norte 6-7, oeste 5-6
+ventanas: norte 3-4, norte 6-7, oeste 3-4
+dificultad: extra>=2, bloqueos>=2, libre<=80, movimientos<=12
+nota: Al fondo del pasillo de abajo, las dos cajas están cambiadas: tienen que salir las dos para entrar en orden, primero la del fondo.
 
   01234567890
 0 p..........
-1 ......a....
-2 ..#b.#..#c.
-3 ..#..#d.#..
+1 1..2..3..4.
+2 ..#..#..#..
+3 ..#b.#..#..
 4 ..#..#..#..
-5 .e........f
-6 .....v.....
-7 ..123.456..
-8 ..........p
+5 ..#..#..#a.
+6 ...........
+7 ##.^.......
+8 56........p
 
-1 = zona azul        2 = zona coral       3 = zona menta       4 = zona amarillo    5 = zona coral
-6 = zona menta
-a = caja menta       b = caja amarillo    c d = caja coral     e = caja azul        f = caja menta
+1 = zona menta + caja amarillo                              2 = zona amarillo + caja menta
+3 = zona menta                4 = zona amarillo             5 = zona coral + caja azul
+6 = zona azul + caja coral
+a = caja menta                b = caja amarillo

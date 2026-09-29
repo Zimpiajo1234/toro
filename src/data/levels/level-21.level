@@ -1,16 +1,19 @@
 # 21 · Dos sitios posibles
-id: dos-sitios-posibles
+id: dos-sitios-posibles-v2
 limit: 1
 ventanas: norte 2-4, oeste 2-3
+dificultad: trampas>=1, extra>=1, movimientos<=8
+nota: Coral ■ y azul ● están cada una en la zona de la otra; la zona ■ parece el hueco perfecto para la coral, pero es el único sitio del amarillo ■.
 
   012345678
 0 p......##
 1 .1.2.3...
 2 .........
-3 ....d.a.<
-4 .4.......
-5 ....b.c..
+3 .......b.
+4 .4...^...
+5 ...a.....
 6 p........
 
-1 = zona coral         2 = zona ■             3 = zona azul          4 = zona ▲
-a = caja coral ■       b = caja amarillo ■    c = caja azul ●        d = caja menta ▲
+1 = zona coral + caja azul ●    2 = zona ■                      3 = zona azul + caja coral ■
+4 = zona ▲
+a = caja amarillo ■             b = caja menta ▲

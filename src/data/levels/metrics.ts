@@ -9,11 +9,13 @@ import {
   LevelGrid,
   boxCode,
   correctPrefix,
+  deadEnds,
   minMoves,
   occupancyOf,
   reachableFrom,
   stacksOf,
   zoneSteps,
+  type DeadEndResult,
   type MinMovesOptions,
   type MinMovesResult,
 } from './solver';
@@ -45,12 +47,22 @@ export interface LevelMetrics {
   traps: number;
   /** «repartos»: distinct complete sortings (levels that sort by symbol; null otherwise). */
   sortings: number | null;
+  /**
+   * «callejones»: states the forklift can reach from which the level can no longer be finished, explored around a
+   * shortest plan (solver.deadEnds); null when not measured.
+   */
+  deadEnds: DeadEndResult | null;
 }
 
 export interface MetricsOptions extends MinMovesOptions {
   /** Skip the move search: `moves` is then just the obligatory moves as a lower bound. */
   skipMoves?: boolean;
+  /** Look for dead ends, expanding at most this many states (solver.deadEnds `maxStates`); default: not measured. */
+  deadEndStates?: number;
 }
+
+/** States the report explores for «callejones» by default (every slip along a shortest plan, then around it). */
+export const DEAD_END_STATES = 60;
 
 /** Boxes that must move at least once: not part of a correct stack on their zone. */
 function mustMoveOf(level: LevelData): number {
@@ -91,6 +103,10 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     ambiguous: ambiguousBoxes(level),
     traps: usesSymbols(level) ? trapPlacements(level) : 0,
     sortings: usesSymbols(level) ? distinctSortings(level) : null,
+    deadEnds:
+      options.deadEndStates === undefined
+        ? null
+        : deadEnds(level, { maxStates: options.deadEndStates, ...(moves.plan ? { plan: moves.plan } : {}), reverse: options.reverse }),
   };
 }
 
@@ -116,6 +132,12 @@ export function metricRange(metrics: LevelMetrics, metric: DifficultyMetric): Me
       return exact(metrics.traps);
     case 'repartos':
       return metrics.sortings === null ? exact(Number.NaN) : exact(metrics.sortings);
+    case 'callejones': {
+      const d = metrics.deadEnds;
+      if (!d) return exact(Number.NaN);
+      // Proven dead ends found; the count is exact only once every reachable state was explored.
+      return { lower: d.found, upper: d.complete ? d.found + d.unknown : Infinity };
+    }
     case 'cajas':
       return exact(metrics.boxes);
     case 'zonas':
@@ -140,10 +162,11 @@ export function checkTargets(metrics: LevelMetrics, targets: readonly Difficulty
  * Measures a level just enough to decide its `dificultad:` targets: the move search is skipped when no target is about
  * moves, and stops as soon as every move target is proven or refuted (what the level tests run).
  */
-export function checkLevelTargets(level: LevelData, targets: readonly DifficultyTarget[], options: MinMovesOptions = {}): TargetCheck[] {
+export function checkLevelTargets(level: LevelData, targets: readonly DifficultyTarget[], options: MetricsOptions = {}): TargetCheck[] {
   if (targets.length === 0) return [];
   const aboutMoves = (t: DifficultyTarget) => t.metric === 'movimientos' || t.metric === 'extra';
-  if (!targets.some(aboutMoves)) return checkTargets(levelMetrics(level, { skipMoves: true }), targets);
+  const deadEndStates = targets.some((t) => t.metric === 'callejones') ? (options.deadEndStates ?? DEAD_END_STATES) : undefined;
+  if (!targets.some(aboutMoves)) return checkTargets(levelMetrics(level, { skipMoves: true, deadEndStates, reverse: options.reverse }), targets);
   const must = mustMoveOf(level);
   const decided = (lower: number, upper: number | null) =>
     targets.filter(aboutMoves).every((t) => {
@@ -151,7 +174,7 @@ export function checkLevelTargets(level: LevelData, targets: readonly Difficulty
       const range = { lower: lower - shift, upper: (upper ?? Infinity) - shift };
       return targetHolds(t, range) || targetRefuted(t, range);
     });
-  return checkTargets(levelMetrics(level, { ...options, until: decided }), targets);
+  return checkTargets(levelMetrics(level, { ...options, deadEndStates, until: decided }), targets);
 }
 
 /**

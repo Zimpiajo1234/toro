@@ -7,7 +7,7 @@ import { usesSymbols } from '../../core/sorting';
 import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import type { LevelSource } from './index';
-import { checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
+import { DEAD_END_STATES, checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
 import { LevelGrid, boxOfCode, lift, stacksOf, type Move } from './solver';
 
 export interface ReportOptions {
@@ -15,6 +15,8 @@ export interface ReportOptions {
   timings?: boolean;
   /** Work budget of the exact move search (see solver.minMoves `maxWork`). */
   maxWork?: number;
+  /** States the dead-end check expands per level (see solver.deadEnds `maxStates`; default DEAD_END_STATES). */
+  deadEndStates?: number;
 }
 
 /** Levels named on the command line: an order number ("23"), a position ("#23"), an id or a file name. */
@@ -34,7 +36,10 @@ export function levelsReport(sources: readonly LevelSource[], args: readonly str
   const selected = args.length > 0 ? selectSources(sources, args) : sources;
   const measured = selected.map((source) => {
     const started = performance.now();
-    const metrics = levelMetrics(source.level, options.maxWork === undefined ? {} : { maxWork: options.maxWork });
+    const metrics = levelMetrics(source.level, {
+      ...(options.maxWork === undefined ? {} : { maxWork: options.maxWork }),
+      deadEndStates: options.deadEndStates ?? DEAD_END_STATES,
+    });
     return { source, metrics, ms: performance.now() - started, checks: checkTargets(metrics, source.targets) };
   });
   const out: string[] = [];
@@ -60,6 +65,26 @@ function extraText(m: LevelMetrics): string {
   return m.moves.exact ? String(m.extra.lower) : `≥${m.extra.lower}`;
 }
 
+/**
+ * Dead ends found: exact once every reachable state was explored; otherwise «≥ n», or «0 (n)» = none among the n
+ * states explored. «+k?» = k more the check could not decide.
+ */
+function deadEndText(m: LevelMetrics): string {
+  const d = m.deadEnds;
+  if (!d) return '—';
+  const undecided = d.unknown > 0 ? `+${d.unknown}?` : '';
+  if (d.complete) return `${d.found}${undecided}`;
+  return d.found > 0 ? `≥${d.found}${undecided}` : `0${undecided} (${d.explored})`;
+}
+
+function deadEndDetail(m: LevelMetrics): string {
+  const d = m.deadEnds;
+  if (!d) return '—';
+  const undecided = d.unknown > 0 ? ` + ${d.unknown} sin decidir` : '';
+  const undo = d.deepChecks > 0 ? `, ${d.deepChecks} sin vuelta atrás directa` : '';
+  return `${d.found}${undecided} (${d.explored} estados, ${d.complete ? 'todos' : 'parcial'}${undo})`;
+}
+
 function heading(source: LevelSource): string {
   const { level } = source;
   const canonical = source.text === undefined || source.text === renderLevel(level, source);
@@ -77,6 +102,7 @@ function summaryBlock(source: LevelSource, m: LevelMetrics): string[] {
     `ambiguas ${m.ambiguous}`,
   ];
   if (m.sortings !== null) parts.push(`trampas ${m.traps}`, `repartos ${m.sortings}`);
+  parts.push(`callejones ${deadEndText(m)}`);
   return [heading(source), ...renderMapLines(grid), ...(legend.length > 0 ? ['', ...legend] : []), parts.join(' · ')];
 }
 
@@ -103,6 +129,7 @@ function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]
     ['ambiguas', String(m.ambiguous), 'cajas con más de un destino posible (zona o piso de pila)'],
     ['trampas', String(m.traps), 'colocaciones aceptadas que dejan otra caja sin zona'],
     ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos)'],
+    ['callejones', deadEndDetail(m), 'estados desde los que ya no se puede terminar (desde un plan mínimo; --callejones N)'],
   ];
   const w0 = Math.max(...rows.map((r) => r[0].length));
   const w1 = Math.max(...rows.map((r) => r[1].length));
@@ -166,7 +193,7 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
 }
 
 function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: number; checks: TargetCheck[] }[], timings: boolean): string[] {
-  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'dific.'];
+  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'callej.', 'dific.'];
   if (timings) head.push('ms');
   const rows = measured.map(({ metrics: m, ms, checks }) => {
     const row = [
@@ -185,6 +212,7 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
       String(m.ambiguous),
       String(m.traps),
       m.sortings === null ? '—' : String(m.sortings),
+      deadEndText(m),
       checks.length === 0 ? '—' : `${checks.every((c) => c.ok) ? 'OK' : 'NO'} ${checks.filter((c) => c.ok).length}/${checks.length}`,
     ];
     if (timings) row.push(ms.toFixed(0));
@@ -201,6 +229,7 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
     'mov. = mínimo de movimientos de caja (≥ = cota inferior: la búsqueda exacta se cortó) · extra = mov. − oblig.',
     'oblig. = cajas que deben moverse · bloq. = cajas que hay que apartar antes · estr. = casillas sin giro con carga',
     'libre = % de casillas vacías al empezar · ambig. = cajas con varios destinos · tramp./repart. = niveles con símbolos',
+    'callej. = callejones encontrados (entre paréntesis: estados explorados, si la búsqueda no los cubrió todos)',
     'dific. = objetivos «dificultad:» del archivo que se cumplen · detalle y plan: npm run levels -- <nivel>',
   ];
 }

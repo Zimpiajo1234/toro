@@ -20,7 +20,7 @@ Decisiones (2026-09-28): altura máx. 3 (`stackLimit` por nivel, niveles 13–14
 - Oclusión: una caja apilada (nivel > 0) se vuelve fantasma (0,55) si tapa la cabina, la tapa de otra caja o una zona; las bases nunca; todo vuelve a sólido al completar el nivel.
 
 ## Niveles 13–18
-13 pila de 2, base ya cerca · 14 pila de 2 con la de arriba más cerca (orden) · 15 dos pilas de 2 · 16 desmontar pila mal hecha · 17 pila de 3 + aparcamiento · 18 mixto final. Todos empiezan conduciendo en sentido contrario a la cámara.
+13 pila de 2, base ya cerca · 14 pila de 2 con la de arriba más cerca (orden) · 15 dos pilas de 2 con las bases cambiadas (aparcar una base) · 16 desmontar pila mal hecha · 17 torre de 3 con la lavanda en su base y la azul enterrada bajo amarilla y menta en la zona menta (aparcar en el orden en que volverán) · 18 final: dos torres de 3 empezadas mal (una se desmonta entera, otra desde la mitad) y dos zonas sueltas. Movimientos extra: 0, 0, 1, 2, 3, 5 (docs/LEVELS.md, «Curva de dificultad»). Todos empiezan conduciendo en sentido contrario a la cámara.
 
 ## Técnica
 - `LevelData.stackLimit?`, `LevelZone.recipe?`; `validateLevel`: recetas válidas, longitud ≤ límite, colores de cajas = suma de recetas, cajas iniciales pueden apilarse (mismas `x, z`, de abajo arriba en orden de lista; sin campo de altura).

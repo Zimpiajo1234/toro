@@ -1,17 +1,19 @@
 # 5 · Cruce de pasillos
-id: cruce-de-pasillos
+id: cruce-de-pasillos-v2
 limit: 1
 ventanas: norte 4-5, oeste 3-4
+dificultad: extra>=1, bloqueos>=1, movimientos<=8
+nota: Dos cambios se cruzan en las zonas amarillas: aparcando bien una sola caja, las cuatro encajan en cadena.
 
   0123456789
 0 .........p
-1 a.......1.
-2 ..##..##..
-3 2........b
-4 3........c
-5 ..##..##..
-6 .d......4.
-7 p...^.....
+1 .1..23..4.
+2 ..........
+3 ..##..##..
+4 ..........
+5 ..##^.##..
+6 ..........
+7 p.........
 
-1 = zona menta         2 3 = zona amarillo    4 = zona azul
-a = caja azul          b c = caja amarillo    d = caja menta
+1 = zona menta + caja amarillo          2 = zona amarillo + caja menta
+3 = zona amarillo + caja azul           4 = zona azul + caja amarillo

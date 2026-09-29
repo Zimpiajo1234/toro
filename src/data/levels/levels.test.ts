@@ -11,10 +11,13 @@ import {
   LevelGrid,
   blockedZones,
   boxCode,
+  deadEnds,
   isFree,
+  minMoves,
   misplacedBoxes,
   occupancyOf,
   reachableFrom,
+  replayMoves,
   solve,
   sortable,
   stacksOf,
@@ -32,21 +35,39 @@ const code = (color: ColorId, symbol: SymbolId) => boxCode({ color, symbol });
 /* Static helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-/** Coarse reachability report from the forklift start, treating resting boxes as obstacles. */
+/**
+ * Coarse reachability report from the forklift start, treating resting boxes as obstacles. A box that closes the way
+ * on purpose (a «bloqueo» that closes a path, docs/LEVELS.md) is fine: what lies behind it only has to be reachable
+ * once the boxes the forklift can already get to are moved (repeatedly, for a box behind another one in a corridor).
+ * Shelves, plants and walls never open, so anything they enclose is still reported.
+ */
 function coarseProblems(level: LevelData): string[] {
   const grid = new LevelGrid(level);
   const occupancy = occupancyOf(grid, stacksOf(grid, level));
-  const region = reachableFrom(grid, occupancy, grid.index(level.forklift.x, level.forklift.z));
-  const hasReachableNeighbour = (cell: number) =>
+  const start = grid.index(level.forklift.x, level.forklift.z);
+  const region = reachableFrom(grid, occupancy, start);
+  const touches = (area: Uint8Array, cell: number) =>
     [0, 1, 2, 3].some((d) => {
       const next = grid.step(cell, d);
-      return next >= 0 && region[next] === 1;
+      return next >= 0 && area[next] === 1;
     });
+  // Open every box the forklift can get next to, until nothing more opens.
+  const opened = occupancy.slice();
+  let area = region;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let c = 0; c < grid.cellCount; c++) {
+      if (opened[c] === -1 || grid.solid[c] === 1 || !touches(area, c)) continue;
+      opened[c] = -1;
+      changed = true;
+    }
+    if (changed) area = reachableFrom(grid, opened, start);
+  }
   const problems: string[] = [];
   for (const b of level.boxes)
-    if (!hasReachableNeighbour(grid.index(b.x, b.z))) problems.push(`box ${b.id} has no reachable free neighbour`);
+    if (!touches(area, grid.index(b.x, b.z))) problems.push(`box ${b.id} has no reachable free neighbour`);
   for (const z of level.zones)
-    if (!hasReachableNeighbour(grid.index(z.x, z.z))) problems.push(`zone ${z.id} has no reachable free neighbour`);
+    if (!touches(area, grid.index(z.x, z.z))) problems.push(`zone ${z.id} has no reachable free neighbour`);
   if (misplacedBoxes(level).length > 0) {
     // Parking spot: reachable open floor (not a zone) with at least 3 free sides.
     let parking = 0;
@@ -94,6 +115,14 @@ function hiddenItems(level: LevelData): string[] {
 }
 
 const colorsOf = (level: LevelData) => new Set(level.boxes.map((b) => b.color));
+
+/** Shortest plans, searched once per level for the tests below that need one. */
+const shortest = new Map<string, ReturnType<typeof minMoves>>();
+const shortestOf = (level: LevelData) => {
+  let result = shortest.get(level.id);
+  if (!result) shortest.set(level.id, (result = minMoves(level)));
+  return result;
+};
 /** Chapters: classic (1–12), stacking (13–18), sorting by color + symbol (19–24). */
 const SORTING = LEVELS.filter((l) => usesSymbols(l));
 const CLASSIC = LEVELS.filter((l) => (l.stackLimit ?? 1) === 1 && !usesSymbols(l));
@@ -141,27 +170,28 @@ const SHIPPED: readonly (readonly [number, string])[] = [
   [1, 'primer-encargo'],
   [2, 'dos-colores'],
   [3, 'rincon-tranquilo'],
-  [4, 'pequeno-desorden'],
-  [5, 'cruce-de-pasillos'],
-  [6, 'un-toque-de-coral'],
-  [7, 'estanterias-en-fila'],
-  [8, 'una-cosa-lleva-a-otra'],
-  [9, 'tarde-de-lavanda'],
-  [10, 'mudanza-a-medias'],
-  [11, 'pasillos-de-luz'],
-  [12, 'el-gran-almacen'],
+  // Redesigned 2026-09-29 (harder puzzles): new ids, so best times set on the easy versions do not carry over.
+  [4, 'pequeno-desorden-v2'],
+  [5, 'cruce-de-pasillos-v2'],
+  [6, 'un-toque-de-coral-v2'],
+  [7, 'estanterias-en-fila-v2'],
+  [8, 'una-cosa-lleva-a-otra-v2'],
+  [9, 'tarde-de-lavanda-v2'],
+  [10, 'mudanza-a-medias-v2'],
+  [11, 'pasillos-de-luz-v2'],
+  [12, 'el-gran-almacen-v2'],
   [13, 'una-encima'],
   [14, 'primero-la-base'],
-  [15, 'dos-pilas'],
+  [15, 'dos-pilas-v2'],
   [16, 'al-reves'],
-  [17, 'torre-de-tres'],
-  [18, 'el-gran-apilado'],
+  [17, 'torre-de-tres-v2'],
+  [18, 'el-gran-apilado-v2'],
   [19, 'lo-que-dice-la-tapa'],
   [20, 'color-o-forma'],
-  [21, 'dos-sitios-posibles'],
-  [22, 'justo-esa'],
+  [21, 'dos-sitios-posibles-v2'],
+  [22, 'justo-esa-v2'],
   [23, 'la-muestra'],
-  [24, 'el-gran-reparto'],
+  [24, 'el-gran-reparto-v2'],
 ];
 
 describe('level files (.level, docs/LEVELS.md)', () => {
@@ -187,11 +217,20 @@ describe('level files (.level, docs/LEVELS.md)', () => {
   });
 
   const declared = LEVEL_SOURCES.filter((s) => s.targets.length > 0);
-  it(`difficulty targets («dificultad:», ${declared.length} levels declare some) are all proven by the measured metrics`, () => {
-    for (const source of declared) {
-      const failed = checkLevelTargets(source.level, source.targets).filter((c) => !c.ok);
-      expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`), source.file).toEqual([]);
+  it('every redesigned level declares its difficulty targets and a note on its puzzle', () => {
+    const redesigned = LEVEL_SOURCES.filter((s) => s.level.id.endsWith('-v2'));
+    expect(redesigned).toHaveLength(15);
+    for (const source of redesigned) {
+      expect(source.targets.length, source.file).toBeGreaterThan(0);
+      expect(source.notes.length, source.file).toBeGreaterThan(0);
+      // An upper bound too, so no level turns into a long haul.
+      expect(source.targets.some((t) => t.metric === 'movimientos' && t.op === '<='), source.file).toBe(true);
     }
+  });
+
+  it.each(declared.map((s) => [s.file, s] as const))('%s: its difficulty targets («dificultad:») are proven by the measured metrics', (_, source) => {
+    const failed = checkLevelTargets(source.level, source.targets).filter((c) => !c.ok);
+    expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`), source.file).toEqual([]);
   });
 });
 
@@ -253,6 +292,14 @@ describe('progression', () => {
     expect(LEVELS[1].shelves).toHaveLength(0);
     expect(LEVELS[2].shelves.length).toBeGreaterThan(0);
   });
+
+  it.each(CLASSIC.slice(3).map((l) => [l.id, l] as const))('%s (classic, from level 4) starts facing a box straight ahead, driving away from the camera', (_, level) => {
+    // W drives toward the first task (vehicle controls are the default) and A/D read as screen left / right.
+    const f = forwardOf(degToRad(level.forklift.heading));
+    const ahead = [1, 2, 3, 4].map((d) => ({ x: level.forklift.x + Math.round(f.x) * d, z: level.forklift.z + Math.round(f.z) * d }));
+    expect(level.boxes.some((b) => ahead.some((c) => c.x === b.x && c.z === b.z))).toBe(true);
+    expect(f.x + f.z).toBeLessThan(0);
+  });
 });
 
 describe('stacking chapter (docs/STACKING.md)', () => {
@@ -301,12 +348,12 @@ describe('stacking chapter (docs/STACKING.md)', () => {
     expect(f.x + f.z).toBeLessThan(0);
   });
 
-  it('13–15 build straight onto their zones; 16 (desmontar) and 17 (aparcamiento) need a temporary park', () => {
+  it('13–14 build straight onto their zones; 15 (bases cambiadas), 16 (desmontar), 17 (aparcamiento) and 18 need a temporary park', () => {
     const noParking = { allowParking: false, maxExpansions: 2000 };
-    for (const l of STACKING.slice(0, 3)) expect(solve(l, noParking).solved, l.id).toBe(true);
-    for (const l of STACKING.slice(3, 5)) {
+    for (const l of STACKING.slice(0, 2)) expect(solve(l, noParking).solved, l.id).toBe(true);
+    for (const l of STACKING.slice(2)) {
       expect(solve(l, noParking).solved, l.id).toBe(false);
-      expect(solve(l, { allowParking: true, maxExpansions: 2000 }).solved, l.id).toBe(true);
+      expect(shortestOf(l).plan, l.id).not.toBeNull();
     }
   });
 
@@ -484,6 +531,14 @@ describe('sorting chapter (docs/SORTING.md)', () => {
     for (const z of level.zones) expect(z.x + z.z, z.id).toBeLessThan(level.forklift.x + level.forklift.z);
   });
 
+  it.each(SORTING.map((l) => [l.id, l] as const))('%s never starts with a box hiding the engraving of a symbol zone that does not take it', (_, level) => {
+    // A box on a pad hides its engraving (docs/SORTING.md): only colour pads may start covered by a wrong box.
+    for (const z of level.zones.filter((zone) => zone.symbol !== undefined)) {
+      const onIt = level.boxes.filter((b) => b.x === z.x && b.z === z.z);
+      for (const b of onIt) expect(fits(z, b), `${b.id} on ${z.id}`).toBe(true);
+    }
+  });
+
   it('solver model: a trap ranks one step worse until the ambiguous box moves on', () => {
     const level = SORTING[4];
     const grid = new LevelGrid(level);
@@ -550,18 +605,37 @@ describe('special layouts', () => {
     expect(CLASSIC.slice(5).some((l) => misplacedBoxes(l).length > 0)).toBe(true);
   });
 
-  it('a later classic level has a chain: a zone blocked by a wrong box, solvable just by choosing the order', () => {
-    const chain = CLASSIC.slice(5).filter(
-      (l) => blockedZones(l).length > 0 && solve(l, { allowParking: false, maxExpansions: 500 }).solved,
-    );
-    expect(chain.length).toBeGreaterThan(0);
+  it('a later classic level has a chain: boxes each on the zone of the next one, unwinding from one free zone by order alone', () => {
+    // Since the redesign every classic level from 6 on also needs parking elsewhere (extra moves), so the chain is
+    // checked on its own: from a free zone, a box of that colour sits on a zone of another colour, whose box sits on a
+    // zone of a third one… at least three links, and taking them in that order places each box with a single move.
+    const chainLength = (level: LevelData) => {
+      const covered = blockedZones(level);
+      const onZone = (zone: LevelData['zones'][number]) => level.boxes.find((b) => b.x === zone.x && b.z === zone.z);
+      const free = level.zones.filter((z) => !level.boxes.some((b) => b.x === z.x && b.z === z.z));
+      let best = 0;
+      const walk = (color: ColorId, used: Set<string>, length: number) => {
+        best = Math.max(best, length);
+        for (const zone of covered) {
+          const box = onZone(zone);
+          if (!box || box.color !== color || used.has(zone.id)) continue;
+          walk(zone.color!, new Set([...used, zone.id]), length + 1);
+        }
+      };
+      for (const z of free) walk(z.color!, new Set(), 0);
+      return best;
+    };
+    const chained = CLASSIC.slice(5).filter((l) => chainLength(l) >= 3);
+    expect(chained.map((l) => l.id)).toContain('una-cosa-lleva-a-otra-v2');
   });
 });
 
 describe('solvability', () => {
-  it('solver model: turning while carrying needs two cells of clearance (no reverse gear)', () => {
-    expect(solve(corridorLevel(3), { allowParking: true, maxExpansions: 200 }).solved).toBe(false);
-    expect(solve(corridorLevel(4), { allowParking: true, maxExpansions: 200 })).toMatchObject({ solved: true, moves: 1 });
+  it('solver model: turning while carrying needs two cells of clearance, even with the reverse gear', () => {
+    for (const reverse of [true, false]) {
+      expect(solve(corridorLevel(3), { allowParking: true, maxExpansions: 200, reverse }).solved).toBe(false);
+      expect(solve(corridorLevel(4), { allowParking: true, maxExpansions: 200, reverse })).toMatchObject({ solved: true, moves: 1 });
+    }
   });
 
   it.each(LEVELS.map((l) => [l.id, l] as const))('%s: every box and zone is reachable from the start', (_, level) => {
@@ -569,7 +643,21 @@ describe('solvability', () => {
   });
 
   it.each(LEVELS.map((l) => [l.id, l] as const))('%s: can be solved with the conservative carrying model', (_, level) => {
-    const result = solve(level, { allowParking: true, maxExpansions: 2000 });
-    expect(result.solved).toBe(true);
+    // The exact search's plan (the greedy search alone gives up on the harder puzzles), replayed move by move.
+    const result = shortestOf(level);
+    expect(result.unsolvable).toBe(false);
+    expect(result.plan).not.toBeNull();
+    expect(replayMoves(level, result.plan!)).toBe(true);
+  });
+
+  it.each(LEVELS.map((l) => [l.id, l] as const))('%s: no dead ends («callejones»): every slip along a shortest plan can be undone', (_, level) => {
+    // Every state of a shortest plan is expanded: all the moves a player could make there are checked, and each one
+    // can be undone with the reverse gear (the box carried back, the forklift back in the same region), so the level
+    // can always still be finished. docs/LEVELS.md, «callejones».
+    const plan = shortestOf(level).plan!;
+    const result = deadEnds(level, { plan, maxStates: plan.length + 1 });
+    expect(result.explored).toBe(plan.length + 1);
+    expect(result).toMatchObject({ found: 0, unknown: 0, deepChecks: 0 });
+    expect(result.checked).toBeGreaterThan(result.explored);
   });
 });

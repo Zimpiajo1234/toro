@@ -50,14 +50,17 @@ Decisiones (2026-09-29): segundo atributo = **símbolo** (los glifos que ya exis
 |---|---|---|
 | 19 | Lo que dice la tapa | Solo zonas por símbolo (neutras ● ▲ ■); dos cajas azules van a sitios distintos: el color ya no manda |
 | 20 | Color o forma | Zonas por color (menta, amarillo) y por símbolo (●, ◆); cada caja encaja en una sola |
-| 21 | Dos sitios posibles | Coral ■ encaja en «cualquier coral» y en «cualquier ■»; si toma el ■, el amarillo ■ se queda sin hueco |
-| 22 | Justo esa | Cuatro zonas exactas (azul ●, menta ▲, azul ▲, menta ●): cada caja comparte color con una y símbolo con otra |
+| 21 | Dos sitios posibles | Coral ■ encaja en «cualquier coral» y en «cualquier ■»; si toma el ■, el amarillo ■ se queda sin hueco. Empieza en la zona azul, con la azul ● en la coral: hay que apartar una, y el ■ parece el sitio (la trampa cuesta lo mismo que aparcar) |
+| 22 | Justo esa | Cuatro zonas exactas (azul ●, menta ▲, azul ▲, menta ●): cada caja comparte color con una y símbolo con otra; la menta ● está al fondo de un rincón que la azul ▲ cierra |
 | 23 | La muestra | **Nivel de muestra**: los tres tipos a la vez con la trampa clásica (ver abajo) |
-| 24 | El gran reparto | Final: ocho cajas, los tres tipos, tres cajas ambiguas (azul ▲, amarillo ◆, lavanda ▲) y un único reparto completo |
+| 24 | El gran reparto | Final: ocho cajas, los tres tipos, tres cajas ambiguas (azul ▲, amarillo ◆, lavanda ▲) y un único reparto completo; azul ▲ y amarillo ◆ empiezan cada una en la zona de color de la otra, y la zona ✚ está al fondo de un pasillo, detrás de la coral ■ ya colocada |
 
 Todos: `stackLimit` 1, arranque mirando la primera caja (a ≤ 4 casillas), recorrido hacia el fondo (lejos de la
 cámara, que está hacia +x,+z: A/D no se invierten en pantalla) con todas las zonas más al fondo que la salida, pasillos
-de ≥ 2 casillas donde se gira con carga, nada tapado por estanterías.
+de ≥ 2 casillas donde se gira con carga (salvo los rincones de una casilla, a propósito), nada tapado por estanterías y
+ninguna caja empieza sobre una zona de símbolo que no la acepte (test). Cuando todas las cajas son distintas y hay un
+solo reparto, cada caja tiene un destino fijo y la búsqueda exacta cuenta los corros de cajas «cada una en el destino
+de otra» (docs/LEVELS.md).
 
 ### Nivel 23 (muestra de la lógica)
 - Zonas (fila del fondo, z = 1): «cualquier ▲» (1,1) y (3,1) neutras, «azul ■ exacto» (5,1), «cualquier azul» (7,1).

@@ -1,25 +1,26 @@
 # 12 · El gran almacén
-id: el-gran-almacen
+id: el-gran-almacen-v2
 limit: 1
-ventanas: norte 2-4, norte 9-11, oeste 7-8
+ventanas: norte 5, norte 10-11, oeste 2-3
+dificultad: extra>=4, bloqueos>=3, libre<=70, movimientos<=24
+nota: El pasillo del fondo va al revés, con la azul atrapada al final, y siete cajas forman un corro sin hueco: vacía el pasillo entero y aparca una del corro.
 
    01234567890123
- 0 p............p
- 1 .12345.v67890.
- 2 ..............
- 3 .a............
- 4 ...#b.##c.#d..
- 5 ...#..##..#...
- 6 ...#..##..#...
- 7 ...#..##..#...
- 8 .e.......f....
- 9 .....g......h.
-10 p.............
+ 0 pHHHH.HHHH..#1
+ 1 .4.5.6.7.8..#2
+ 2 ............#3
+ 3 ..............
+ 4 .#####.#####..
+ 5 ..............
+ 6 p.9......0...^
+ 7 ..............
+ 8 .#####.######.
+ 9 ..............
+10 p............p
 
-1 = zona azul                 2 = zona menta                3 = zona amarillo
-4 = zona coral                5 = zona lavanda + caja coral
-6 = zona lavanda              7 = zona coral                8 = zona amarillo
-9 = zona menta + caja azul    0 = zona azul
-a = caja lavanda              b = caja azul                 c = caja coral
-d = caja menta                e = caja amarillo             f = caja menta
-g = caja amarillo             h = caja lavanda
+1 = zona menta + caja azul     2 = zona azul + caja menta     3 = zona menta + caja menta
+4 = zona amarillo + caja coral                                5 = zona coral + caja lavanda
+6 = zona lavanda + caja amarillo                              7 = zona amarillo + caja lavanda
+8 = zona lavanda + caja coral  9 = zona coral + caja amarillo
+0 = zona lavanda + caja lavanda
+H = estantería 3 alturas

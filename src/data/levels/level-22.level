@@ -1,16 +1,19 @@
 # 22 · Justo esa
-id: justo-esa
+id: justo-esa-v2
 limit: 1
-ventanas: norte 2-3, norte 5-7
+ventanas: norte 2-3, norte 5-6
+dificultad: bloqueos>=1, movimientos<=6
+nota: Cada zona quiere una caja exacta, y la azul ▲ cierra el rincón de la menta ●: llévala primero a la suya, que es la que comparte color con una y símbolo con otra.
 
   0123456789
-0 p........#
-1 .1.2.3.4.#
-2 ..........
+0 p.......##
+1 .1.2.3..E4
+2 ........Ea
 3 ..........
-4 ..c..b..a.
+4 ..c..b....
 5 ..........
-6 p....d..^.
+6 p....d...^
 
-1 = zona azul ●     2 = zona menta ▲    3 = zona azul ▲     4 = zona menta ●
-a = caja azul ▲     b = caja menta ●    c = caja azul ●     d = caja menta ▲
+1 = zona azul ●             2 = zona menta ▲            3 = zona azul ▲             4 = zona menta ●
+a = caja azul ▲             b = caja menta ●            c = caja azul ●             d = caja menta ▲
+E = estantería 2 alturas

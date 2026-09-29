@@ -1,23 +1,23 @@
 # 10 · Mudanza a medias
-id: mudanza-a-medias
+id: mudanza-a-medias-v2
 limit: 1
-ventanas: norte 3-6, oeste 5-7
+ventanas: norte 7-9, oeste 3-5
+dificultad: extra>=3, estrechas>=3, libre<=75, movimientos<=10
+nota: Media mudanza hecha y cuatro cajas en corro; la que cierra el corro espera al fondo del pasillo, detrás de la lavanda ya colocada.
 
   0123456789012
-0 pHH.......HHp
-1 ...1234.5....
-2 .......^.a...
+0 p.4.5.6.....p
+1 .............
+2 .####...####.
 3 .............
-4 .6...####..b.
-5 .............
-6 .7...........
-7 .....####.c..
-8 .8.d.........
-9 .....e......p
+4 .1.2.3.......
+5 ............p
+6 ..####.######
+7 .............
+8 ###..........
+9 78...<......p
 
-1 = zona azul                   2 = zona menta                  3 = zona amarillo + caja coral
-4 = zona coral + caja amarillo  5 = zona lavanda
-a = caja lavanda
-6 = zona azul + caja lavanda    7 = zona lavanda                8 = zona menta
-b = caja menta                  c d = caja azul                 e = caja menta
-H = estantería 3 alturas
+1 = zona azul + caja menta     2 = zona menta + caja amarillo
+3 = zona amarillo + caja coral                                4 = zona menta + caja menta
+5 = zona amarillo + caja amarillo                             6 = zona azul + caja azul
+7 = zona coral + caja azul     8 = zona lavanda + caja lavanda

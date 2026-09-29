@@ -29,7 +29,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
 | `src/game/**` | **game** | Frame loop, input, wiring, flow between screens |
-| `src/integration/**` | integration | Cross-module tests (e.g. every level played by an autopilot on the real `GameState`) |
+| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves and the vehicle reverse gear) |
 | `src/App.tsx`, `src/main.tsx`, `src/styles/base.css` | shared shell | Canvas host + overlay; sets `themeCssVars(theme)` (background gradient + `--ui-*` tokens) from the theme of the level on screen, the same one Game hands the renderer |
 
 Data flow (one direction):
@@ -158,27 +158,35 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   placed on the map cell or legend entry to fix). Ids and orders must be unique across both formats. `renderLevel`
   writes any LevelData back as canonical text; `parseLevel(renderLevel(l))` deep-equals `l` (tested for every shipped
   level). The 24 JSON levels were migrated with a deep-equality proof and deleted: `.level` is the single source.
-- Level ids key saved progress (and seed the decor RNG): never change a shipped id. Box / zone ids are generated
+- Level ids key saved progress (and seed the decor RNG): never change a shipped id for a retouch. A level redesigned
+  into another puzzle gets a new id (`…-v2`, 2026-09-29: levels 4–12, 15, 17, 18, 21, 22, 24) so best times set on the
+  old version do not carry over; unlocks resolve by index as well, so they survive. Box / zone ids are generated
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
-- `src/data/levels/solver.ts` is the only grid model (conservative carrying model, greedy search, exact A* for the
-  fewest box moves). `levels.test.ts`, the autopilot planner (`src/integration/levelsPlayable.test.ts`) and the
-  metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos) all
-  import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
+- `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
+  search, exact A* for the fewest box moves with a consistent bound — swap cycles, dead-end corridors, fixed sorting
+  destinations —, and the dead-end check `deadEnds`). `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`,
+  run by `levelsPlayable.test.ts`) and the metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas,
+  libre, ambiguas, trampas, repartos, callejones) all import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
   metrics table; `npm run levels:fmt` rewrites files canonically. A `dificultad:` header (e.g. `extra>=2, bloqueos>=1`)
   declares targets that `levels.test.ts` proves against the measured metrics.
 
 ## Level design (levels)
 
-- Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs.
+- Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs (dead-end
+  corridors that hold zones run along the east or south edge, so no shelf stands between them and the camera; their
+  mouth opens onto a 2×2 area). A box may close a path on purpose (a «bloqueo»): what lies behind it must be reachable
+  once the boxes the forklift can already reach are moved (`levels.test.ts`). No level may have a dead end
+  («callejones», docs/LEVELS.md).
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
 - Level 1 is one straight run along the forklift's start heading, so holding W alone (`"vehicle"` mapping) reaches
   the box and then the zone (`src/integration/level1Controls.test.ts` simulates it with the real GameState). 3-tier shelves only against the back walls (z = 0 or x = 0).
 - Three chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2), 19–24 sorting by colour +
   symbol (stackLimit 1). Box count and area grow within each chapter. Start headings face a box straight ahead;
-  the stacking and sorting chapters drive away from the camera (every sorting zone lies further from it than the
-  start). The shared grid model (`src/data/levels/solver.ts`, used by `levels.test.ts` and the autopilot in
-  `src/integration/levelsPlayable.test.ts`) keeps per-cell stacks of boxes (colour × symbol): a move lifts
+  from level 4 on, and in the stacking and sorting chapters, the start drives away from the camera (every sorting zone
+  lies further from it than the start). Difficulty per level is declared with `dificultad:` and grows smoothly within
+  each chapter (docs/LEVELS.md, «Curva de dificultad»). The shared grid model (`src/data/levels/solver.ts`, used by
+  `levels.test.ts` and the autopilot in `src/integration/autopilot.ts`) keeps per-cell stacks of boxes (colour × symbol): a move lifts
   a stack's top box and drops it on the floor or on a stack with room (conservative: stacks block driving and turning
   sweeps); zones accept by their criteria, and in sorting levels a layout whose loose boxes have no complete sorting
   left (a trap) costs one more step.

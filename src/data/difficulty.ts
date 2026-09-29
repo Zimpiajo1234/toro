@@ -15,6 +15,7 @@ export const DIFFICULTY_METRICS = [
   'ambiguas',
   'trampas',
   'repartos',
+  'callejones',
   'cajas',
   'zonas',
 ] as const;
@@ -32,6 +33,7 @@ const ALIASES: Readonly<Record<string, DifficultyMetric>> = {
   ambigua: 'ambiguas',
   trampa: 'trampas',
   reparto: 'repartos',
+  callejon: 'callejones',
   caja: 'cajas',
   zona: 'zonas',
 };

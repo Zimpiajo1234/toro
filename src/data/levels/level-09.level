@@ -1,23 +1,22 @@
 # 9 · Tarde de lavanda
-id: tarde-de-lavanda
+id: tarde-de-lavanda-v2
 limit: 1
-ventanas: oeste 2-3, oeste 7-8
+ventanas: norte 2-5, oeste 5-6
+dificultad: extra>=3, estrechas>=3, libre<=75, movimientos<=16
+nota: Lavanda y azul están cambiadas al fondo del pasillo y hay que sacar las dos; las otras seis forman un corro sin hueco: aparca una y el resto encaja en cadena.
 
   012345678901
-0 p.HHH..HHH..
-1 ......a.....
-2 .b....^...c.
+0 p.........#1
+1 ..........#2
+2 .3.4.5....#.
 3 ............
-4 ....1234....
-5 .#........#.
-6 .#..5678..#.
-7 ............
-8 .d........e.
-9 p..f...g.h..
+4 .#####.###..
+5 ...........^
+6 .6.7.8......
+7 .......###..
+8 .......###..
+9 p......###.p
 
-1 = zona lavanda            2 = zona menta              3 = zona azul               4 5 = zona coral
-6 = zona amarillo           7 = zona lavanda            8 = zona menta
-a = caja azul               b = caja lavanda            c = caja menta              d = caja coral
-e = caja lavanda            f = caja menta              g = caja coral
-h = caja amarillo
-H = estantería 3 alturas
+1 = zona lavanda + caja azul    2 = zona azul + caja lavanda    3 = zona amarillo + caja menta
+4 = zona menta + caja coral     5 = zona coral + caja amarillo  6 = zona amarillo + caja coral
+7 = zona coral + caja menta     8 = zona menta + caja amarillo

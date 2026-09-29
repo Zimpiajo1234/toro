@@ -599,7 +599,7 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
   });
 
   it('stays compact and releases everything on dispose', () => {
-    const snap = new GameState(LEVELS.find((l) => l.id === 'el-gran-reparto')!).getSnapshot();
+    const snap = new GameState(LEVELS.find((l) => l.id === 'el-gran-reparto-v2')!).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
     // One mesh per pad (the engraving is part of it), one per box, as in the classic levels.
     const classic = new LevelView(new GameState(LEVELS[11]).getSnapshot(), defaultTheme, GAME_CONFIG, Math.PI / 4);

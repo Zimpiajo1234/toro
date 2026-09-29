@@ -1,7 +1,9 @@
 # 4 · Pequeño desorden
-id: pequeno-desorden
+id: pequeno-desorden-v2
 limit: 1
 ventanas: norte 3-5
+dificultad: extra>=1, bloqueos>=1, movimientos<=6
+nota: Ninguna caja está en su zona y no queda ninguna libre: aparca una a un lado y las otras encajan en cadena.
 
   012345678
 0 pHH...HHp
@@ -9,10 +11,9 @@ ventanas: norte 3-5
 2 ...123...
 3 .........
 4 .........
-5 .a.......
+5 .........
 6 ....^....
 
-1 = zona azul + caja amarillo                           2 = zona menta
-3 = zona amarillo + caja azul
-a = caja menta
+1 = zona azul + caja amarillo                               2 = zona menta + caja azul
+3 = zona amarillo + caja menta
 H = estantería 3 alturas
