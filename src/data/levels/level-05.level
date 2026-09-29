@@ -1,0 +1,17 @@
+# 5 · Cruce de pasillos
+id: cruce-de-pasillos
+limit: 1
+ventanas: norte 4-5, oeste 3-4
+
+  0123456789
+0 .........p
+1 a.......1.
+2 ..##..##..
+3 2........b
+4 3........c
+5 ..##..##..
+6 .d......4.
+7 p...^.....
+
+1 = zona menta         2 3 = zona amarillo    4 = zona azul
+a = caja azul          b c = caja amarillo    d = caja menta

@@ -1,0 +1,16 @@
+# 21 · Dos sitios posibles
+id: dos-sitios-posibles
+limit: 1
+ventanas: norte 2-4, oeste 2-3
+
+  012345678
+0 p......##
+1 .1.2.3...
+2 .........
+3 ....d.a.<
+4 .4.......
+5 ....b.c..
+6 p........
+
+1 = zona coral         2 = zona ■             3 = zona azul          4 = zona ▲
+a = caja coral ■       b = caja amarillo ■    c = caja azul ●        d = caja menta ▲

@@ -12,6 +12,7 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # tests de lógica, niveles, storage, helpers
 npm run build      # typecheck + build de producción en dist/
+npm run levels     # mapas y métricas de dificultad de todos los niveles (npm run levels -- 23: uno en detalle)
 ```
 
 `dist/` usa rutas relativas (`base: './'`): funciona servido desde cualquier subruta (itch.io, GitHub Pages).
@@ -54,7 +55,7 @@ src/
   core/        contratos compartidos (tipos, math, store)
   config/      gameConfig.json — todos los parámetros ajustables
   themes/      paletas (Theme). Nuevo tema = nuevo archivo + entrada en THEMES (themes/index.ts)
-  data/        validateLevel.ts + levels/*.json
+  data/        niveles: levels/*.level (texto), asciiLevel.ts (parser), validateLevel.ts, solver y métricas
   logic/       simulación pura (sin three / DOM / audio) + tests
   render/      escena three.js, cámara, mallas, feedback
   audio/       música generativa + SFX procedurales (Web Audio, sin assets)
@@ -83,12 +84,32 @@ la trampa clásica. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
 
 ## Ampliar
 
-- **Nuevo nivel:** añadir `src/data/levels/level-XX.json` (esquema `LevelData`, validado al cargar y en tests).
-  Pilas: `"recipe": ["blue", "mint"]` en una zona (su `color` = el primero); cajas con la misma `x, z` empiezan
-  apiladas en el orden de la lista (la primera en el suelo); `"stackLimit"` opcional.
-  Símbolos: `"symbol": "triangle"` en una caja (sin él lleva el de su color: azul ●, menta ▲, amarillo ■, coral ◆,
-  lavanda ✚) y en una zona `"color"`, `"symbol"` o ambos (al menos uno). Un nivel que nombra algún símbolo no apila,
-  tiene tantas cajas como zonas y al menos un reparto completo (lo comprueba `validateLevel`).
+- **Nuevo nivel:** añadir `src/data/levels/level-XX.level`, un archivo de texto con el mapa dibujado y una leyenda
+  (formato completo, métricas y pasos en [docs/LEVELS.md](docs/LEVELS.md)):
+
+  ```
+  # 25 · Mi nivel
+  id: mi-nivel
+  limit: 1
+  ventanas: norte 2-4
+
+    0123456
+  0 p......
+  1 .1..2..
+  2 .......
+  3 .a..b..
+  4 ...^..p
+
+  1 = zona azul      2 = zona menta ▲
+  a = caja azul      b = caja menta ▲
+  ```
+
+  `.` suelo, `#` estantería, `p` planta, `^ > v <` carretilla; el resto se explica en la leyenda: `caja`, `pila azul,menta`
+  (de abajo arriba), `zona azul` / `zona ▲` / `zona azul ■` / `zona pila azul,menta`, combinaciones como
+  `zona azul + caja coral`, `estantería 3 alturas`. El `id` guarda los mejores tiempos: no lo cambies. Se valida al
+  cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
+  y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista
+  `SHIPPED` de `src/data/levels/levels.test.ts`. Los `.json` antiguos (esquema `LevelData`) siguen cargando.
 - **Nuevo tema visual:** crear `src/themes/<id>.ts` que exporte un `Theme`, añadirlo al mapa `THEMES` de `themes/index.ts` y poner `"theme": "<id>"` en el nivel. El tema cubre la escena 3D, el fondo y los tokens de la UI; un id sin registrar hace fallar `src/integration/themes.test.ts`.
 - **Nuevo tipo de caja:** añadir el id a `BOX_KINDS` (`core/types.ts`) y su constructor de malla en el registro de cajas de `render/`.
 - **Ranking local:** `ProgressStore.getRanking(levelId)` ya guarda el top‑5 por nivel.

@@ -1,0 +1,22 @@
+# 11 · Pasillos de luz
+id: pasillos-de-luz
+limit: 1
+ventanas: oeste 2-3, oeste 6-7, norte 5-7
+
+   0123456789012
+ 0 p.....a......
+ 1 .1.........2.
+ 2 ....#####....
+ 3 .3....b..c.4.
+ 4 ..d..........
+ 5 .5..#####..6.
+ 6 ......e..f...
+ 7 .7.........8.
+ 8 ..g.#####.h..
+ 9 .9.....<.....
+10 ......i.....p
+
+1 = zona azul        2 = zona coral       3 = zona menta       4 = zona amarillo    5 = zona lavanda
+6 = zona azul        7 = zona amarillo    8 = zona menta       9 = zona coral
+a = caja amarillo    b = caja coral       c = caja lavanda     d e = caja menta
+f = caja amarillo    g = caja azul        h = caja coral       i = caja azul

@@ -1,350 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { COLOR_IDS, SYMBOL_IDS, forwardOf, type ColorId, type LevelData, type SymbolId, type ZoneCriteria } from '../../core/types';
+import { COLOR_IDS, forwardOf, type ColorId, type LevelData, type SymbolId } from '../../core/types';
 import { degToRad } from '../../core/math';
-import { assignBoxes, criteriaOf, matchKind, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
+import { assignBoxes, criteriaOf, matchKind, meets, sortableOf, usesSymbols } from '../../core/sorting';
+import { parseLevel, renderLevel } from '../asciiLevel';
+import { formatRange, formatTarget } from '../difficulty';
 import { validateLevel } from '../validateLevel';
-import { LEVELS } from './index';
+import { LEVELS, LEVEL_SOURCES } from './index';
+import { checkLevelTargets } from './metrics';
+import {
+  LevelGrid,
+  blockedZones,
+  boxCode,
+  isFree,
+  misplacedBoxes,
+  occupancyOf,
+  reachableFrom,
+  solve,
+  sortable,
+  stacksOf,
+  type Stacks,
+} from './solver';
 
-/* ------------------------------------------------------------------ */
-/* Grid model                                                          */
-/* ------------------------------------------------------------------ */
-
-/** Grid directions, clockwise: east (+x), south (+z), west (-x), north (-z). Adjacent indices are 90° apart. */
-const DIR_X = [1, 0, -1, 0] as const;
-const DIR_Z = [0, 1, 0, -1] as const;
-const TURNS = [1, 3] as const;
-
-/** Static view of a level on its grid. Cells are indexed `z * width + x`. */
-class LevelGrid {
-  readonly width: number;
-  readonly depth: number;
-  readonly cellCount: number;
-  /** 1 where a shelf or a plant stands. */
-  readonly solid: Uint8Array;
-  /**
-   * Per zone cell, what each box of its stack must meet, bottom → top: the zone's own criteria (color and / or
-   * symbol) for the bottom box, then the colors of its recipe. null off zones.
-   */
-  readonly steps: (ZoneCriteria[] | null)[];
-  readonly stackLimit: number;
-  /** The level sorts by symbol (docs/SORTING.md): the search also looks for a complete sorting (see solve). */
-  readonly sorting: boolean;
-
-  constructor(level: LevelData) {
-    this.width = level.size.width;
-    this.depth = level.size.depth;
-    this.cellCount = this.width * this.depth;
-    this.solid = new Uint8Array(this.cellCount);
-    this.steps = new Array<ZoneCriteria[] | null>(this.cellCount).fill(null);
-    this.stackLimit = level.stackLimit ?? 1;
-    this.sorting = usesSymbols(level);
-    for (const s of level.shelves)
-      for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
-    for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
-    for (const zone of level.zones) this.steps[this.index(zone.x, zone.z)] = zoneSteps(zone);
-  }
-
-  index(x: number, z: number): number {
-    return z * this.width + x;
-  }
-
-  /** Neighbour of `cell` in direction `dir`, or -1 outside the warehouse. */
-  step(cell: number, dir: number): number {
-    const x = (cell % this.width) + DIR_X[dir];
-    const z = Math.floor(cell / this.width) + DIR_Z[dir];
-    return x >= 0 && z >= 0 && x < this.width && z < this.depth ? this.index(x, z) : -1;
-  }
-}
-
-/** A zone's stack steps: its own criteria for the bottom box, then one color per box of its recipe above it. */
-function zoneSteps(zone: LevelData['zones'][number]): ZoneCriteria[] {
-  return [criteriaOf(zone), ...(zone.recipe ?? []).slice(1).map((color) => ({ color }))];
-}
-
-/**
- * One character per kind of box (color × symbol): a stack is a string of these, bottom → top. Boxes of the same
- * color and symbol are interchangeable (in levels before 19 that is: of the same color).
+/*
+ * The grid model, the conservative carrying model and the greedy solver live in ./solver.ts (shared with the
+ * autopilot planner in src/integration/levelsPlayable.test.ts and the level metrics behind `npm run levels`).
  */
-function boxCode(box: Sortable): string {
-  return String.fromCharCode(65 + COLOR_IDS.indexOf(box.color) * SYMBOL_IDS.length + SYMBOL_IDS.indexOf(box.symbol));
-}
-
-const BOX_KINDS_BY_CODE: Sortable[] = COLOR_IDS.flatMap((color) => SYMBOL_IDS.map((symbol) => ({ color, symbol })));
-
-function boxOfCode(code: string): Sortable {
-  return BOX_KINDS_BY_CODE[code.charCodeAt(0) - 65];
-}
 
 const code = (color: ColorId, symbol: SymbolId) => boxCode({ color, symbol });
-
-/** Per cell: the stack resting there as box codes bottom → top ('' = empty). */
-type Stacks = string[];
-
-function stacksOf(grid: LevelGrid, level: LevelData): Stacks {
-  const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
-  for (const b of level.boxes) stacks[grid.index(b.x, b.z)] += boxCode(sortableOf(b));
-  return stacks;
-}
-
-/** Occupancy for driving: any stack blocks its cell (0 = occupied, -1 = empty). */
-function occupancyOfStacks(grid: LevelGrid, stacks: Stacks): Int16Array {
-  const occupancy = new Int16Array(grid.cellCount).fill(-1);
-  for (let c = 0; c < grid.cellCount; c++) if (stacks[c].length > 0) occupancy[c] = 0;
-  return occupancy;
-}
-
-/** Boxes on a zone that already fit it from the floor up (the bottom one accepted, the rest its recipe's colors). */
-function correctPrefix(grid: LevelGrid, stacks: Stacks, cell: number): number {
-  const steps = grid.steps[cell];
-  if (!steps) return 0;
-  const stack = stacks[cell];
-  let n = 0;
-  while (n < stack.length && n < steps.length && meets(steps[n], boxOfCode(stack[n]))) n++;
-  return n;
-}
-
-/** The box `box` (a code) would extend the zone on `cell` right now (it fits the next step of a correct prefix). */
-function extendsZone(grid: LevelGrid, stacks: Stacks, cell: number, box: string): boolean {
-  const steps = grid.steps[cell];
-  const h = stacks[cell].length;
-  return steps !== null && correctPrefix(grid, stacks, cell) === h && h < steps.length && meets(steps[h], boxOfCode(box));
-}
-
-/**
- * Sorting levels (one box per zone): the boxes not yet accepted by the zone they rest on can still all be sorted
- * into the zones not yet done, without moving an accepted box again. False = the layout is a dead end until some
- * accepted box moves (e.g. level 23's trap).
- */
-function sortable(grid: LevelGrid, stacks: Stacks): boolean {
-  const loose: Sortable[] = [];
-  const open: ZoneCriteria[] = [];
-  for (let c = 0; c < grid.cellCount; c++) {
-    const steps = grid.steps[c];
-    const placed = correctPrefix(grid, stacks, c);
-    if (steps && placed < steps.length) open.push(steps[0]);
-    for (let i = placed; i < stacks[c].length; i++) loose.push(boxOfCode(stacks[c][i]));
-  }
-  return assignBoxes(loose, open).every((z) => z >= 0);
-}
-
-/** A stack (not empty) that still has room for one more box. */
-function canStackOn(grid: LevelGrid, stacks: Stacks, cell: number): boolean {
-  return cell >= 0 && grid.solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < grid.stackLimit;
-}
-
-/** Cell → index of the box resting there, or -1. */
-function occupancyOf(grid: LevelGrid, boxCells: ArrayLike<number>): Int16Array {
-  const occupancy = new Int16Array(grid.cellCount).fill(-1);
-  for (let i = 0; i < boxCells.length; i++) occupancy[boxCells[i]] = i;
-  return occupancy;
-}
-
-function isFree(grid: LevelGrid, occupancy: Int16Array, cell: number): boolean {
-  return cell >= 0 && grid.solid[cell] === 0 && occupancy[cell] === -1;
-}
-
-/** Cells the empty forklift can drive to: 4-connected floor without shelves, plants or boxes. */
-function reachableFrom(grid: LevelGrid, occupancy: Int16Array, start: number): Uint8Array {
-  const region = new Uint8Array(grid.cellCount);
-  const queue = [start];
-  region[start] = 1;
-  for (let q = 0; q < queue.length; q++) {
-    for (let dir = 0; dir < 4; dir++) {
-      const next = grid.step(queue[q], dir);
-      if (next >= 0 && region[next] === 0 && isFree(grid, occupancy, next)) {
-        region[next] = 1;
-        queue.push(next);
-      }
-    }
-  }
-  return region;
-}
-
-/**
- * Every drop the forklift can make after lifting the top box at `from` (`occupancy` / `stacks` already without
- * it: `from` stays occupied while boxes remain under it). Conservative carrying model (the real controller slides,
- * arcs and reverses, so it is more permissive):
- * - the forklift sits on a cell center facing one of 4 directions; the box occupies the cell ahead;
- * - it only drives forward (no reverse gear): the forklift's next cell and the one after it must be free;
- * - a 90° turn in place needs the new front cell and the diagonal the box sweeps through free
- *   (≈ 2 cells of clearance, the design rule for lanes where the forklift turns while carrying);
- * - stacks block like any box, except as a drop target: a stack with room that ends up right ahead (after a
- *   forward step or a turn) takes the box on top.
- * The box can be dropped on the free cell ahead in any reached pose. Returns drop cell → forklift cells.
- */
-function carryDrops(grid: LevelGrid, occupancy: Int16Array, stacks: Stacks, region: Uint8Array, from: number): Map<number, number[]> {
-  const visited = new Uint8Array(grid.cellCount * 4);
-  const queue: number[] = [];
-  const visit = (cell: number, dir: number) => {
-    const pose = cell * 4 + dir;
-    if (visited[pose] === 0) {
-      visited[pose] = 1;
-      queue.push(pose);
-    }
-  };
-  const drops = new Map<number, number[]>();
-  const record = (drop: number, cell: number) => {
-    const cells = drops.get(drop);
-    if (cells) cells.push(cell);
-    else drops.set(drop, [cell]);
-  };
-  // Pick-up: face the box from a reachable orthogonal neighbour.
-  for (let dir = 0; dir < 4; dir++) {
-    const approach = grid.step(from, (dir + 2) % 4);
-    if (approach >= 0 && region[approach] === 1) visit(approach, dir);
-  }
-  for (let q = 0; q < queue.length; q++) {
-    const cell = queue[q] >> 2;
-    const dir = queue[q] & 3;
-    const front = grid.step(cell, dir);
-    record(front, cell);
-    if (isFree(grid, occupancy, front)) {
-      const ahead = grid.step(front, dir);
-      if (isFree(grid, occupancy, ahead)) visit(front, dir);
-      else if (canStackOn(grid, stacks, ahead)) record(ahead, front);
-    }
-    for (const turn of TURNS) {
-      const next = (dir + turn) % 4;
-      if (!isFree(grid, occupancy, grid.step(front, next))) continue;
-      const side = grid.step(cell, next);
-      if (isFree(grid, occupancy, side)) visit(cell, next);
-      else if (canStackOn(grid, stacks, side)) record(side, cell);
-    }
-  }
-  return drops;
-}
-
-/* ------------------------------------------------------------------ */
-/* Solver: greedy best-first search over "move one box" macro steps    */
-/* ------------------------------------------------------------------ */
-
-interface SolveOptions {
-  /** When false, a box may only go where it extends a zone's recipe (no temporary parking). */
-  allowParking: boolean;
-  /** Upper bound on expanded states: keeps the test fast and deterministic. */
-  maxExpansions: number;
-}
-
-interface SolveResult {
-  solved: boolean;
-  /** Box moves (pick + drop) of the solution found; not necessarily optimal. */
-  moves: number;
-  expansions: number;
-}
-
-interface SearchNode {
-  stacks: Stacks;
-  forklift: number;
-  moves: number;
-}
-
-/**
- * State = the boxes (color × symbol) stacked on every cell (identical boxes are interchangeable) + the forklift's
- * reachable region. A move lifts the top box of a stack and drops it on the floor or on top of a stack with room.
- * Zones accept by their criteria (core/sorting), so an ambiguous box may go to any zone that accepts it; in a
- * sorting level a layout that leaves the rest without a complete sorting (a box stranded) ranks one step worse,
- * which steers the greedy search away from traps without forbidding them.
- */
-function solve(level: LevelData, options: SolveOptions): SolveResult {
-  const grid = new LevelGrid(level);
-  const total = level.boxes.length;
-  const misplaced = (stacks: Stacks) => {
-    let placed = 0;
-    for (let c = 0; c < grid.cellCount; c++) if (grid.steps[c]) placed += correctPrefix(grid, stacks, c);
-    return total - placed + (grid.sorting && placed < total && !sortable(grid, stacks) ? 1 : 0);
-  };
-  const keyOf = (stacks: Stacks, region: Uint8Array) => `${stacks.join('/')}@${region.indexOf(1)}`;
-
-  // Buckets by number of misplaced boxes; LIFO inside a bucket (greedy, depth-first flavoured).
-  const buckets: SearchNode[][] = Array.from({ length: total + 2 }, () => []);
-  const seen = new Set<string>();
-  const push = (stacks: Stacks, forklift: number, moves: number, region: Uint8Array) => {
-    const key = keyOf(stacks, region);
-    if (seen.has(key)) return;
-    seen.add(key);
-    buckets[misplaced(stacks)].push({ stacks, forklift, moves });
-  };
-
-  const initial = stacksOf(grid, level);
-  const start = grid.index(level.forklift.x, level.forklift.z);
-  push(initial, start, 0, reachableFrom(grid, occupancyOfStacks(grid, initial), start));
-
-  let expansions = 0;
-  while (expansions < options.maxExpansions) {
-    const bucketIndex = buckets.findIndex((b) => b.length > 0);
-    if (bucketIndex < 0) break;
-    const node = buckets[bucketIndex].pop();
-    if (!node) break;
-    if (bucketIndex === 0) return { solved: true, moves: node.moves, expansions };
-    expansions++;
-
-    const occupancy = occupancyOfStacks(grid, node.stacks);
-    const region = reachableFrom(grid, occupancy, node.forklift);
-    for (let from = 0; from < grid.cellCount; from++) {
-      const stack = node.stacks[from];
-      if (stack.length === 0) continue;
-      const box = stack[stack.length - 1];
-      const lifted = node.stacks.slice();
-      lifted[from] = stack.slice(0, -1);
-      occupancy[from] = lifted[from].length > 0 ? 0 : -1;
-      for (const [drop, forkliftCells] of carryDrops(grid, occupancy, lifted, region, from)) {
-        if (drop === from || drop < 0 || lifted[drop].length >= grid.stackLimit) continue;
-        if (!options.allowParking && !extendsZone(grid, lifted, drop, box)) continue;
-        const next = lifted.slice();
-        next[drop] += box;
-        const before = occupancy[drop];
-        occupancy[drop] = 0;
-        // The same drop may leave the forklift on different sides of the box: keep each distinct region.
-        const regions: Uint8Array[] = [];
-        for (const cell of forkliftCells) {
-          if (regions.some((r) => r[cell] === 1)) continue;
-          const after = reachableFrom(grid, occupancy, cell);
-          regions.push(after);
-          push(next, cell, node.moves + 1, after);
-        }
-        occupancy[drop] = before;
-      }
-      occupancy[from] = 0;
-    }
-  }
-  return { solved: false, moves: -1, expansions };
-}
 
 /* ------------------------------------------------------------------ */
 /* Static helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-/**
- * Boxes that start on a zone above the part of its stack that already fits it from the floor up (classic levels: a
- * box on a zone of another color; sorting levels: a box the zone does not accept). They must move before that zone
- * can be finished.
- */
-function misplacedBoxes(level: LevelData) {
-  const grid = new LevelGrid(level);
-  const stacks = stacksOf(grid, level);
-  const seen = new Array<number>(grid.cellCount).fill(0);
-  return level.boxes.filter((b) => {
-    const cell = grid.index(b.x, b.z);
-    // List order is bottom → top, so the count so far is this box's level in its stack.
-    const index = seen[cell]++;
-    return grid.steps[cell] !== null && index >= correctPrefix(grid, stacks, cell);
-  });
-}
-
-/** Zones that start with a wrong box somewhere in their stack (classic levels: covered by another color). */
-function blockedZones(level: LevelData) {
-  const grid = new LevelGrid(level);
-  const stacks = stacksOf(grid, level);
-  return level.zones.filter((z) => {
-    const cell = grid.index(z.x, z.z);
-    return correctPrefix(grid, stacks, cell) < stacks[cell].length;
-  });
-}
-
 /** Coarse reachability report from the forklift start, treating resting boxes as obstacles. */
 function coarseProblems(level: LevelData): string[] {
   const grid = new LevelGrid(level);
-  const occupancy = occupancyOf(grid, level.boxes.map((b) => grid.index(b.x, b.z)));
+  const occupancy = occupancyOf(grid, stacksOf(grid, level));
   const region = reachableFrom(grid, occupancy, grid.index(level.forklift.x, level.forklift.z));
   const hasReachableNeighbour = (cell: number) =>
     [0, 1, 2, 3].some((d) => {
@@ -431,13 +122,76 @@ function corridorLevel(depth: number): LevelData {
 
 describe('level registry', () => {
   it('ships at least 12 validated levels with unique ids and strictly ascending orders', () => {
-    // Invariants, not a fixed list: dropping in a new level-XX.json (any order value) must keep CI green.
+    // Invariants (the registry also refuses a repeated id or order across .level and .json files).
     expect(LEVELS.length).toBeGreaterThanOrEqual(12);
     // Strictly ascending also means unique, so the registry sort is deterministic.
     const orders = LEVELS.map((l) => l.order);
     expect(orders.every((o, i) => i === 0 || o > orders[i - 1])).toBe(true);
     expect(new Set(LEVELS.map((l) => l.id)).size).toBe(LEVELS.length);
     expect(new Set(LEVELS.map((l) => l.name)).size).toBe(LEVELS.length);
+  });
+});
+
+/**
+ * The shipped levels, by order. Saved best times, rankings, unlocks and "Continuar" are keyed by these ids (and the
+ * order decides the play order), so this list only changes on purpose: adding, removing or re-ordering a level
+ * means updating it here in the same change.
+ */
+const SHIPPED: readonly (readonly [number, string])[] = [
+  [1, 'primer-encargo'],
+  [2, 'dos-colores'],
+  [3, 'rincon-tranquilo'],
+  [4, 'pequeno-desorden'],
+  [5, 'cruce-de-pasillos'],
+  [6, 'un-toque-de-coral'],
+  [7, 'estanterias-en-fila'],
+  [8, 'una-cosa-lleva-a-otra'],
+  [9, 'tarde-de-lavanda'],
+  [10, 'mudanza-a-medias'],
+  [11, 'pasillos-de-luz'],
+  [12, 'el-gran-almacen'],
+  [13, 'una-encima'],
+  [14, 'primero-la-base'],
+  [15, 'dos-pilas'],
+  [16, 'al-reves'],
+  [17, 'torre-de-tres'],
+  [18, 'el-gran-apilado'],
+  [19, 'lo-que-dice-la-tapa'],
+  [20, 'color-o-forma'],
+  [21, 'dos-sitios-posibles'],
+  [22, 'justo-esa'],
+  [23, 'la-muestra'],
+  [24, 'el-gran-reparto'],
+];
+
+describe('level files (.level, docs/LEVELS.md)', () => {
+  it('ships exactly the expected levels: ids and orders (saves are keyed by id)', () => {
+    expect(LEVELS.map((l) => [l.order, l.id])).toEqual(SHIPPED);
+  });
+
+  it('every shipped level comes from its own .level file (the JSON sources are gone)', () => {
+    const shipped = new Set(SHIPPED.map(([, id]) => id));
+    const sources = LEVEL_SOURCES.filter((s) => shipped.has(s.level.id));
+    expect(sources.map((s) => s.format)).toEqual(SHIPPED.map(() => 'level'));
+    expect(new Set(sources.map((s) => s.file)).size).toBe(SHIPPED.length);
+    expect(sources.every((s) => s.file.startsWith('src/data/levels/') && s.file.endsWith('.level'))).toBe(true);
+  });
+
+  it.each(LEVEL_SOURCES.map((s) => [s.file, s] as const))('%s: parse(render(level)) is the level again, and rendering is idempotent', (_, source) => {
+    const text = renderLevel(source.level, source);
+    const again = parseLevel(text, source.file);
+    expect(again.level).toStrictEqual(source.level);
+    expect(again.targets).toEqual(source.targets);
+    expect(again.notes).toEqual(source.notes);
+    expect(renderLevel(again.level, again)).toBe(text);
+  });
+
+  const declared = LEVEL_SOURCES.filter((s) => s.targets.length > 0);
+  it(`difficulty targets («dificultad:», ${declared.length} levels declare some) are all proven by the measured metrics`, () => {
+    for (const source of declared) {
+      const failed = checkLevelTargets(source.level, source.targets).filter((c) => !c.ok);
+      expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`), source.file).toEqual([]);
+    }
   });
 });
 

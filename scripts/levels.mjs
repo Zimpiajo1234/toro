@@ -1,0 +1,90 @@
+/**
+ * Level tooling (docs/LEVELS.md):
+ *   npm run levels                   every level: map, legend and metrics, then a summary table
+ *   npm run levels -- 23 la-muestra  those levels in detail (order number, #position, id or file name)
+ *   npm run levels -- 23 --estados 2000000  raise the work budget of the exact move search (default 400 000)
+ *   npm run levels:fmt               rewrite every src/data/levels/*.level in its canonical form
+ *   npm run levels:fmt -- --check    only report the files that are not canonical (exit code 1)
+ *
+ * The TypeScript sources are loaded through Vite's SSR module loader (TS, extensionless imports, import.meta.glob and
+ * ?raw work exactly as in the game). No port, no HMR, no file watcher and its own cache dir, so it never disturbs a
+ * running dev server. No dependencies beyond the project's.
+ */
+import { readFile, readdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const argv = process.argv.slice(2);
+const fmt = argv.includes('--fmt');
+const check = argv.includes('--check');
+let maxWork;
+const names = [];
+for (let i = 0; i < argv.length; i++) {
+  const arg = argv[i];
+  if (arg === '--fmt' || arg === '--check') continue;
+  if (arg === '--estados') {
+    maxWork = Number(argv[++i]);
+    if (!Number.isInteger(maxWork) || maxWork < 1) fail('--estados necesita un número entero, p. ej. --estados 2000000');
+    continue;
+  }
+  if (arg.startsWith('--')) fail(`opción desconocida ${arg} (usa --estados N, o --check con levels:fmt)`);
+  names.push(arg);
+}
+
+function fail(message) {
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+}
+
+const server = await createServer({
+  root,
+  configFile: false,
+  logLevel: 'silent', // errors reach the catch below (authoring mistakes as «file:line:column: motivo»)
+  appType: 'custom',
+  cacheDir: path.join(root, 'node_modules', '.vite-levels'),
+  server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+  optimizeDeps: { noDiscovery: true, include: [] },
+});
+
+try {
+  if (fmt) {
+    const { formatLevel } = await server.ssrLoadModule('/src/data/asciiLevel.ts');
+    const dir = path.join(root, 'src', 'data', 'levels');
+    const files = (await readdir(dir)).filter((name) => name.endsWith('.level')).sort();
+    const changed = [];
+    for (const name of files) {
+      const file = path.join(dir, name);
+      const text = await readFile(file, 'utf8');
+      const canonical = formatLevel(text, `src/data/levels/${name}`);
+      if (canonical === text) continue;
+      changed.push(`src/data/levels/${name}`);
+      if (!check) await writeFile(file, canonical, 'utf8');
+    }
+    if (check) {
+      process.stdout.write(
+        changed.length === 0
+          ? `${files.length} archivos .level en forma canónica\n`
+          : `No canónicos (npm run levels:fmt los reescribe):\n${changed.map((f) => `  ${f}\n`).join('')}`,
+      );
+      if (changed.length > 0) process.exitCode = 1;
+    } else {
+      process.stdout.write(
+        changed.length === 0
+          ? `${files.length} archivos .level: ya estaban en forma canónica\n`
+          : `Reescritos en forma canónica:\n${changed.map((f) => `  ${f}\n`).join('')}`,
+      );
+    }
+  } else {
+    const { LEVEL_SOURCES } = await server.ssrLoadModule('/src/data/levels/index.ts');
+    const { levelsReport } = await server.ssrLoadModule('/src/data/levels/report.ts');
+    process.stdout.write(levelsReport(LEVEL_SOURCES, names, { timings: true, ...(maxWork === undefined ? {} : { maxWork }) }));
+  }
+} catch (error) {
+  // Authoring mistakes arrive as "file:line:column: motivo"; no stack trace needed.
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+} finally {
+  await server.close();
+}

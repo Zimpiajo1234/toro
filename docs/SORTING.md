@@ -5,7 +5,8 @@ Decisiones (2026-09-29): segundo atributo = **símbolo** (los glifos que ya exis
 (niveles 19–24 con `stackLimit` 1; recetas de pila siguen siendo solo de color).
 
 ## Reglas
-1. Cada caja tiene **color** y **símbolo**. En JSON `symbol` es opcional: si falta, se deriva del color con el mapa
+1. Cada caja tiene **color** y **símbolo**. En el nivel el símbolo es opcional (`caja azul` frente a `caja azul ▲`,
+   docs/LEVELS.md): si falta, se deriva del color con el mapa
    canónico actual (azul ● · menta ▲ · amarillo ■ · coral ◆ · lavanda ✚), así los niveles 1–18 no cambian.
 2. Cada zona **acepta** según los criterios que declara (al menos uno):
    - solo `color` → «cualquier caja de ese color» (lo de siempre);

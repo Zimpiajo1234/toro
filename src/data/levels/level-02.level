@@ -1,0 +1,15 @@
+# 2 · Dos colores
+id: dos-colores
+limit: 1
+ventanas: norte 3-4, oeste 2-3
+
+  01234567
+0 p.......
+1 ...a..1.
+2 .>......
+3 ........
+4 ...b..2.
+5 p.......
+
+1 = zona menta      2 = zona azul
+a = caja azul       b = caja menta

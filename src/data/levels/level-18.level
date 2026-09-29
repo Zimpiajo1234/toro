@@ -1,0 +1,21 @@
+# 18 · El gran apilado
+id: el-gran-apilado
+limit: 3
+ventanas: norte 3-4, norte 7-9, oeste 3-4
+
+  012345678901
+0 p..........p
+1 ........d...
+2 ..1...a..<..
+3 ............
+4 .....###....
+5 ..2......b..
+6 ....c.......
+7 .e.....3..f.
+8 p..5.4......
+
+1 = zona pila coral,menta,azul
+a = pila azul,coral
+2 = zona pila amarillo,lavanda + caja amarillo                       3 = zona azul
+4 = zona menta         5 = zona coral
+b = caja lavanda       c d = caja menta       e = caja azul          f = caja coral

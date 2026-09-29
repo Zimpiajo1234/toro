@@ -9,7 +9,8 @@ Stack: Vite 8 · TypeScript 7 (strict, `noUnusedLocals`) · React 19 (DOM overla
 no react-three-fiber) · Vitest 5 for pure-logic tests. No other runtime dependencies. No asset files for
 audio (procedural Web Audio) and no textures required (vertex/flat colors; tiny CanvasTexture allowed).
 
-Commands: `npm run typecheck` (covers `src/`, `dev/` and `vite.config.ts`) · `npm test` · `npx vite build` · `npm run dev`.
+Commands: `npm run typecheck` (covers `src/`, `dev/` and `vite.config.ts`) · `npm test` · `npx vite build` · `npm run dev` ·
+`npm run levels` (level maps + difficulty metrics; `-- 23` for one level) · `npm run levels:fmt`.
 The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under any subpath.
 
 ## Module map & ownership
@@ -19,8 +20,10 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers) |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
-| `src/data/validateLevel.ts` | shared | Level JSON schema + validation |
-| `src/data/levels/*.json` | **levels** | Level content |
+| `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
+| `src/data/asciiLevel.ts`, `src/data/difficulty.ts` | shared | `.level` text format: parser (→ validateLevel) and canonical renderer; `dificultad:` targets |
+| `src/data/levels/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md) |
+| `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry; grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions, tests |
 | `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation |
 | `src/audio/**` | **audio** | Procedural music + SFX |
@@ -48,7 +51,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 
 - 1 unit = 1 cell. Floor top at `y = 0`. Warehouse centered at origin. `cellToWorld` / `worldToCell`.
 - Back walls: **north** at `z = -depth/2`, **west** at `x = -width/2`. Front edges are open (diorama cut-away).
-- Heading `h` radians, forward = `(sin h, cos h)`. JSON heading in degrees. Meshes are modelled facing +Z
+- Heading `h` radians, forward = `(sin h, cos h)`. `LevelData.forklift.heading` in degrees (a `.level` arrow: `v` 0,
+  `>` 90, `^` 180, `<` 270, or `rumbo:`). Meshes are modelled facing +Z
   and get `rotation.y = h`.
 - Default camera yaw 45° sits toward `+x,+z`. Camera yaw `ψ`: camera horizontal position direction is
   `(sin ψ, cos ψ)`. Screen→world mapping (Game, `cameraInput.ts`): `forward = (-sin ψ, -cos ψ)`,
@@ -105,7 +109,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   - Nothing to pick: `actionIdle`.
 - `hint` in the snapshot is recomputed every update: `targetBoxId` when not carrying; `dropCell` / `dropZoneId` /
   `dropLevel` preview when carrying.
-- **Stacks** (spec: `docs/STACKING.md`; levels 13–18). `LevelData.stackLimit` (validateLevel fills it: JSON value,
+- **Stacks** (spec: `docs/STACKING.md`; levels 13–18). `LevelData.stackLimit` (validateLevel fills it: the level's `limit`,
   else `stack.maxHeight` when the level uses stacking — a recipe longer than 1 or a stacked start — else 1, so the
   classic levels behave exactly as before). `LevelZone.recipe` (bottom → top, default `[color]`, `color` must be
   `recipe[0]`); box colors must equal the union of recipes as a multiset. Stacked starts: boxes with the same
@@ -143,9 +147,28 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   updates ignore input (forklift coasts to rest).
 - `firstInput` exactly once, on the first frame with non-zero move, non-zero drive (throttle / steer) or an action press (Game starts the timer).
 
+## Level data (levels)
+
+- Authoring format: one `src/data/levels/*.level` text file per level: title `# order · name`, header (`id:`,
+  `limit:`, `ventanas:`, `rumbo:`, `tema:`, `dificultad:`, `nota:`), an ASCII map and a Spanish legend (full grammar,
+  metrics and workflow: `docs/LEVELS.md`). Pipeline: `src/data/levels/index.ts` loads `*.level` with
+  `import.meta.glob('./*.level', { query: '?raw' })` (plus legacy `*.json`), `parseLevel` (`src/data/asciiLevel.ts`)
+  turns the text into a raw level object and hands it to `validateLevel`, which fills the defaults (`LevelData` in
+  `src/core/types.ts`). Errors are Spanish, `file:line:column: motivo` (validateLevel's own messages are translated and
+  placed on the map cell or legend entry to fix). Ids and orders must be unique across both formats. `renderLevel`
+  writes any LevelData back as canonical text; `parseLevel(renderLevel(l))` deep-equals `l` (tested for every shipped
+  level). The 24 JSON levels were migrated with a deep-equality proof and deleted: `.level` is the single source.
+- Level ids key saved progress (and seed the decor RNG): never change a shipped id. Box / zone ids are generated
+  `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
+- `src/data/levels/solver.ts` is the only grid model (conservative carrying model, greedy search, exact A* for the
+  fewest box moves). `levels.test.ts`, the autopilot planner (`src/integration/levelsPlayable.test.ts`) and the
+  metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos) all
+  import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
+  metrics table; `npm run levels:fmt` rewrites files canonically. A `dificultad:` header (e.g. `extra>=2, bloqueos>=1`)
+  declares targets that `levels.test.ts` proves against the measured metrics.
+
 ## Level design (levels)
 
-- JSON schema = `LevelData` in `src/core/types.ts`, validated by `src/data/validateLevel.ts` (read it).
 - Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs.
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
@@ -154,8 +177,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Three chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2), 19–24 sorting by colour +
   symbol (stackLimit 1). Box count and area grow within each chapter. Start headings face a box straight ahead;
   the stacking and sorting chapters drive away from the camera (every sorting zone lies further from it than the
-  start). `levels.test.ts` (grid solver) and
-  `src/integration/levelsPlayable.test.ts` (autopilot) model per-cell stacks of boxes (colour × symbol): a move lifts
+  start). The shared grid model (`src/data/levels/solver.ts`, used by `levels.test.ts` and the autopilot in
+  `src/integration/levelsPlayable.test.ts`) keeps per-cell stacks of boxes (colour × symbol): a move lifts
   a stack's top box and drops it on the floor or on a stack with room (conservative: stacks block driving and turning
   sweeps); zones accept by their criteria, and in sorting levels a layout whose loose boxes have no complete sorting
   left (a trap) costs one more step.

@@ -1,0 +1,16 @@
+# 22 · Justo esa
+id: justo-esa
+limit: 1
+ventanas: norte 2-3, norte 5-7
+
+  0123456789
+0 p........#
+1 .1.2.3.4.#
+2 ..........
+3 ..........
+4 ..c..b..a.
+5 ..........
+6 p....d..^.
+
+1 = zona azul ●     2 = zona menta ▲    3 = zona azul ▲     4 = zona menta ●
+a = caja azul ▲     b = caja menta ●    c = caja azul ●     d = caja menta ▲

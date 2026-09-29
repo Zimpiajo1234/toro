@@ -1,0 +1,206 @@
+/**
+ * Text report behind `npm run levels` (scripts/levels.mjs): every level's map and legend plus a metrics table, or one
+ * level in detail (its canonical text, metrics with their meaning, difficulty targets, a shortest plan and the narrow
+ * cells). Pure: the script loads the registry and prints what this returns. Metric definitions: docs/LEVELS.md.
+ */
+import { usesSymbols } from '../../core/sorting';
+import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
+import { formatRange, formatTarget } from '../difficulty';
+import type { LevelSource } from './index';
+import { checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
+import { LevelGrid, boxOfCode, lift, stacksOf, type Move } from './solver';
+
+export interface ReportOptions {
+  /** Add a milliseconds column (off for deterministic output, e.g. in tests). */
+  timings?: boolean;
+  /** Work budget of the exact move search (see solver.minMoves `maxWork`). */
+  maxWork?: number;
+}
+
+/** Levels named on the command line: an order number ("23"), a position ("#23"), an id or a file name. */
+export function selectSources(sources: readonly LevelSource[], args: readonly string[]): LevelSource[] {
+  return args.map((arg) => {
+    const base = (s: LevelSource) => s.file.replace(/^.*\//, '');
+    const found =
+      (/^-?\d+(?:\.\d+)?$/.test(arg) ? sources.find((s) => s.level.order === Number(arg)) : undefined) ??
+      (/^#\d+$/.test(arg) ? sources[Number(arg.slice(1)) - 1] : undefined) ??
+      sources.find((s) => s.level.id === arg || base(s) === arg || base(s).replace(/\.[^.]+$/, '') === arg);
+    if (!found) throw new Error(`No encuentro el nivel «${arg}»: usa su número de orden (23), su posición (#23), su id o su archivo`);
+    return found;
+  });
+}
+
+export function levelsReport(sources: readonly LevelSource[], args: readonly string[] = [], options: ReportOptions = {}): string {
+  const selected = args.length > 0 ? selectSources(sources, args) : sources;
+  const measured = selected.map((source) => {
+    const started = performance.now();
+    const metrics = levelMetrics(source.level, options.maxWork === undefined ? {} : { maxWork: options.maxWork });
+    return { source, metrics, ms: performance.now() - started, checks: checkTargets(metrics, source.targets) };
+  });
+  const out: string[] = [];
+  if (args.length === 0) {
+    out.push(`Toro · ${sources.length} niveles · métricas en el modelo conservador de carga (docs/LEVELS.md)`, '');
+    for (const m of measured) out.push(...summaryBlock(m.source, m.metrics), '');
+  } else {
+    for (const m of measured) out.push(...detailBlock(m.source, m.metrics, m.checks));
+  }
+  out.push(...table(measured, options.timings ?? false));
+  return `${out.join('\n')}\n`;
+}
+
+const pct = (n: number) => `${n}%`;
+
+function movesText(m: LevelMetrics): string {
+  if (m.moves.unsolvable) return 'sin solución';
+  return m.moves.exact ? String(m.moves.lower) : `≥${m.moves.lower}`;
+}
+
+function extraText(m: LevelMetrics): string {
+  if (m.moves.unsolvable) return '—';
+  return m.moves.exact ? String(m.extra.lower) : `≥${m.extra.lower}`;
+}
+
+function heading(source: LevelSource): string {
+  const { level } = source;
+  const canonical = source.text === undefined || source.text === renderLevel(level, source);
+  return `== ${level.order} · ${level.name} · ${level.id} · ${source.file}${canonical ? '' : ' (no canónico: npm run levels:fmt)'} ==`;
+}
+
+function summaryBlock(source: LevelSource, m: LevelMetrics): string[] {
+  const { grid, legend } = drawLevel(source.level);
+  const parts = [
+    `movimientos ${movesText(m)}`,
+    `extra ${extraText(m)}`,
+    `bloqueos ${m.blockers.count}`,
+    `estrechas ${m.narrow.count}`,
+    `libre ${pct(m.freeFloorPct)}`,
+    `ambiguas ${m.ambiguous}`,
+  ];
+  if (m.sortings !== null) parts.push(`trampas ${m.traps}`, `repartos ${m.sortings}`);
+  return [heading(source), ...renderMapLines(grid), ...(legend.length > 0 ? ['', ...legend] : []), parts.join(' · ')];
+}
+
+function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]): string[] {
+  const { level } = source;
+  const { grid } = drawLevel(level);
+  const lines = [heading(source), '', ...renderLevel(level, source).trimEnd().split('\n'), ''];
+  const moves = m.moves.unsolvable
+    ? 'sin solución en el modelo'
+    : m.moves.exact
+      ? `${m.moves.lower} (exacto${m.moves.states > 0 ? `, ${m.moves.states} estados` : ''})`
+      : `≥ ${m.moves.lower}${m.moves.upper === null ? '' : `, el mejor plan encontrado hace ${m.moves.upper}`} (presupuesto agotado tras ${m.moves.states} estados: sube --estados)`;
+  const rows: [string, string, string][] = [
+    ['movimientos', moves, 'mínimo de movimientos de caja (coger + dejar) para terminar'],
+    ['obligadas', String(m.mustMove), 'cajas que tienen que moverse al menos una vez'],
+    ['extra', m.moves.unsolvable ? '—' : formatRange(m.extra), 'movimientos de más: aparcar, reordenar una pila, deshacer una trampa'],
+    [
+      'bloqueos',
+      String(m.blockers.count),
+      `cajas que hay que apartar antes de usar otra caja o zona${blockerIds(m)}`,
+    ],
+    ['estrechas', `${m.narrow.count} de ${m.narrow.floor}`, 'casillas de suelo donde no cabe un giro de 90° con carga'],
+    ['libre', pct(m.freeFloorPct), 'casillas sin estantería, planta ni caja al empezar'],
+    ['ambiguas', String(m.ambiguous), 'cajas con más de un destino posible (zona o piso de pila)'],
+    ['trampas', String(m.traps), 'colocaciones aceptadas que dejan otra caja sin zona'],
+    ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos)'],
+  ];
+  const w0 = Math.max(...rows.map((r) => r[0].length));
+  const w1 = Math.max(...rows.map((r) => r[1].length));
+  lines.push('Métricas', ...rows.map(([name, value, what]) => `  ${name.padEnd(w0)}  ${value.padEnd(w1)}  ${what}`), '');
+  lines.push(
+    'Objetivos (dificultad:)',
+    ...(checks.length === 0
+      ? ['  ninguno']
+      : checks.map((c) => `  ${c.ok ? 'OK ' : 'NO '} ${formatTarget(c.target)}   medido ${formatRange(c.range)}`)),
+    '',
+  );
+  if (m.moves.plan) {
+    lines.push(
+      `Plan de ${m.moves.plan.length} movimientos${m.moves.exact ? ' (uno de los más cortos)' : ' (el mejor encontrado)'}:`,
+      ...planLines(level, grid, m.moves.plan),
+      '',
+    );
+  }
+  if (m.narrow.count > 0) {
+    const overlay = grid.map((row) => [...row]);
+    for (const cell of m.narrow.cells) {
+      const x = cell % level.size.width;
+      const z = Math.floor(cell / level.size.width);
+      if (overlay[z][x] === '.') overlay[z][x] = '!';
+    }
+    lines.push('Casillas estrechas (! = no cabe un giro con carga):', ...renderMapLines(overlay), '');
+  }
+  return lines;
+}
+
+function blockerIds(m: LevelMetrics): string {
+  const parts: string[] = [];
+  if (m.blockers.covering.length > 0) parts.push(`tapan: ${m.blockers.covering.join(', ')}`);
+  if (m.blockers.gatekeepers.length > 0) parts.push(`cierran paso: ${m.blockers.gatekeepers.join(', ')}`);
+  return parts.length > 0 ? ` (${parts.join('; ')})` : '';
+}
+
+/** "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks. */
+function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
+  const model = new LevelGrid(level);
+  const symbols = usesSymbols(level);
+  let stacks = stacksOf(model, level);
+  const width = String(plan.length).length;
+  return plan.map((move, i) => {
+    const code = stacks[move.from].slice(-1);
+    const box = boxOfCode(code);
+    const lifted = lift(stacks, move.from);
+    const height = lifted[move.drop].length;
+    const at = model.cellOf(move.drop);
+    const from = model.cellOf(move.from);
+    const target = model.steps[move.drop]
+      ? `zona ${grid[at.z][at.x]}`
+      : height > 0
+        ? 'encima de otra caja'
+        : 'suelo (aparcar)';
+    lifted[move.drop] += code;
+    stacks = lifted;
+    const what = `caja ${COLOR_NAMES[box.color]}${symbols ? ` ${SYMBOL_GLYPHS[box.symbol]}` : ''}`;
+    return `  ${String(i + 1).padStart(width)}. ${what} (${from.x},${from.z}) → ${target} (${at.x},${at.z})${height > 0 ? `, piso ${height + 1}` : ''}`;
+  });
+}
+
+function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: number; checks: TargetCheck[] }[], timings: boolean): string[] {
+  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'dific.'];
+  if (timings) head.push('ms');
+  const rows = measured.map(({ metrics: m, ms, checks }) => {
+    const row = [
+      String(m.order),
+      m.id,
+      `${m.width}×${m.depth}`,
+      String(m.boxes),
+      String(m.zones),
+      String(m.stackLimit),
+      movesText(m),
+      extraText(m),
+      String(m.mustMove),
+      String(m.blockers.count),
+      String(m.narrow.count),
+      pct(m.freeFloorPct),
+      String(m.ambiguous),
+      String(m.traps),
+      m.sortings === null ? '—' : String(m.sortings),
+      checks.length === 0 ? '—' : `${checks.every((c) => c.ok) ? 'OK' : 'NO'} ${checks.filter((c) => c.ok).length}/${checks.length}`,
+    ];
+    if (timings) row.push(ms.toFixed(0));
+    return row;
+  });
+  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const left = new Set([1]);
+  const line = (cells: string[]) => cells.map((c, i) => (left.has(i) ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join('  ').trimEnd();
+  return [
+    'Resumen',
+    line(head),
+    ...rows.map(line),
+    '',
+    'mov. = mínimo de movimientos de caja (≥ = cota inferior: la búsqueda exacta se cortó) · extra = mov. − oblig.',
+    'oblig. = cajas que deben moverse · bloq. = cajas que hay que apartar antes · estr. = casillas sin giro con carga',
+    'libre = % de casillas vacías al empezar · ambig. = cajas con varios destinos · tramp./repart. = niveles con símbolos',
+    'dific. = objetivos «dificultad:» del archivo que se cumplen · detalle y plan: npm run levels -- <nivel>',
+  ];
+}

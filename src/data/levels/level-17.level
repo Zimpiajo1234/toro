@@ -1,0 +1,18 @@
+# 17 · Torre de tres
+id: torre-de-tres
+limit: 3
+ventanas: norte 5-7, oeste 1-2
+
+  01234567890
+0 p.........p
+1 ...........
+2 .....a..<..
+3 ..1........
+4 .........2.
+5 H..........
+6 H......b.c.
+7 p..........
+
+1 = zona pila azul,amarillo,lavanda                     2 = zona menta
+a = pila azul,amarillo      b = caja lavanda            c = caja menta
+H = estantería 3 alturas

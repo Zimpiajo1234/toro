@@ -1,0 +1,20 @@
+# 8 · Una cosa lleva a otra
+id: una-cosa-lleva-a-otra
+limit: 1
+ventanas: norte 4-7, oeste 5-6
+
+  012345678901
+0 p.HH....HH.p
+1 ............
+2 ...12345....
+3 ......^.....
+4 ............
+5 .6.#####..a.
+6 .7..........
+7 ....b..c....
+8 .........d..
+
+1 = zona amarillo + caja menta                          2 3 = zona menta + caja coral
+4 5 = zona coral            6 7 = zona azul
+a = caja amarillo           b = caja azul               c = caja menta              d = caja azul
+H = estantería 3 alturas

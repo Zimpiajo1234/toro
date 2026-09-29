@@ -16,8 +16,9 @@ import { assignBoxes, criteriaOf, meets, sortableOf, usesSymbols, type Sortable 
 import { GAME_CONFIG } from '../config';
 
 /**
- * Parses and validates raw level JSON into a fully-defaulted LevelData.
- * Throws a descriptive Error on the first problem found, so authoring mistakes surface at load / test time.
+ * Parses and validates a raw level object (from a .level file via asciiLevel.parseLevel, or a legacy JSON level) into
+ * a fully-defaulted LevelData. Throws a descriptive Error on the first problem found, so authoring mistakes surface
+ * at load / test time (parseLevel re-words these in Spanish at the file position to fix).
  */
 export function validateLevel(raw: unknown, source = 'level'): LevelData {
   const fail = (msg: string): never => {
