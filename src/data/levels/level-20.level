@@ -1,0 +1,15 @@
+# 20 · Color o forma
+id: color-o-forma
+limit: 1
+ventanas: norte 3-5, oeste 2-3
+
+  012345678
+0 p........
+1 .1.2.3.4.
+2 ......d..
+3 ....b....
+4 ..c...a.<
+5 p........
+
+1 = zona menta         2 = zona ●             3 = zona amarillo      4 = zona ◆
+a = caja azul ●        b = caja menta ■       c = caja amarillo ▲    d = caja lavanda ◆

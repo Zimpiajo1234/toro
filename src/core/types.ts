@@ -52,12 +52,12 @@ export interface Vec2 {
 }
 
 /* ------------------------------------------------------------------ */
-/* Level data (authored as JSON in src/data/levels/*.json)             */
+/* Level data (authored as text in src/data/levels/*.level, docs/LEVELS.md; parsed + validated into LevelData) */
 /* ------------------------------------------------------------------ */
 
 /**
- * A box in the level JSON. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list
- * order (the first one on the floor, the next on top of it, …). There is no explicit height field.
+ * A box of a level. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list order (the
+ * first one on the floor, the next on top of it, …; a `.level` file writes it «pila azul,menta»). No height field.
  */
 export interface LevelBox {
   id: string;
@@ -84,7 +84,7 @@ export interface LevelZone {
   symbol?: SymbolId;
   x: number;
   z: number;
-  /** Stack this zone asks for, bottom → top. Omitted in JSON = one box (the classic rule). Needs `color`. */
+  /** Stack this zone asks for, bottom → top. Omitted = one box (the classic rule). Needs `color`. */
   recipe?: ColorId[];
 }
 
@@ -137,7 +137,7 @@ export interface LevelData {
     windows: LevelWindow[];
   };
   /**
-   * Tallest stack allowed (boxes per cell). Omitted in JSON: gameConfig `stack.maxHeight` when the level uses
+   * Tallest stack allowed (boxes per cell). Omitted in the raw level: gameConfig `stack.maxHeight` when the level uses
    * stacking (a recipe longer than 1 or a stacked start), else 1 — classic levels never stack.
    * validateLevel always fills it; hand-built LevelData without it counts as 1.
    */
