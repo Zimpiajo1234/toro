@@ -1,0 +1,30 @@
+{
+  "id": "color-o-forma",
+  "order": 20,
+  "name": "Color o forma",
+  "size": { "width": 9, "depth": 6 },
+  "forklift": { "x": 8, "z": 4, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "symbol": "circle", "x": 6, "z": 4 },
+    { "id": "b2", "color": "mint", "symbol": "square", "x": 4, "z": 3 },
+    { "id": "b3", "color": "yellow", "symbol": "triangle", "x": 2, "z": 4 },
+    { "id": "b4", "color": "lavender", "symbol": "diamond", "x": 6, "z": 2 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "mint", "x": 1, "z": 1 },
+    { "id": "z2", "symbol": "circle", "x": 3, "z": 1 },
+    { "id": "z3", "color": "yellow", "x": 5, "z": 1 },
+    { "id": "z4", "symbol": "diamond", "x": 7, "z": 1 }
+  ],
+  "shelves": [],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 5 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 3, "width": 3 },
+      { "wall": "west", "at": 2, "width": 2 }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "el-gran-reparto",
+  "order": 24,
+  "name": "El gran reparto",
+  "size": { "width": 12, "depth": 9 },
+  "forklift": { "x": 11, "z": 7, "heading": 270 },
+  "boxes": [
+    { "id": "b1", "color": "lavender", "symbol": "cross", "x": 9, "z": 7 },
+    { "id": "b2", "color": "blue", "symbol": "triangle", "x": 7, "z": 5 },
+    { "id": "b3", "color": "mint", "symbol": "triangle", "x": 4, "z": 6 },
+    { "id": "b4", "color": "yellow", "symbol": "diamond", "x": 9, "z": 5 },
+    { "id": "b5", "color": "coral", "symbol": "diamond", "x": 5, "z": 3 },
+    { "id": "b6", "color": "mint", "symbol": "circle", "x": 3, "z": 4 },
+    { "id": "b7", "color": "coral", "symbol": "square", "x": 7, "z": 3 },
+    { "id": "b8", "color": "lavender", "symbol": "triangle", "x": 5, "z": 5 }
+  ],
+  "zones": [
+    { "id": "z1", "symbol": "triangle", "x": 1, "z": 1 },
+    { "id": "z2", "color": "lavender", "symbol": "triangle", "x": 3, "z": 1 },
+    { "id": "z3", "color": "blue", "x": 5, "z": 1 },
+    { "id": "z4", "color": "mint", "symbol": "circle", "x": 7, "z": 1 },
+    { "id": "z5", "symbol": "diamond", "x": 9, "z": 1 },
+    { "id": "z6", "color": "yellow", "x": 1, "z": 3 },
+    { "id": "z7", "color": "coral", "symbol": "square", "x": 1, "z": 5 },
+    { "id": "z8", "symbol": "cross", "x": 1, "z": 7 }
+  ],
+  "shelves": [{ "x": 9, "z": 3, "w": 2, "d": 1 }],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 11, "z": 0 },
+      { "x": 0, "z": 8 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 3, "width": 3 },
+      { "wall": "north", "at": 7, "width": 2 },
+      { "wall": "west", "at": 3, "width": 3 }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 import { degToRad } from '../core/math';
-import type { BoxState, ColorId, ForkliftState, LevelData, ZoneState } from '../core/types';
+import { specificity, takesNext, type Sortable } from '../core/sorting';
+import type { BoxState, ForkliftState, LevelData, ZoneState } from '../core/types';
 import type { GameConfig } from '../config';
 import { circleRectContact, createContact, type CollisionWorld } from './collision';
 import type { LevelGrid } from './grid';
@@ -116,15 +117,17 @@ export class Interaction {
   }
 
   /**
-   * Cell a carried box of `color` would be dropped on. Candidates: the cell under the fork point and its 8
+   * Cell the carried `box` would be dropped on. Candidates: the cell under the fork point and its 8
    * neighbours that are in bounds, free (no shelf or plant; empty, or a stack with room — the box goes on top)
-   * and would not overlap the body by more than DROP_BODY_TOLERANCE. A zone within zoneMagnetRadius whose recipe
-   * takes this color next wins (nearest first);
-   * otherwise the nearest candidate (which may be a zone of another color when the forks are over it). If no cell
-   * passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
+   * and would not overlap the body by more than DROP_BODY_TOLERANCE. Zone magnet: among the zones within
+   * zoneMagnetRadius that would take this box next (core/sorting `takesNext`: an empty zone that accepts it, or a
+   * stack zone whose recipe asks for its color next), the most specific wins (color + symbol over a single
+   * criterion), then the nearest;
+   * otherwise the nearest candidate (which may be a zone that does not accept it when the forks are over it). If no
+   * cell passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
    * is used, so a drop in a snug corner still works. Returns false when nothing fits.
    */
-  findDrop(color: ColorId, out: DropChoice): boolean {
+  findDrop(box: Sortable, out: DropChoice): boolean {
     const f = this.forklift;
     const px = f.pos.x + Math.sin(f.heading) * this.reach;
     const pz = f.pos.z + Math.cos(f.heading) * this.reach;
@@ -135,6 +138,7 @@ export class Interaction {
     let nearestX = 0;
     let nearestZ = 0;
     let zoneIndex = -1;
+    let zoneRank = 0;
     let zoneSq = Infinity;
     let zoneX = 0;
     let zoneZ = 0;
@@ -168,11 +172,14 @@ export class Interaction {
           nearestX = x;
           nearestZ = z;
         }
-        // Zone magnet: only zones that need this color next pull the box off the aimed cell.
+        // Zone magnet: only zones that would take this box next pull it off the aimed cell; the most specific one
+        // first (it can only ever take this kind of box), then the nearest.
         const zi = this.grid.zoneAt(x, z);
-        if (zi < 0 || dSq > this.magnetSq || this.zones[zi].next !== color) continue;
-        if (dSq < zoneSq - TIE_EPSILON) {
+        if (zi < 0 || dSq > this.magnetSq || !takesNext(this.zones[zi], box)) continue;
+        const rank = specificity(this.zones[zi].accepts);
+        if (rank > zoneRank || (rank === zoneRank && dSq < zoneSq - TIE_EPSILON)) {
           zoneIndex = zi;
+          zoneRank = rank;
           zoneSq = dSq;
           zoneX = x;
           zoneZ = z;

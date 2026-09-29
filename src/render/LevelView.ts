@@ -1,15 +1,26 @@
 import { Box3, Color, Group, Mesh, MeshBasicMaterial, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
 import { degToRad } from '../core/math';
-import type { CellPos, ColorId, GameEvent, GameSnapshot, LevelData, ZoneState } from '../core/types';
+import { accepts, takesNext, usesSymbols } from '../core/sorting';
+import {
+  COLOR_IDS,
+  DEFAULT_SYMBOL,
+  type BoxState,
+  type CellPos,
+  type ColorId,
+  type GameEvent,
+  type GameSnapshot,
+  type LevelData,
+  type ZoneState,
+} from '../core/types';
 import type { Theme } from '../themes/types';
-import { buildBoxGeometry } from './builders/box';
+import { buildBoxGeometry, type LidMark } from './builders/box';
 import { addFloor } from './builders/floor';
 import { buildForkliftGeometry } from './builders/forklift';
 import { addPlant } from './builders/plant';
 import { addShelf } from './builders/shelf';
 import { buildWallGeometry, toWallLocal, wallLayouts } from './builders/walls';
-import { buildHaloGeometry, buildOutlineGeometry, buildRecipeGeometry, buildZoneGeometry } from './builders/zone';
+import { buildHaloGeometry, buildOutlineGeometry, buildRecipeGeometry, buildZoneGeometry, type ZoneMark } from './builders/zone';
 import type { FitBox } from './CameraRig';
 import { DIORAMA, ZONE, boxDims } from './dims';
 import { GLYPH_SYMMETRY } from './glyphs';
@@ -49,6 +60,11 @@ const CABIN_PROBE_Y = [0.72, 1.0] as const;
 /** Completed stack: each box glows in turn, bottom → top, starting once the last one has landed. */
 const STACK_GLOW_START = 0.05;
 const STACK_GLOW_STEP = 0.14;
+/**
+ * Sorting levels, while carrying a box no free zone takes: the occupied zones that accept it breathe this faintly
+ * (share of the full invitation), a quiet "swap" hint. Never red, never text.
+ */
+const SWAP_INVITE = 0.32;
 
 const _actorMin = new Vector3();
 const _actorMax = new Vector3();
@@ -72,12 +88,18 @@ export class LevelView {
   private readonly boxViews = new Map<string, BoxView>();
   private readonly boxList: BoxView[] = [];
   private readonly zoneViews = new Map<string, ZoneView>();
-  private readonly zoneBorders = new Map<string, Color>();
+  /** Zone border tone per color: the drop preview takes the carried box's on a zone that takes that box. */
+  private readonly borders = new Map<ColorId, Color>();
   private readonly zoneStates = new Map<string, ZoneState>();
   /** Last seen `satisfied` per stack zone (recipe of 2+), to glow a completed stack bottom → top. */
   private readonly stackSatisfied = new Map<string, boolean>();
   /** Stack levels: upper stacked boxes may ghost when they hide the forklift, a box or a zone. */
   private readonly stacking: boolean;
+  /**
+   * The level sorts by symbol (docs/SORTING.md): pads show the symbol they ask for (engraved) instead of their color's
+   * glyph, lids print their symbol large, and a carried box nobody free takes hints at a swap.
+   */
+  private readonly sorting: boolean;
   private readonly stackBox = new Box3();
   private readonly walls: WallView[] = [];
   private readonly shelves: ShelfView[] = [];
@@ -98,6 +120,8 @@ export class LevelView {
     this.boxHalf = dims.size / 2 - BOX_INSET;
     this.boxHeight = dims.height;
     this.stacking = (level.stackLimit ?? 1) > 1;
+    this.sorting = usesSymbols(level);
+    for (const c of COLOR_IDS) this.borders.set(c, new Color(theme.zones[c].border));
     const mats = createSharedMaterials(this.bag);
     // Glass gets its own copy so level-complete warmth can tint it (each wall clones its shafts').
     this.glassMaterial = this.bag.track(mats.unlit.clone());
@@ -149,21 +173,28 @@ export class LevelView {
     this.forklift.sync(f, dt, time);
     this.forklift.root.updateMatrixWorld(true);
 
-    let carriedColor: ColorId | null = null;
+    let carried: BoxState | null = null;
     const boxes = snapshot.boxes;
     const target = snapshot.hint.targetBoxId;
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
       const view = this.boxViews.get(box.id);
       if (!view) continue;
-      if (box.carried) carriedColor = box.color;
+      if (box.carried) carried = box;
       view.sync(box, this.forklift.anchor, box.id === target, dt);
     }
 
+    // Teach the goal without words: the zones that would take the carried box breathe. In a sorting level, when no
+    // free zone takes it, the occupied zones that accept it breathe very faintly instead: the box resting there could
+    // move on (a swap hint).
     const zones = snapshot.zones;
+    let anyTakes = false;
+    if (carried) for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], carried);
     for (let i = 0; i < zones.length; i++) {
       const zone = zones[i];
-      this.zoneViews.get(zone.id)?.sync(zone, carriedColor, time, dt);
+      const takes = carried !== null && takesNext(zone, carried);
+      const swap = carried !== null && this.sorting && !anyTakes && zone.stack.length > 0 && accepts(zone, carried);
+      this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? SWAP_INVITE : 0, takes, time, dt);
       const was = this.stackSatisfied.get(zone.id);
       if (was !== undefined && was !== zone.satisfied) {
         this.stackSatisfied.set(zone.id, zone.satisfied);
@@ -171,9 +202,10 @@ export class LevelView {
       }
     }
 
+    // The preview takes the carried box's zone tone when it would land on a zone that takes that box.
     const hint = snapshot.hint;
     const dropZone = hint.dropZoneId ? this.zoneStates.get(hint.dropZoneId) : undefined;
-    const match = dropZone && carriedColor !== null && carriedColor === dropZone.next ? (this.zoneBorders.get(dropZone.id) ?? null) : null;
+    const match = dropZone && carried && takesNext(dropZone, carried) ? (this.borders.get(carried.color) ?? null) : null;
     this.preview.sync(f.carrying ? hint.dropCell : null, match, dt, hint.dropLevel * this.boxHeight);
 
     this.updateShelves(snapshot, cameraYaw, dt);
@@ -392,16 +424,28 @@ export class LevelView {
     }
   }
 
+  /**
+   * What a pad shows in its middle. Levels that never name a symbol: its color's glyph, tone on tone (a colour-blind
+   * aid, as always). Sorting levels: the symbol the zone asks for, engraved, or nothing when it asks for none.
+   */
+  private zoneMark(zone: ZoneState): ZoneMark | null {
+    if (!this.sorting) return zone.color ? { shape: DEFAULT_SYMBOL[zone.color], style: 'glyph' } : null;
+    return zone.accepts.symbol ? { shape: zone.accepts.symbol, style: 'engraved' } : null;
+  }
+
   private buildZones(snapshot: GameSnapshot, theme: Theme, mats: SharedMaterials): void {
     const ring = this.bag.track(buildOutlineGeometry(ZONE.padHalf, 0.035, ZONE.padRadius));
     const halo = this.bag.track(buildHaloGeometry());
-    const padByColor = new Map<ColorId, BufferGeometry>();
+    const padByLook = new Map<string, BufferGeometry>();
     for (const zone of snapshot.zones) {
-      const palette = theme.zones[zone.color];
-      let pad = padByColor.get(zone.color);
+      // Pad color = the color criterion; a zone that asks for none gets the neutral pad.
+      const palette = zone.color ? theme.zones[zone.color] : theme.neutralZone;
+      const mark = this.zoneMark(zone);
+      const look = `${zone.color ?? 'neutral'}/${mark ? `${mark.style}:${mark.shape}` : 'plain'}`;
+      let pad = padByLook.get(look);
       if (!pad) {
-        pad = this.bag.track(buildZoneGeometry(palette, theme.glyphs[zone.color]));
-        padByColor.set(zone.color, pad);
+        pad = this.bag.track(buildZoneGeometry(palette, mark));
+        padByLook.set(look, pad);
       }
       const view = new ZoneView(
         zone,
@@ -413,19 +457,20 @@ export class LevelView {
       );
       this.zoneViews.set(zone.id, view);
       this.zoneStates.set(zone.id, zone);
-      this.zoneBorders.set(zone.id, new Color(palette.border));
-      if (zone.recipe.length > 1) {
+      // Stack recipes are color-only (validateLevel): every step names its color.
+      const recipe = zone.recipe.filter((c): c is ColorId => c !== null);
+      if (recipe.length > 1) {
         // The recipe, bottom → top: a cream base (shared material) and one mesh per step that can glow on its own.
         // Neutral cream of the walls: never a functional hue.
-        const recipe = buildRecipeGeometry(
-          zone.recipe.map((c) => theme.boxes[c].base),
+        const marker = buildRecipeGeometry(
+          recipe.map((c) => theme.boxes[c].base),
           theme.wall.base,
         );
-        const steps = recipe.steps.map(
-          (geo, i) => new Mesh(this.bag.track(geo), createGlowMaterial(this.bag, theme.zones[zone.recipe[i]].glow)),
+        const steps = marker.steps.map(
+          (geo, i) => new Mesh(this.bag.track(geo), createGlowMaterial(this.bag, theme.zones[recipe[i]].glow)),
         );
         for (const step of steps) step.receiveShadow = true;
-        view.addRecipe(this.mesh(recipe.base, mats.painted, false), steps);
+        view.addRecipe(this.mesh(marker.base, mats.painted, false), steps);
         this.stackSatisfied.set(zone.id, zone.satisfied);
       }
       this.root.add(view.group);
@@ -435,19 +480,20 @@ export class LevelView {
   private buildBoxes(snapshot: GameSnapshot, theme: Theme, config: GameConfig): void {
     const dims = boxDims(config);
     const geoByKey = new Map<string, BufferGeometry>();
+    // The lid shows the box's own symbol: the small tone-on-tone glyph, or printed large where symbols sort.
+    const mark: LidMark = this.sorting ? 'symbol' : 'glyph';
     for (const box of snapshot.boxes) {
-      const key = `${box.kind}:${box.color}`;
+      const key = `${box.kind}:${box.color}:${box.symbol}`;
       let geo = geoByKey.get(key);
       if (!geo) {
-        geo = this.bag.track(buildBoxGeometry(box.kind, theme.boxes[box.color], theme.glyphs[box.color], dims));
+        geo = this.bag.track(buildBoxGeometry(box.kind, theme.boxes[box.color], box.symbol, dims, mark));
         geoByKey.set(key, geo);
       }
-      const glyph = theme.glyphs[box.color];
       const view = new BoxView(
         box,
         geo,
         createGlowMaterial(this.bag, theme.zones[box.color].glow),
-        GLYPH_SYMMETRY[glyph],
+        GLYPH_SYMMETRY[box.symbol],
         dims.height,
         this.stacking,
       );

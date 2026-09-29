@@ -1,0 +1,30 @@
+{
+  "id": "justo-esa",
+  "order": 22,
+  "name": "Justo esa",
+  "size": { "width": 10, "depth": 7 },
+  "forklift": { "x": 8, "z": 6, "heading": 180 },
+  "boxes": [
+    { "id": "b1", "color": "blue", "symbol": "triangle", "x": 8, "z": 4 },
+    { "id": "b2", "color": "mint", "symbol": "circle", "x": 5, "z": 4 },
+    { "id": "b3", "color": "blue", "symbol": "circle", "x": 2, "z": 4 },
+    { "id": "b4", "color": "mint", "symbol": "triangle", "x": 5, "z": 6 }
+  ],
+  "zones": [
+    { "id": "z1", "color": "blue", "symbol": "circle", "x": 1, "z": 1 },
+    { "id": "z2", "color": "mint", "symbol": "triangle", "x": 3, "z": 1 },
+    { "id": "z3", "color": "blue", "symbol": "triangle", "x": 5, "z": 1 },
+    { "id": "z4", "color": "mint", "symbol": "circle", "x": 7, "z": 1 }
+  ],
+  "shelves": [{ "x": 9, "z": 0, "w": 1, "d": 2 }],
+  "decor": {
+    "plants": [
+      { "x": 0, "z": 0 },
+      { "x": 0, "z": 6 }
+    ],
+    "windows": [
+      { "wall": "north", "at": 2, "width": 2 },
+      { "wall": "north", "at": 5, "width": 3 }
+    ]
+  }
+}

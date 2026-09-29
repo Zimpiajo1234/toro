@@ -1,9 +1,11 @@
+import type { MatchKind } from '../core/sorting';
 import type { Rng } from './types';
 import { range, vary } from './random';
 import { filter, gain, osc, panner } from './nodes';
 import { NoteVoice, VoicePool } from './voices';
 import { BellInstrument } from './instruments/bell';
 import { PadInstrument } from './instruments/pad';
+import { WoodInstrument } from './instruments/wood';
 import { BAR_SEC } from './music/timing';
 
 interface NoiseHit {
@@ -36,14 +38,26 @@ const VARIANCE = 0.05;
 export const LEVEL_PITCH = 0.12;
 /** Gap between the notes of a completed stack's figure (s): it pushes that drop's chime back by (n − 1) gaps. */
 export const STACK_NOTE_GAP = 0.085;
+/**
+ * Strike levels of a zone's chime per kind of match: a lone bell or wood, or both softer for an exact match. `final`
+ * = the last zone's second strike a fourth below (on the bell when the match rings one, else on the wood). Balanced
+ * offline (dev/audio-preview) so no kind peaks above the classic color bell: the wood's attack is a touch sharper.
+ */
+export const CHIME_LEVELS: Readonly<Record<MatchKind, { bell: number; wood: number; final: number }>> = {
+  color: { bell: 0.75, wood: 0, final: 0.4 },
+  symbol: { bell: 0, wood: 0.64, final: 0.36 },
+  exact: { bell: 0.4, wood: 0.38, final: 0.3 },
+};
 
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
- * tone) plus the bell and a pad for the level-complete swell. Nothing is harsh, nothing sounds "wrong".
+ * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh, nothing sounds
+ * "wrong".
  */
 export class SfxPlayer {
   private readonly pool: VoicePool;
   private readonly bell: BellInstrument;
+  private readonly wood: WoodInstrument;
   private readonly swell: PadInstrument;
 
   constructor(
@@ -54,11 +68,12 @@ export class SfxPlayer {
   ) {
     this.pool = new VoicePool(28);
     this.bell = new BellInstrument(ctx, out, rng, 14);
+    this.wood = new WoodInstrument(ctx, out, noise, rng, 8);
     this.swell = new PadInstrument(ctx, out, rng, 2);
   }
 
   voiceCount(): number {
-    return this.pool.size + this.bell.activeVoices + this.swell.activeVoices;
+    return this.pool.size + this.bell.activeVoices + this.wood.activeVoices + this.swell.activeVoices;
   }
 
   /**
@@ -76,11 +91,18 @@ export class SfxPlayer {
   }
 
   /**
-   * Felt thump; a correct drop adds a warm chime at `chimeMidi`. The sub body is backed by its second
-   * harmonic and a short felt layer around 600 Hz, so the drop reads as clearly on laptop speakers as
-   * on headphones (where the sub alone would boom).
+   * Felt thump; a correct drop adds a warm chime at `chimeMidi` in the timbre of its `match` (see chime()). The sub
+   * body is backed by its second harmonic and a short felt layer around 600 Hz, so the drop reads as clearly on
+   * laptop speakers as on headphones (where the sub alone would boom).
    */
-  drop(t: number, chimeMidi: number | null, final = false, level = 0, stackNotes: readonly number[] | null = null): void {
+  drop(
+    t: number,
+    chimeMidi: number | null,
+    final = false,
+    level = 0,
+    stackNotes: readonly number[] | null = null,
+    match: MatchKind = 'color',
+  ): void {
     const r = this.rng;
     if (level <= 0) {
       this.toneHit(t, { type: 'sine', freq: vary(r, 118, VARIANCE), freqEnd: vary(r, 62, VARIANCE), glideSec: 0.12, peak: vary(r, 0.3, VARIANCE), attack: 0.004, tau: 0.09, lowpass: 400 });
@@ -96,14 +118,16 @@ export class SfxPlayer {
       this.noiseHit(t, { type: 'lowpass', freq: vary(r, 480 * k, VARIANCE), q: 0.6, peak: vary(r, 0.16, VARIANCE), attack: 0.003, tau: 0.03 });
     }
     if (chimeMidi === null) return;
-    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, stackNotes);
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, stackNotes, match);
   }
 
   /**
-   * A zone's warm chime at `t` (after a correct drop's knock, or on its own when lifting a wrong top box leaves the
-   * zone satisfied again). A completed stack first climbs through one soft note per box into it.
+   * A zone's chime at `t` (after a correct drop's knock, or on its own when lifting a wrong top box leaves the zone
+   * satisfied again). Its timbre says how the zone matched: by color the warm bell, by symbol a soft wooden marimba,
+   * an exact box both at once, each softer (CHIME_LEVELS). A completed stack first climbs through one soft note per
+   * box into it (stack zones are color-only).
    */
-  chime(t: number, chimeMidi: number, final = false, stackNotes: readonly number[] | null = null): void {
+  chime(t: number, chimeMidi: number, final = false, stackNotes: readonly number[] | null = null, match: MatchKind = 'color'): void {
     const r = this.rng;
     let at = t;
     if (stackNotes && stackNotes.length > 1) {
@@ -112,9 +136,13 @@ export class SfxPlayer {
         at += STACK_NOTE_GAP;
       }
     }
-    this.bell.strike(chimeMidi, at, vary(r, 0.75, VARIANCE));
+    const levels = CHIME_LEVELS[match] ?? CHIME_LEVELS.color;
+    if (levels.bell > 0) this.bell.strike(chimeMidi, at, vary(r, levels.bell, VARIANCE));
+    if (levels.wood > 0) this.wood.strike(chimeMidi, at, vary(r, levels.wood, VARIANCE));
     // The last zone adds a soft second strike a fourth below (the chord's fifth) for a fuller resolve.
-    if (final) this.bell.strike(chimeMidi - 5, at + 0.09, vary(r, 0.4, VARIANCE), { decay: 1.3 });
+    if (!final) return;
+    if (levels.bell > 0) this.bell.strike(chimeMidi - 5, at + 0.09, vary(r, levels.final, VARIANCE), { decay: 1.3 });
+    else this.wood.strike(chimeMidi - 5, at + 0.09, vary(r, levels.final, VARIANCE), { decay: 1.3 });
   }
 
   /** Barely-audible neutral tick (zone released, nothing to do). */
@@ -156,6 +184,7 @@ export class SfxPlayer {
     const now = this.ctx.currentTime;
     this.pool.releaseAll(now);
     this.bell.releaseAll();
+    this.wood.releaseAll();
     this.swell.releaseAll();
   }
 

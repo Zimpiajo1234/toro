@@ -404,7 +404,7 @@ describe('drop', () => {
       const forklift = { ...snap.forklift, pos: { x: -0.72, z: 0 }, heading: Math.PI / 2 };
       const zones: ZoneState[] = snap.zones.map((z) => ({ ...z }));
       const out = createDropChoice();
-      return new Interaction(lv, GAME_CONFIG, forklift, boxes, zones, grid, world).findDrop('blue', out) ? out : null;
+      return new Interaction(lv, GAME_CONFIG, forklift, boxes, zones, grid, world).findDrop(boxes[0], out) ? out : null;
     };
     expect(drop([])).toMatchObject({ x: 3, z: 2 });
     const bodyBack = -0.72 - F.bodyRadius;

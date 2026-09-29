@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry } from 'three';
+import { BufferAttribute, BufferGeometry, Path, Vector2 } from 'three';
 import type { GlyphShape, ZonePalette } from '../../themes/types';
 import { ZONE } from '../dims';
 import { GLYPH_YAW, glyphShape } from '../glyphs';
@@ -8,18 +8,46 @@ import { extrudedShapeGeometry, flatShapeGeometry, roundedRectPoints, roundedRec
 const TAPE_OUTER = 0.43;
 const TAPE_WIDTH = 0.045;
 const GLYPH_SIZE = 0.38;
+const ORIGIN = new Vector2();
 
 /**
- * Delivery zone pad (origin = cell center on the floor): slightly raised rounded square in `fill`,
- * edges and inset floor-tape ring in `border`, tone-on-tone glyph in the middle.
+ * Symbol engraved in the pad of a zone that asks for one (levels that sort by symbol): `size` across (the classic
+ * glyph is 0.38), cut through the pad top down to a floor at `floorY`. Clear of the tape ring (inner half 0.385) and
+ * covered by a box resting on the pad (half 0.39).
  */
-export function buildZoneGeometry(palette: ZonePalette, glyph: GlyphShape): BufferGeometry {
+export const ENGRAVE = { size: 0.6, floorY: 0.008 } as const;
+
+/**
+ * What a pad shows in its middle: the tone-on-tone glyph of its color (levels that never name a symbol) or the
+ * symbol the zone asks for, engraved.
+ */
+export interface ZoneMark {
+  shape: GlyphShape;
+  style: 'glyph' | 'engraved';
+}
+
+/**
+ * Delivery zone pad (origin = cell center on the floor): slightly raised rounded square in `fill`, edges and inset
+ * floor-tape ring in `border`, and in the middle either the tone-on-tone glyph or an engraved symbol (a real recess:
+ * a symbol-shaped hole through the pad top, its walls in `border`, over a floor in `engrave`), or nothing.
+ */
+export function buildZoneGeometry(palette: ZonePalette, mark: ZoneMark | null): BufferGeometry {
   const parts = new PartList();
-  const pad = extrudedShapeGeometry(roundedRectShape(ZONE.padHalf, ZONE.padHalf, ZONE.padRadius, 4), ZONE.padHeight, 0, 4);
+  const outline = roundedRectShape(ZONE.padHalf, ZONE.padHalf, ZONE.padRadius, 4);
+  const engraved = mark?.style === 'engraved' ? mark.shape : null;
+  if (engraved) {
+    // Turned like the placed glyphs (shape +Y is world −Z, so a shape-space turn by GLYPH_YAW is ry = GLYPH_YAW).
+    const hole = glyphShape(engraved, ENGRAVE.size)
+      .getPoints()
+      .map((p) => p.rotateAround(ORIGIN, GLYPH_YAW));
+    outline.holes.push(new Path(hole));
+  }
+  const pad = extrudedShapeGeometry(outline, ZONE.padHeight, 0, 4);
   parts.add(paintGroups(pad, [palette.fill, palette.border]), null);
   const top = ZONE.padHeight;
   parts.add(flatShapeGeometry(roundedRingShape(TAPE_OUTER, TAPE_WIDTH, ZONE.padRadius - 0.04, 4), top + 0.0015), palette.border);
-  parts.add(flatShapeGeometry(glyphShape(glyph, GLYPH_SIZE), top + 0.002), palette.glyph, { ry: GLYPH_YAW });
+  if (mark?.style === 'glyph') parts.add(flatShapeGeometry(glyphShape(mark.shape, GLYPH_SIZE), top + 0.002), palette.glyph, { ry: GLYPH_YAW });
+  if (engraved) parts.add(flatShapeGeometry(glyphShape(engraved, ENGRAVE.size), ENGRAVE.floorY), palette.engrave, { ry: GLYPH_YAW });
   return parts.build();
 }
 

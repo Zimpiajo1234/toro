@@ -1,10 +1,15 @@
-import { Euler, Mesh, Scene, Vector3, type MeshStandardMaterial, type Object3D } from 'three';
+import { Color, Euler, Mesh, Scene, Vector3, type BufferGeometry, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
-import { cellToWorld, type GameSnapshot, type LevelData } from '../core/types';
+import { accepts, criteriaOf, symbolOf } from '../core/sorting';
+import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type ZoneState } from '../core/types';
+import { LEVELS } from '../data/levels';
 import { validateLevel } from '../data/validateLevel';
 import { defaultTheme } from '../themes/default';
 import { GameState } from '../logic/GameState';
+import { buildBoxGeometry } from './builders/box';
+import { buildZoneGeometry } from './builders/zone';
+import { boxDims } from './dims';
 import { LevelView } from './LevelView';
 import { DROP_GLIDE_SEC } from './views/BoxView';
 
@@ -44,8 +49,8 @@ function snapshot(level: LevelData = LEVEL): GameSnapshot {
   return {
     level,
     forklift: { pos: cellToWorld(level.forklift, size), heading: Math.PI / 2, speed: 0, forkLift: 0, forkHeight: 0, carrying: null, wheelSpin: 0, steer: 0 },
-    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, correct: false })),
-    zones: level.zones.map((z) => ({ id: z.id, color: z.color, cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color], stack: [], occupiedBy: null, satisfied: false, next: z.color })),
+    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, symbol: symbolOf(b), kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, correct: false })),
+    zones: level.zones.map((z) => ({ id: z.id, color: z.color ?? null, accepts: criteriaOf(z), cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color ?? null], stack: [], occupiedBy: null, satisfied: false, next: z.color ?? null })),
     hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0 },
     completed: false,
     progress: { satisfied: 0, total: level.zones.length },
@@ -417,5 +422,195 @@ describe('LevelView: stacks', () => {
     const material = (boxGroup(view, 'b1').children[0] as Mesh).material as MeshStandardMaterial;
     expect(material.transparent).toBe(false);
     view.dispose();
+  });
+});
+
+describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
+  const SAMPLE = LEVELS.find((l) => l.id === 'la-muestra')!;
+  const zoneGroup = (view: LevelView, id: string) => view.root.children.find((c) => c.userData.zoneId === id)!;
+  const pad = (view: LevelView, id: string) => zoneGroup(view, id).children[1] as Mesh<BufferGeometry, MeshStandardMaterial>;
+  const lid = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Mesh<BufferGeometry, MeshStandardMaterial>;
+  /** The geometry has vertices painted `hex` (vertex colors are linear, like three's Color). */
+  const painted = (geo: BufferGeometry, hex: string) => {
+    const c = new Color(hex);
+    const col = geo.getAttribute('color');
+    for (let i = 0; i < col.count; i++)
+      if (Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4) return true;
+    return false;
+  };
+  const samePositions = (a: BufferGeometry, b: BufferGeometry) => {
+    const pa = a.getAttribute('position').array;
+    const pb = b.getAttribute('position').array;
+    return pa.length === pb.length && pa.every((v, i) => Math.abs(v - pb[i]) < 1e-6);
+  };
+  const zoneOf = (snap: GameSnapshot, color: string | undefined, symbol: string | undefined, nth = 0) =>
+    snap.zones.filter((z) => z.accepts.color === color && z.accepts.symbol === symbol)[nth];
+  const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
+  /** Hand-driven snapshot edits (the view only reads it): rest `box` on `zone`, or lift it onto the forks. */
+  const rest = (box: BoxState, zone: ZoneState) => {
+    Object.assign(box, { carried: false, cell: { ...zone.cell }, pos: { ...zone.pos }, zoneId: zone.id, correct: accepts(zone, box) });
+    Object.assign(zone, { stack: [box.id], occupiedBy: box.id, satisfied: accepts(zone, box), next: null });
+  };
+  const carry = (snap: GameSnapshot, box: BoxState) => {
+    Object.assign(box, { carried: true, cell: null, zoneId: null, correct: false });
+    snap.forklift.carrying = box.id;
+    snap.forklift.forkLift = 1;
+  };
+  /** Highest pad glow of each zone over `seconds` (breathing peaks). */
+  const peakGlow = (view: LevelView, snap: GameSnapshot, seconds: number) => {
+    const peak = new Map<string, number>();
+    for (let i = 0; i < Math.round(seconds * 60); i++) {
+      view.update(snap, 1 / 60, i / 60, Math.PI / 4, 0);
+      for (const z of snap.zones) peak.set(z.id, Math.max(peak.get(z.id) ?? 0, pad(view, z.id).material.emissiveIntensity));
+    }
+    return peak;
+  };
+
+  it('pads read without text: color criterion = pad color (neutral when none), symbol criterion = a large engraving', () => {
+    const snap = new GameState(SAMPLE).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const anyTriangle = zoneOf(snap, undefined, 'triangle');
+    const anyBlue = zoneOf(snap, 'blue', undefined);
+    const exact = zoneOf(snap, 'blue', 'square');
+    const blue = defaultTheme.zones.blue;
+    const neutral = defaultTheme.neutralZone;
+    // "Any ▲": neutral cream pad, ▲ engraved (its floor in the engrave tone), no color glyph.
+    expect(painted(pad(view, anyTriangle.id).geometry, neutral.fill)).toBe(true);
+    expect(painted(pad(view, anyTriangle.id).geometry, neutral.engrave)).toBe(true);
+    expect(painted(pad(view, anyTriangle.id).geometry, blue.fill)).toBe(false);
+    expect(samePositions(pad(view, anyTriangle.id).geometry, buildZoneGeometry(neutral, { shape: 'triangle', style: 'engraved' }))).toBe(true);
+    // "Any blue": the blue pad and nothing in the middle (no symbol asked, so none drawn: not even the old glyph).
+    expect(painted(pad(view, anyBlue.id).geometry, blue.fill)).toBe(true);
+    expect(painted(pad(view, anyBlue.id).geometry, blue.glyph)).toBe(false);
+    expect(painted(pad(view, anyBlue.id).geometry, blue.engrave)).toBe(false);
+    expect(samePositions(pad(view, anyBlue.id).geometry, buildZoneGeometry(blue, null))).toBe(true);
+    // "Blue ■": both.
+    expect(samePositions(pad(view, exact.id).geometry, buildZoneGeometry(blue, { shape: 'square', style: 'engraved' }))).toBe(true);
+    expect(painted(pad(view, exact.id).geometry, blue.engrave)).toBe(true);
+    view.dispose();
+  });
+
+  it('classic levels keep the tone-on-tone glyph of their color on every pad, and the small lid glyph', () => {
+    for (const level of [LEVEL, ...LEVELS.slice(0, 18)]) {
+      const snap = new GameState(level).getSnapshot();
+      const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+      for (const z of snap.zones) {
+        const palette = defaultTheme.zones[z.color!];
+        expect(samePositions(pad(view, z.id).geometry, buildZoneGeometry(palette, { shape: defaultTheme.glyphs[z.color!], style: 'glyph' }))).toBe(true);
+        expect(painted(pad(view, z.id).geometry, palette.glyph)).toBe(true);
+      }
+      const dims = boxDims(GAME_CONFIG);
+      for (const b of snap.boxes) {
+        const classic = buildBoxGeometry(b.kind, defaultTheme.boxes[b.color], defaultTheme.glyphs[b.color], dims);
+        expect(samePositions(lid(view, b.id).geometry, classic), `${level.id} ${b.id}`).toBe(true);
+      }
+      view.dispose();
+    }
+  });
+
+  it('lids print the box’s own symbol, larger and deeper, where symbols sort', () => {
+    const snap = new GameState(SAMPLE).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const dims = boxDims(GAME_CONFIG);
+    for (const b of snap.boxes) {
+      const palette = defaultTheme.boxes[b.color];
+      expect(samePositions(lid(view, b.id).geometry, buildBoxGeometry(b.kind, palette, b.symbol, dims, 'symbol')), b.id).toBe(true);
+      expect(painted(lid(view, b.id).geometry, palette.ink)).toBe(true);
+      expect(painted(lid(view, b.id).geometry, palette.glyph)).toBe(false);
+    }
+    // Blue ▲ and blue ■ share a color, not a lid.
+    const tri = boxOf(snap, 'blue', 'triangle');
+    const sq = boxOf(snap, 'blue', 'square');
+    expect(lid(view, tri.id).geometry).not.toBe(lid(view, sq.id).geometry);
+    view.dispose();
+  });
+
+  it('while carrying, the free zones that accept the box breathe; the others stay still', () => {
+    const snap = new GameState(SAMPLE).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    carry(snap, boxOf(snap, 'blue', 'triangle'));
+    const peak = peakGlow(view, snap, 3);
+    for (const id of [zoneOf(snap, undefined, 'triangle', 0).id, zoneOf(snap, undefined, 'triangle', 1).id, zoneOf(snap, 'blue', undefined).id])
+      expect(peak.get(id), id).toBeGreaterThan(0.1);
+    expect(peak.get(zoneOf(snap, 'blue', 'square').id)).toBeLessThan(0.005);
+    view.dispose();
+  });
+
+  it('with no free zone for the carried box, the occupied zones that accept it breathe very faintly (a swap hint)', () => {
+    // The trap of the sample: blue ▲ in "any blue", blue ■ and mint ▲ home, blue ● on the forks.
+    const snap = new GameState(SAMPLE).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const anyBlue = zoneOf(snap, 'blue', undefined);
+    rest(boxOf(snap, 'blue', 'triangle'), anyBlue);
+    rest(boxOf(snap, 'blue', 'square'), zoneOf(snap, 'blue', 'square'));
+    rest(boxOf(snap, 'mint', 'triangle'), zoneOf(snap, undefined, 'triangle', 0));
+    step(view, snap, 3); // their celebrations settle
+    const settled = pad(view, anyBlue.id).material.emissiveIntensity;
+    carry(snap, boxOf(snap, 'blue', 'circle'));
+    const peak = peakGlow(view, snap, 3);
+    const lift = peak.get(anyBlue.id)! - settled;
+    expect(lift).toBeGreaterThan(0.02);
+    expect(lift).toBeLessThan(0.07); // a full invitation reaches ≈ 0.17
+    // The free ▲ zone does not accept blue ●: still.
+    expect(peak.get(zoneOf(snap, undefined, 'triangle', 1).id)).toBeLessThan(0.005);
+    // Blue ▲ moved on to that ▲ zone: "any blue" is free again and invites blue ● fully (once its old glow is gone).
+    rest(boxOf(snap, 'blue', 'triangle'), zoneOf(snap, undefined, 'triangle', 1));
+    Object.assign(anyBlue, { stack: [], occupiedBy: null, satisfied: false, next: 'blue' });
+    step(view, snap, 3);
+    expect(peakGlow(view, snap, 1).get(anyBlue.id)).toBeGreaterThan(0.1);
+    view.dispose();
+  });
+
+  it('classic levels never show the swap hint', () => {
+    // Blue box carried, its only zone taken by the mint box: nothing breathes (as before the sorting chapter).
+    const snap = snapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const [blueZone] = snap.zones;
+    const mint = snap.boxes[1];
+    Object.assign(mint, { cell: { ...blueZone.cell }, pos: { ...blueZone.pos }, zoneId: blueZone.id });
+    Object.assign(blueZone, { stack: [mint.id], occupiedBy: mint.id, satisfied: false, next: null });
+    carry(snap, snap.boxes[0]);
+    const peak = peakGlow(view, snap, 3);
+    expect(peak.get(blueZone.id)).toBeLessThan(0.005);
+    view.dispose();
+  });
+
+  it('tints the drop preview only when it would land on a zone that takes the carried box', () => {
+    const snap = new GameState(SAMPLE).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const preview = view.root.children.find((c) => c.renderOrder === 2) as Mesh<BufferGeometry, MeshBasicMaterial>;
+    const tri = boxOf(snap, 'blue', 'triangle');
+    carry(snap, tri);
+    const aim = (zone: ZoneState) => {
+      snap.hint.dropCell = { ...zone.cell };
+      snap.hint.dropZoneId = zone.id;
+      step(view, snap, 1);
+      return preview.material.color.clone();
+    };
+    const blueBorder = new Color(defaultTheme.zones.blue.border);
+    const neutral = new Color(defaultTheme.floor.edge);
+    // "Any ▲" (a neutral pad) takes blue ▲: the preview takes the box's color tone.
+    const onTriangle = aim(zoneOf(snap, undefined, 'triangle'));
+    expect(Math.abs(onTriangle.r - blueBorder.r) + Math.abs(onTriangle.g - blueBorder.g) + Math.abs(onTriangle.b - blueBorder.b)).toBeLessThan(1e-3);
+    // "Blue ■" is blue but does not take blue ▲: neutral, never red.
+    const onExact = aim(zoneOf(snap, 'blue', 'square'));
+    expect(Math.abs(onExact.r - neutral.r) + Math.abs(onExact.g - neutral.g) + Math.abs(onExact.b - neutral.b)).toBeLessThan(1e-3);
+    view.dispose();
+  });
+
+  it('stays compact and releases everything on dispose', () => {
+    const snap = new GameState(LEVELS.find((l) => l.id === 'el-gran-reparto')!).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    // One mesh per pad (the engraving is part of it), one per box, as in the classic levels.
+    const classic = new LevelView(new GameState(LEVELS[11]).getSnapshot(), defaultTheme, GAME_CONFIG, Math.PI / 4);
+    expect(meshCount(view.root)).toBeLessThanOrEqual(meshCount(classic.root) + 2);
+    classic.dispose();
+    const geometries = new Set<BufferGeometry>();
+    for (const z of snap.zones) geometries.add(pad(view, z.id).geometry);
+    for (const b of snap.boxes) geometries.add(lid(view, b.id).geometry);
+    let disposed = 0;
+    for (const g of geometries) g.addEventListener('dispose', () => disposed++);
+    view.dispose();
+    expect(disposed).toBe(geometries.size);
   });
 });

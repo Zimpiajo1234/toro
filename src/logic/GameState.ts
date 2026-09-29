@@ -10,6 +10,7 @@ import {
   type Vec2,
   type ZoneState,
 } from '../core/types';
+import { criteriaOf, fitsLevel, symbolOf } from '../core/sorting';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
 import { forkRiseRate } from './forkRise';
@@ -73,10 +74,11 @@ export class GameState {
 
     const zones: ZoneState[] = level.zones.map((z) => ({
       id: z.id,
-      color: z.color,
+      color: z.color ?? null,
+      accepts: criteriaOf(z),
       cell: { x: z.x, z: z.z },
       pos: cellToWorld(z, size),
-      recipe: z.recipe ? [...z.recipe] : [z.color],
+      recipe: z.recipe ? [...z.recipe] : [z.color ?? null],
       stack: [],
       occupiedBy: null,
       satisfied: false,
@@ -90,6 +92,7 @@ export class GameState {
       return {
         id: b.id,
         color: b.color,
+        symbol: symbolOf(b),
         kind: b.kind ?? 'standard',
         pos: cellToWorld(b, size),
         cell: { x: b.x, z: b.z },
@@ -188,7 +191,7 @@ export class GameState {
   private act(): void {
     if (this.carriedIndex >= 0) {
       const box = this.snapshot.boxes[this.carriedIndex];
-      if (this.interaction.findDrop(box.color, this.drop)) this.dropCarried(this.drop);
+      if (this.interaction.findDrop(box, this.drop)) this.dropCarried(this.drop);
       else this.emit({ type: 'actionIdle', carrying: true });
       return;
     }
@@ -369,7 +372,7 @@ export class GameState {
       return;
     }
     const drop = this.drop;
-    if (!this.interaction.findDrop(snap.boxes[this.carriedIndex].color, drop)) {
+    if (!this.interaction.findDrop(snap.boxes[this.carriedIndex], drop)) {
       hint.dropCell = null;
       hint.dropZoneId = null;
       return;
@@ -382,8 +385,9 @@ export class GameState {
   }
 
   /**
-   * Zone state derived from its stack: satisfied iff the stack's colors equal the recipe; `next` = the color it
-   * takes next while the stack is a correct, unfinished prefix. Boxes on it are `correct` up to the first mismatch.
+   * Zone state derived from its stack: satisfied iff it holds exactly what it asks for (a bottom box it accepts, then
+   * its recipe's colors: core/sorting `fitsLevel`); `next` = the color it takes next while the stack is a correct,
+   * unfinished prefix. Boxes on it are `correct` up to the first box that does not fit.
    */
   private refreshZone(zone: ZoneState): void {
     const boxes = this.snapshot.boxes;
@@ -392,7 +396,7 @@ export class GameState {
     for (let i = 0; i < zone.stack.length; i++) {
       const box = boxes[this.boxIndex.get(zone.stack[i]) ?? -1];
       if (!box) continue;
-      prefix = prefix && i < recipe.length && recipe[i] === box.color;
+      prefix = prefix && fitsLevel(zone, i, box);
       box.correct = prefix;
     }
     const n = zone.stack.length;

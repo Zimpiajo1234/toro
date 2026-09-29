@@ -72,11 +72,23 @@ Cualquier caja apoyada admite otra encima, hasta `stackLimit` por nivel (máx. `
 pila de destino si cabe. Una zona con `recipe` (colores de abajo arriba) se cumple cuando su pila coincide
 exactamente; la receta se dibuja en la zona como una mini pila de escalones de color. Reglas completas: [docs/STACKING.md](docs/STACKING.md).
 
+## Clasificar por color y símbolo (niveles 19–24)
+
+Cada caja lleva un color y un símbolo (● ▲ ■ ◆ ✚) en la tapa. Cada zona pide un color (almohadilla de ese color),
+un símbolo (grabado grande sobre una almohadilla neutra) o los dos (esa caja exacta). Cuenta cualquier zona que
+acepte la caja; si otra se queda sin sitio, mueve la primera: mientras llevas una caja respiran las zonas libres que
+la aceptan y, si no queda ninguna, respiran muy suave las ocupadas que la aceptarían. Sin teclas nuevas. Encajar por
+color suena a campana, por símbolo a madera y la exacta a las dos. El nivel 23 («La muestra») reúne los tres tipos y
+la trampa clásica. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
+
 ## Ampliar
 
 - **Nuevo nivel:** añadir `src/data/levels/level-XX.json` (esquema `LevelData`, validado al cargar y en tests).
   Pilas: `"recipe": ["blue", "mint"]` en una zona (su `color` = el primero); cajas con la misma `x, z` empiezan
   apiladas en el orden de la lista (la primera en el suelo); `"stackLimit"` opcional.
+  Símbolos: `"symbol": "triangle"` en una caja (sin él lleva el de su color: azul ●, menta ▲, amarillo ■, coral ◆,
+  lavanda ✚) y en una zona `"color"`, `"symbol"` o ambos (al menos uno). Un nivel que nombra algún símbolo no apila,
+  tiene tantas cajas como zonas y al menos un reparto completo (lo comprueba `validateLevel`).
 - **Nuevo tema visual:** crear `src/themes/<id>.ts` que exporte un `Theme`, añadirlo al mapa `THEMES` de `themes/index.ts` y poner `"theme": "<id>"` en el nivel. El tema cubre la escena 3D, el fondo y los tokens de la UI; un id sin registrar hace fallar `src/integration/themes.test.ts`.
 - **Nuevo tipo de caja:** añadir el id a `BOX_KINDS` (`core/types.ts`) y su constructor de malla en el registro de cajas de `render/`.
 - **Ranking local:** `ProgressStore.getRanking(levelId)` ya guarda el top‑5 por nivel.

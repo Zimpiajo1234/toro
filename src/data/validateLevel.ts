@@ -1,13 +1,18 @@
 import {
   BOX_KINDS,
   COLOR_IDS,
+  SYMBOL_IDS,
   cellKey,
   type BoxKind,
   type ColorId,
+  type LevelBox,
   type LevelData,
   type LevelShelf,
+  type LevelZone,
+  type SymbolId,
   type WallSide,
 } from '../core/types';
+import { assignBoxes, criteriaOf, meets, sortableOf, usesSymbols, type Sortable } from '../core/sorting';
 import { GAME_CONFIG } from '../config';
 
 /**
@@ -30,6 +35,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     v === undefined ? [] : Array.isArray(v) ? v : fail(`${what} must be an array`);
   const color = (v: unknown, what: string): ColorId =>
     (COLOR_IDS as readonly string[]).includes(v as string) ? (v as ColorId) : fail(`${what} has unknown color "${String(v)}"`);
+  const symbol = (v: unknown, what: string): SymbolId =>
+    (SYMBOL_IDS as readonly string[]).includes(v as string) ? (v as SymbolId) : fail(`${what} has unknown symbol "${String(v)}"`);
 
   const r = obj(raw, 'level');
   const id = str(r.id, 'id');
@@ -99,24 +106,28 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   if (!inBounds(forklift.x, forklift.z)) fail('forklift starts out of bounds');
   if (blocked.has(cellKey(forklift))) fail('forklift starts inside an obstacle');
 
-  // Zones
+  // Zones: each declares what it accepts (a color, a symbol, or both) and optionally a color recipe to stack.
   const zoneIds = new Set<string>();
-  const zoneCells = new Map<string, ColorId[]>();
-  const zones = arr(r.zones, 'zones').map((z, i) => {
+  const zoneCells = new Set<string>();
+  const zones: LevelZone[] = arr(r.zones, 'zones').map((z, i) => {
     const o = obj(z, `zones[${i}]`);
-    const zoneColor = color(o.color, `zones[${i}]`);
-    const recipe =
-      o.recipe === undefined
-        ? [zoneColor]
-        : arr(o.recipe, `zones[${i}].recipe`).map((c, j) => color(c, `zones[${i}].recipe[${j}]`));
-    if (recipe.length === 0) fail(`zones[${i}].recipe must not be empty`);
-    if (recipe[0] !== zoneColor) fail(`zones[${i}].color must equal recipe[0] (the bottom box)`);
-    const zone = {
+    const zoneColor = o.color === undefined ? undefined : color(o.color, `zones[${i}]`);
+    const zoneSymbol = o.symbol === undefined ? undefined : symbol(o.symbol, `zones[${i}]`);
+    if (zoneColor === undefined && zoneSymbol === undefined) fail(`zones[${i}] must accept something: give it a color, a symbol or both`);
+    let recipe: ColorId[] | undefined;
+    if (o.recipe !== undefined) {
+      recipe = arr(o.recipe, `zones[${i}].recipe`).map((c, j) => color(c, `zones[${i}].recipe[${j}]`));
+      if (recipe.length === 0) fail(`zones[${i}].recipe must not be empty`);
+      if (recipe[0] !== zoneColor) fail(`zones[${i}].color must equal recipe[0] (the bottom box)`);
+      if (zoneSymbol !== undefined && recipe.length > 1) fail(`zones[${i}] asks for a symbol and a stack: recipes are color-only`);
+    }
+    const zone: LevelZone = {
       id: str(o.id, `zones[${i}].id`),
-      color: zoneColor,
+      ...(zoneColor === undefined ? {} : { color: zoneColor }),
+      ...(zoneSymbol === undefined ? {} : { symbol: zoneSymbol }),
       x: int(o.x, `zones[${i}].x`),
       z: int(o.z, `zones[${i}].z`),
-      ...(o.recipe === undefined ? {} : { recipe }),
+      ...(recipe === undefined ? {} : { recipe }),
     };
     if (zoneIds.has(zone.id)) fail(`duplicate zone id "${zone.id}"`);
     zoneIds.add(zone.id);
@@ -125,15 +136,15 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (blocked.has(k)) fail(`zone "${zone.id}" is inside an obstacle`);
     if (zoneCells.has(k)) fail(`two zones share cell ${k}`);
     if (k === cellKey(forklift)) fail(`zone "${zone.id}" is under the forklift start`);
-    zoneCells.set(k, recipe);
+    zoneCells.add(k);
     return zone;
   });
   if (zones.length === 0) fail('a level needs at least one zone');
 
   // Boxes. Several boxes on one cell form a stack, bottom → top in list order.
   const boxIds = new Set<string>();
-  const stacks = new Map<string, ColorId[]>();
-  const boxes = arr(r.boxes, 'boxes').map((b, i) => {
+  const stacks = new Map<string, Sortable[]>();
+  const boxes: LevelBox[] = arr(r.boxes, 'boxes').map((b, i) => {
     const o = obj(b, `boxes[${i}]`);
     const kind: BoxKind =
       o.kind === undefined
@@ -141,7 +152,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
         : (BOX_KINDS as readonly string[]).includes(o.kind as string)
           ? (o.kind as BoxKind)
           : fail(`boxes[${i}] has unknown kind "${String(o.kind)}"`);
-    const box = { id: str(o.id, `boxes[${i}].id`), color: color(o.color, `boxes[${i}]`), x: int(o.x, `boxes[${i}].x`), z: int(o.z, `boxes[${i}].z`), kind };
+    const box: LevelBox = {
+      id: str(o.id, `boxes[${i}].id`),
+      color: color(o.color, `boxes[${i}]`),
+      ...(o.symbol === undefined ? {} : { symbol: symbol(o.symbol, `boxes[${i}]`) }),
+      x: int(o.x, `boxes[${i}].x`),
+      z: int(o.z, `boxes[${i}].z`),
+      kind,
+    };
     if (boxIds.has(box.id)) fail(`duplicate box id "${box.id}"`);
     boxIds.add(box.id);
     if (!inBounds(box.x, box.z)) fail(`box "${box.id}" out of bounds`);
@@ -149,13 +167,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (blocked.has(k)) fail(`box "${box.id}" is inside an obstacle`);
     if (k === cellKey(forklift)) fail(`box "${box.id}" is under the forklift start`);
     const stack = stacks.get(k);
-    if (stack) stack.push(box.color);
-    else stacks.set(k, [box.color]);
+    if (stack) stack.push(sortableOf(box));
+    else stacks.set(k, [sortableOf(box)]);
     return box;
   });
 
   // Stack limit: explicit, else the global max when the level uses stacking at all, else 1 (classic levels).
-  const tallestRecipe = Math.max(...[...zoneCells.values()].map((rec) => rec.length));
+  const recipeOf = (zone: LevelZone): readonly (ColorId | undefined)[] => zone.recipe ?? [zone.color];
+  const tallestRecipe = Math.max(...zones.map((zone) => recipeOf(zone).length));
   const tallestStart = Math.max(0, ...[...stacks.values()].map((st) => st.length));
   const stacking = tallestRecipe > 1 || tallestStart > 1;
   const stackLimit =
@@ -167,16 +186,32 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (st.length > stackLimit) fail(stackLimit === 1 ? `two boxes share cell ${k}` : `stack at ${k} is taller than stackLimit ${stackLimit}`);
   }
 
-  // Box colors must be exactly the colors the recipes ask for (as a multiset).
-  const count = new Map<ColorId, number>();
-  for (const b of boxes) count.set(b.color, (count.get(b.color) ?? 0) + 1);
-  for (const rec of zoneCells.values()) for (const c of rec) count.set(c, (count.get(c) ?? 0) - 1);
-  for (const [c, n] of count) if (n !== 0) fail(`color "${c}" has ${n > 0 ? 'more boxes than zones' : 'more zones than boxes'}`);
+  if (usesSymbols({ boxes, zones })) {
+    // Sorting by symbol (docs/SORTING.md): not combined with stacks yet, one box per zone, and some complete sorting
+    // box → accepting zone must exist (ambiguous boxes are fine: several zones may accept the same box).
+    if (stacking || stackLimit > 1) fail('a level that sorts by symbol does not stack yet: stackLimit 1, no recipes, no stacked starts');
+    if (boxes.length !== zones.length)
+      fail(`a level that sorts by symbol needs one box per zone (${boxes.length} boxes, ${zones.length} zones)`);
+    const assignment = assignBoxes(boxes.map(sortableOf), zones.map(criteriaOf));
+    const stranded = assignment.indexOf(-1);
+    if (stranded >= 0) fail(`no complete sorting exists: box "${boxes[stranded].id}" is always left without a zone`);
+  } else {
+    // Box colors must be exactly the colors the recipes ask for (as a multiset).
+    const count = new Map<ColorId, number>();
+    for (const b of boxes) count.set(b.color, (count.get(b.color) ?? 0) + 1);
+    for (const zone of zones) for (const c of recipeOf(zone)) if (c !== undefined) count.set(c, (count.get(c) ?? 0) - 1);
+    for (const [c, n] of count) if (n !== 0) fail(`color "${c}" has ${n > 0 ? 'more boxes than zones' : 'more zones than boxes'}`);
+  }
 
-  // Must not start solved: every zone's stack equal to its recipe.
-  const solved = [...zoneCells].every(([k, rec]) => {
-    const st = stacks.get(k);
-    return st !== undefined && st.length === rec.length && st.every((c, i) => c === rec[i]);
+  // Must not start solved: every zone holding exactly what it asks for (an accepted bottom box, then its recipe).
+  const solved = zones.every((zone) => {
+    const recipe = recipeOf(zone);
+    const st = stacks.get(cellKey(zone));
+    return (
+      st !== undefined &&
+      st.length === recipe.length &&
+      st.every((box, i) => (i === 0 ? meets(criteriaOf(zone), box) : box.color === recipe[i]))
+    );
   });
   if (solved) fail('level starts already solved');
 

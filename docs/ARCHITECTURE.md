@@ -16,7 +16,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts` | shared | Contracts, helpers, tiny external store |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers) |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level JSON schema + validation |
@@ -92,8 +92,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
     `pickupAngleDeg` of forward; nearest wins. Emits `boxPicked` (+ `zoneReleased` if it was satisfying a zone).
   - Carrying → drop. Candidate cells: the cell under the fork point and its 8 neighbours. Valid = in bounds,
     not shelf/plant, no resting box, and the box square would not overlap the forklift body circle by more than
-    ~0.05. **Zone magnet:** a zone whose `next` is the carried box's colour (classic: a free zone of that colour)
-    whose centre is within `zoneMagnetRadius` of the fork point wins (nearest first). Other zones never pull; the
+    ~0.05. **Zone magnet:** a zone that would take the carried box next (`core/sorting` `takesNext`: an empty zone
+    that accepts it, or a stack zone whose recipe asks for its colour next; classic: a free zone of that colour)
+    whose centre is within `zoneMagnetRadius` of the fork point wins: the most specific first (colour + symbol over
+    one criterion), then the nearest. Other zones never pull; the
     nearest-cell rule still lands on them when the forks are over them. Otherwise nearest valid cell to the fork
     point. **Tight spot:** if no cell passes the 0.05 body tolerance, the nearest free cell overlapping the body by
     ≤ 0.15 is used, provided the body can be eased out along the push normal without hitting anything. A dropped
@@ -126,6 +128,16 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   throttle; the forks never go down while over a stack. Rate `forkRiseRate` (`logic/forkRise.ts`):
   `stack.forkRiseSpeed / (1 + 0.25·level)` (3.2: level 1 in 0.39 s, level 2 in 0.94 s). All of it is gated on
   `stackLimit > 1`.
+- **Sorting** (spec: `docs/SORTING.md`; levels 19–24). Every box has a colour and a symbol (`BoxState.symbol`:
+  `LevelBox.symbol`, else `DEFAULT_SYMBOL[color]`, so levels 1–18 are unchanged). A zone declares what it accepts
+  (`LevelZone.color?` / `symbol?`, at least one → `ZoneState.accepts`): colour only = any box of that colour,
+  symbol only = any box with that symbol, both = that exact box. `accepts(zone, box)` (core/sorting) is the single
+  source of truth: a zone is satisfied iff its (bottom) box meets all its criteria, boxes above it follow the colour
+  recipe (`fitsLevel`). Ambiguity is allowed (a box may fit several zones; any accepting one counts). `ZoneState.color`
+  is the pad colour (`ColorId | null`, null = neutral pad), `recipe[0]` only the colour criterion (null without one).
+  A level uses symbols iff a box or zone names one (`usesSymbols`); validateLevel then requires stackLimit 1 (no
+  recipes, no stacked starts), one box per zone and a complete sorting (`assignBoxes`, augmenting paths). Events keep
+  their shape (`boxDropped.correct` = accepted); Game passes the zone's `matchKind` to audio with each event.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every zone is satisfied and nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
@@ -139,10 +151,14 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
 - Level 1 is one straight run along the forklift's start heading, so holding W alone (`"vehicle"` mapping) reaches
   the box and then the zone (`src/integration/level1Controls.test.ts` simulates it with the real GameState). 3-tier shelves only against the back walls (z = 0 or x = 0).
-- Two chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2). Box count and area grow
-  within each chapter. Start headings face a box straight ahead. `levels.test.ts` (grid solver) and
-  `src/integration/levelsPlayable.test.ts` (autopilot) model per-cell color stacks: a move lifts a stack's top box
-  and drops it on the floor or on a stack with room (conservative: stacks block driving and turning sweeps).
+- Three chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2), 19–24 sorting by colour +
+  symbol (stackLimit 1). Box count and area grow within each chapter. Start headings face a box straight ahead;
+  the stacking and sorting chapters drive away from the camera (every sorting zone lies further from it than the
+  start). `levels.test.ts` (grid solver) and
+  `src/integration/levelsPlayable.test.ts` (autopilot) model per-cell stacks of boxes (colour × symbol): a move lifts
+  a stack's top box and drops it on the floor or on a stack with room (conservative: stacks block driving and turning
+  sweeps); zones accept by their criteria, and in sorting levels a layout whose loose boxes have no complete sorting
+  left (a trap) costs one more step.
 - Colors are introduced in `COLOR_IDS` order. Shapes: small, readable warehouses; generous empty floor.
 - Decor is sparse: 1–4 plants in corners/edges, 1–3 windows on north/west walls. Never clutter lanes.
 
@@ -166,14 +182,19 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   to a clean ghost (~0.35 opacity, depth prepass) whenever it stands in front of the forklift, a box or a zone.
 - Zones: rounded-square pad slightly raised (≈0.02), `fill` color, inset border in `border` color like floor
   tape, tone-on-tone glyph (`theme.glyphs`; the diamond is a rhombus, never a rotated square). Satisfied → emissive `glow` eases up (≈0.35) then settles (≈0.15),
-  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones whose `next` is that color
-  (classic: free zones of that color) breathe gently (slow sine on emissive), teaching the goal without text.
-- Boxes: low-poly beveled cube (`box.size`), `base` color, tape strip across the lid in `tape`, small glyph on
-  the lid. Pick → small hop then ride on forks (visual position damped, never teleports). Drop → eased glide to
+  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones that would take it
+  (`takesNext`; classic: free zones of that color) breathe gently (slow sine on emissive), teaching the goal without
+  text. Sorting levels (`usesSymbols`): pad colour = colour criterion (`theme.neutralZone` cream when none), the
+  symbol criterion is engraved large in the middle (a real recess, floor in `ZonePalette.engrave`), no glyph otherwise;
+  when no free zone takes the carried box, the occupied zones that accept it breathe at ≈ ⅓ (a swap hint).
+- Boxes: low-poly beveled cube (`box.size`), `base` color, tape strip across the lid in `tape`, the box's own
+  symbol on the lid (small tone-on-tone glyph; in sorting levels printed 1.5× larger in `BoxPalette.ink`). Pick →
+  small hop then ride on forks (visual position damped, never teleports). Drop → eased glide to
   the cell lasting `box.dropLandSec` (0.26 s; the zone celebration and the audio thump wait for it), then a
   squash/stretch settle (≈0.35 s, easeOutBack, scale ≤ 1.08). Correct → persistent faint emissive.
   `targetBoxId` → subtle lift/brighten (≈+0.05 y, emissive 0.16). `dropCell` → soft outline square on the floor
-  (zone-colored if the drop is on a matching zone). `actionIdle` → tiny gentle wobble (never red, never shake).
+  (in the carried box's zone tone if the drop is on a zone that takes it). `actionIdle` → tiny gentle wobble (never
+  red, never shake).
 - Forklift ("simpático"): compact body (cream), rounded cabin frame/roof, counterweight, seat, two mast rails,
   forks that move with `forkLift` (y 0.06 → 0.34), 4 low-segment wheels spinning with `wheelSpin`, rear wheels
   steered by `steer`, two round headlight "eyes" at the front that occasionally blink (every 4–8 s),
@@ -206,8 +227,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - SFX (each with ±4–6 % random pitch/gain so nothing repeats identically):
   - pick up: light wooden knock (short bandpassed noise + low sine body), plus soft servo glide.
   - drop: soft felt thump scheduled `box.dropLandSec` after the event, when the box touches the floor; if
-    `correct`: warm bell/marimba chime whose pitch climbs a pentatonic scale with `satisfiedCount` (satisfying
-    progression), in the current music key. The fork servo answers the key press at once.
+    `correct`: a chime whose pitch climbs a pentatonic scale with `satisfiedCount` (satisfying
+    progression), in the current music key; its timbre follows the zone's `matchKind` (passed by Game as
+    `handleEvent(event, match)`): colour = the warm bell, symbol = a soft wooden marimba (`instruments/wood.ts`),
+    exact = both, softer (`CHIME_LEVELS`; all three peak within ±0.2 dB). The fork servo answers the key press at once.
   - stacks: a drop on a box is a lighter, higher wooden "toc" (+12 % pitch per level, less sub); pickup knock and
     servo rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
     chime (the lower notes skip avoid notes over the sounding chord). `zoneRestored`: the zone's chime (and stack
@@ -232,7 +255,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Control hint (only first level, `showHint`): tiny keycaps at the bottom center — "W S avanzar / atrás · A D girar · Espacio
   recoger / dejar" — fades out when `showHint` turns false.
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
-  "Continuar", a discreet row of level dots (unlocked ones clickable, show best time on hover/focus; locked ones
+  "Continuar", discreet level dots in even rows of twelve (24 levels = two rows; 22 px dots on short windows such as
+  800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · M silencio (M activar sonido when muted)
   · T tiempo · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,

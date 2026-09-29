@@ -41,8 +41,14 @@ const actions = {
   load,
   pickOrDrop: () => emit(sim.snapshot.forklift.carrying ? sim.drop() : sim.pick()),
   solveZone: () => {
-    const zone = sim.snapshot.zones.find((z) => z.next !== null);
-    if (zone) emit(sim.solveZone(zone.id));
+    // The first zone that is not done and can be finished with a box lying on top of some stack.
+    for (const zone of sim.snapshot.zones) {
+      if (zone.satisfied) continue;
+      const events = sim.solveZone(zone.id);
+      if (events.length === 0) continue;
+      emit(events);
+      return;
+    }
   },
   solveAll: () => {
     for (const z of sim.snapshot.zones) emit(sim.solveZone(z.id));

@@ -1,3 +1,4 @@
+import type { MatchKind } from '../core/sorting';
 import type { GameEvent } from '../core/types';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import type { AudioScene, Rng } from './types';
@@ -88,7 +89,12 @@ export class AudioEngine {
     }
   }
 
-  handleEvent(event: GameEvent): void {
+  /**
+   * `match`: how the zone of a `boxDropped` / `zoneRestored` event matches its box (core/sorting `matchKind` of its
+   * criteria), which picks the chime's timbre: color = the bell, symbol = a soft wooden marimba, exact = both. Game
+   * passes it (audio never reads the level); omitted = color, the classic bell.
+   */
+  handleEvent(event: GameEvent, match: MatchKind = 'color'): void {
     if (this.disposed) return;
     // The music resolves even when muted, so it is in the right place when sound returns.
     if (event.type === 'levelComplete') this.composer.requestResolve();
@@ -104,7 +110,7 @@ export class AudioEngine {
             event.correct && event.recipeLength > 1
               ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
               : null;
-          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack);
+          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack, match);
           break;
         }
         case 'zoneRestored': {
@@ -116,7 +122,7 @@ export class AudioEngine {
             event.recipeLength > 1
               ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
               : null;
-          rt.sfx.chime(now + RESTORE_AFTER_PICK_SEC, chime, false, stack);
+          rt.sfx.chime(now + RESTORE_AFTER_PICK_SEC, chime, false, stack, match);
           break;
         }
         case 'zoneReleased':
