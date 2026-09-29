@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COLOR_IDS, forwardOf, type ColorId, type LevelData, type SymbolId } from '../../core/types';
 import { degToRad } from '../../core/math';
-import { assignBoxes, criteriaOf, matchKind, meets, sortableOf, usesSymbols } from '../../core/sorting';
+import { usesSymbols } from '../../core/sorting';
 import { parseLevel, renderLevel } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import { validateLevel } from '../validateLevel';
@@ -27,9 +27,15 @@ import {
 /*
  * The grid model, the conservative carrying model and the greedy solver live in ./solver.ts (shared with the
  * autopilot planner in src/integration/levelsPlayable.test.ts and the level metrics behind `npm run levels`).
+ *
+ * Levels 4–24 were removed (2026-09-30) to be redone. The systems they used (stack recipes, symbols, racks) stay in the
+ * game: their checks here run on small layouts written inline, and the generic checks run over every shipped level.
  */
 
 const code = (color: ColorId, symbol: SymbolId) => boxCode({ color, symbol });
+
+/** An inline layout in the .level format (docs/LEVELS.md). */
+const layout = (lines: readonly string[]) => parseLevel(`${lines.join('\n')}\n`).level;
 
 /* ------------------------------------------------------------------ */
 /* Static helpers                                                      */
@@ -105,10 +111,14 @@ const shortestOf = (level: LevelData) => {
   if (!result) shortest.set(level.id, (result = minMoves(level)));
   return result;
 };
-/** Chapters: classic (1–12), stacking (13–18), sorting by color + symbol (19–24). */
-const SORTING = LEVELS.filter((l) => usesSymbols(l));
+/**
+ * Chapters: classic (no stacking, no symbols), stacking, sorting by color + symbol; each starts small again. Today only
+ * classic levels ship (levels 4–24 are being redone), so the other two are empty.
+ */
 const CLASSIC = LEVELS.filter((l) => (l.stackLimit ?? 1) === 1 && !usesSymbols(l));
 const STACKING = LEVELS.filter((l) => (l.stackLimit ?? 1) > 1);
+const SORTING = LEVELS.filter((l) => usesSymbols(l));
+const CHAPTERS = [CLASSIC, STACKING, SORTING].filter((chapter) => chapter.length > 0);
 
 /** Tiny synthetic level: a corridor with the zone behind the forklift, so the box must be carried back. */
 function corridorLevel(depth: number): LevelData {
@@ -127,14 +137,77 @@ function corridorLevel(depth: number): LevelData {
   });
 }
 
+/** Two boxes on each other's zones, a third one waiting (the layout of the former level 4, «Pequeño desorden»). */
+const DISORDER = layout([
+  '# 4 · Pequeño desorden',
+  'id: pequeno-desorden',
+  'limit: 1',
+  'ventanas: norte 3-5',
+  '',
+  '  012345678',
+  '0 pHH...HHp',
+  '1 .........',
+  '2 ...123...',
+  '3 .........',
+  '4 .........',
+  '5 .a.......',
+  '6 ....^....',
+  '',
+  '1 = zona azul + caja amarillo      2 = zona menta',
+  '3 = zona amarillo + caja azul',
+  'a = caja menta',
+  'H = estantería 3 alturas',
+]);
+
+/** A zone covered by the wrong box whose own zone is free: choosing the order is enough (a chain). */
+const CHAIN = layout([
+  '# 5 · Cadena',
+  'id: cadena',
+  'limit: 1',
+  '',
+  '  0123456',
+  '0 .......',
+  '1 .1...2.',
+  '2 .......',
+  '3 ...a...',
+  '4 .......',
+  '5 ...^...',
+  '',
+  '1 = zona azul + caja menta      2 = zona menta',
+  'a = caja azul',
+]);
+
+/**
+ * The sorting sample (the former level 23, «La muestra», docs/SORTING.md): two «any ▲» zones, one «any blue», one exact
+ * «blue ■»; one complete sorting and the classic trap (blue ▲ in «any blue» leaves blue ● without a zone).
+ */
+const SAMPLE = layout([
+  '# 23 · La muestra',
+  'id: la-muestra',
+  'limit: 1',
+  'ventanas: norte 2-4, oeste 3-4',
+  '',
+  '  0123456789',
+  '0 p.........',
+  '1 .1.2.3.4..',
+  '2 ..........',
+  '3 ..........',
+  '4 ....b..a..',
+  '5 ..c.......',
+  '6 .....d.^.p',
+  '',
+  '1 2 = zona ▲        3 = zona azul ■     4 = zona azul',
+  'a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●',
+]);
+
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
 describe('level registry', () => {
-  it('ships at least 12 validated levels with unique ids and strictly ascending orders', () => {
+  it('ships validated levels with unique ids and strictly ascending orders', () => {
     // Invariants (the registry also refuses a repeated id or order across .level and .json files).
-    expect(LEVELS.length).toBeGreaterThanOrEqual(12);
+    expect(LEVELS.length).toBeGreaterThanOrEqual(1);
     // Strictly ascending also means unique, so the registry sort is deterministic.
     const orders = LEVELS.map((l) => l.order);
     expect(orders.every((o, i) => i === 0 || o > orders[i - 1])).toBe(true);
@@ -146,33 +219,13 @@ describe('level registry', () => {
 /**
  * The shipped levels, by order. Saved best times, rankings, unlocks and "Continuar" are keyed by these ids (and the
  * order decides the play order), so this list only changes on purpose: adding, removing or re-ordering a level
- * means updating it here in the same change.
+ * means updating it here in the same change. Levels 4–24 were removed on 2026-09-30 to be redone (saves that name
+ * them still load: src/storage/ProgressStore.test.ts, src/game/Game.test.ts).
  */
 const SHIPPED: readonly (readonly [number, string])[] = [
   [1, 'primer-encargo'],
   [2, 'dos-colores'],
   [3, 'rincon-tranquilo'],
-  [4, 'pequeno-desorden'],
-  [5, 'cruce-de-pasillos'],
-  [6, 'un-toque-de-coral'],
-  [7, 'estanterias-en-fila'],
-  [8, 'una-cosa-lleva-a-otra'],
-  [9, 'tarde-de-lavanda'],
-  [10, 'mudanza-a-medias'],
-  [11, 'pasillos-de-luz'],
-  [12, 'el-gran-almacen'],
-  [13, 'una-encima'],
-  [14, 'primero-la-base'],
-  [15, 'dos-pilas'],
-  [16, 'al-reves'],
-  [17, 'torre-de-tres'],
-  [18, 'el-gran-apilado'],
-  [19, 'lo-que-dice-la-tapa'],
-  [20, 'color-o-forma'],
-  [21, 'dos-sitios-posibles'],
-  [22, 'justo-esa'],
-  [23, 'la-muestra'],
-  [24, 'el-gran-reparto'],
 ];
 
 describe('level files (.level, docs/LEVELS.md)', () => {
@@ -225,22 +278,17 @@ describe('progression', () => {
     expect(along(zone)).toBeGreaterThan(along(box));
   });
 
-  // Three chapters: classic levels (no stacking), then stacking, then sorting by color + symbol; each starts small
-  // again.
-  const chapters = [CLASSIC, STACKING, SORTING] as const;
-
   it('box count never decreases within a chapter and stays within 10', () => {
-    for (const chapter of chapters) {
+    for (const chapter of CHAPTERS) {
       const counts = chapter.map((l) => l.boxes.length);
       for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeGreaterThanOrEqual(counts[i - 1]);
       expect(Math.max(...counts)).toBeLessThanOrEqual(10);
-      expect(counts[counts.length - 1]).toBeGreaterThanOrEqual(8);
     }
-    expect(CLASSIC.map((l) => l.boxes.length).slice(0, 5)).toEqual([1, 2, 3, 3, 4]);
+    expect(CLASSIC.map((l) => l.boxes.length).slice(0, 3)).toEqual([1, 2, 3]);
   });
 
   it('warehouses grow gently within a chapter, up to 14×11', () => {
-    for (const chapter of chapters) {
+    for (const chapter of CHAPTERS) {
       const areas = chapter.map((l) => l.size.width * l.size.depth);
       for (let i = 1; i < areas.length; i++) expect(areas[i]).toBeGreaterThanOrEqual(areas[i - 1]);
     }
@@ -256,7 +304,6 @@ describe('progression', () => {
       for (const c of colorsOf(level)) seen.add(c);
       expect([...seen].sort((a, b) => COLOR_IDS.indexOf(a) - COLOR_IDS.indexOf(b))).toEqual(COLOR_IDS.slice(0, seen.size));
     }
-    expect(seen.size).toBe(COLOR_IDS.length);
     expect(colorsOf(LEVELS[1])).toEqual(new Set(['blue', 'mint']));
     expect(colorsOf(LEVELS[2]).has('yellow')).toBe(true);
   });
@@ -268,65 +315,7 @@ describe('progression', () => {
   });
 });
 
-describe('stacking chapter (docs/STACKING.md)', () => {
-  const tallest = (l: LevelData) => Math.max(...l.zones.map((z) => (z.recipe ?? [z.color]).length));
-  const stackedStart = (l: LevelData) => l.boxes.some((b, i) => l.boxes.findIndex((o) => o.x === b.x && o.z === b.z) !== i);
-
-  it('follows the classic chapter: 12 classic levels, then 6 stacking levels', () => {
-    expect(CLASSIC).toHaveLength(12);
-    expect(STACKING).toHaveLength(6);
-    expect(LEVELS.indexOf(STACKING[0])).toBe(CLASSIC.length);
-    for (const l of CLASSIC) expect(l.stackLimit).toBe(1);
-  });
-
-  it('13–14 use stackLimit 2 with one 2-high recipe; 13 has its base already on the zone', () => {
-    for (const l of STACKING.slice(0, 2)) {
-      expect(l.stackLimit).toBe(2);
-      expect(l.zones).toHaveLength(1);
-      expect(tallest(l)).toBe(2);
-    }
-    const [z] = STACKING[0].zones;
-    expect(STACKING[0].boxes.some((b) => b.x === z.x && b.z === z.z && b.color === z.color)).toBe(true);
-  });
-
-  it('15 has two 2-high stacks, 16 starts with a wrong stack on its zone, 17 builds a 3-high tower, 18 mixes all', () => {
-    expect(STACKING[2].zones.filter((z) => (z.recipe ?? []).length === 2)).toHaveLength(2);
-    expect(stackedStart(STACKING[3])).toBe(true);
-    expect(misplacedBoxes(STACKING[3]).length).toBeGreaterThan(0);
-    expect(tallest(STACKING[4])).toBe(3);
-    expect(stackedStart(STACKING[4])).toBe(true);
-    const last = STACKING[5];
-    expect(tallest(last)).toBe(3);
-    expect(last.zones.some((z) => !z.recipe)).toBe(true);
-    expect(stackedStart(last)).toBe(true);
-  });
-
-  it.each(STACKING.map((l) => [l.id, l] as const))('%s: the start heading faces a box straight ahead', (_, level) => {
-    const f = forwardOf(degToRad(level.forklift.heading));
-    const ahead = [1, 2, 3, 4].map((d) => ({ x: level.forklift.x + Math.round(f.x) * d, z: level.forklift.z + Math.round(f.z) * d }));
-    expect(level.boxes.some((b) => ahead.some((c) => c.x === b.x && c.z === b.z))).toBe(true);
-  });
-
-  it.each(STACKING.map((l) => [l.id, l] as const))('%s starts driving away from the camera', (_, level) => {
-    // The camera sits toward +x / +z. Driving away keeps A/D reading as screen left / right and builds stacks from
-    // their far side, so a stack rarely stands between the camera and the cabin, where it would be ghosted.
-    const f = forwardOf(degToRad(level.forklift.heading));
-    expect(f.x + f.z).toBeLessThan(0);
-  });
-
-  it('13–15 build straight onto their zones; 16 (desmontar) and 17 (aparcamiento) need a temporary park', () => {
-    const noParking = { allowParking: false, maxExpansions: 2000 };
-    for (const l of STACKING.slice(0, 3)) expect(solve(l, noParking).solved, l.id).toBe(true);
-    for (const l of STACKING.slice(3, 5)) {
-      expect(solve(l, noParking).solved, l.id).toBe(false);
-      expect(solve(l, { allowParking: true, maxExpansions: 2000 }).solved, l.id).toBe(true);
-    }
-  });
-
-  it('every stacking level asks for at least one real stack', () => {
-    for (const l of STACKING) expect(tallest(l)).toBeGreaterThan(1);
-  });
-
+describe('stacks and sorting in the grid model (docs/STACKING.md, docs/SORTING.md)', () => {
   it('layout helpers read stacks from the floor up against the recipe', () => {
     // z1 is built right (mint belongs on blue); z2's top coral matches its base color but not its recipe.
     const level = validateLevel({
@@ -355,169 +344,19 @@ describe('stacking chapter (docs/STACKING.md)', () => {
     // A tall stack hides what stands just behind it from the camera, like a shelf does.
     expect(hiddenItems({ ...level, forklift: { x: 0, z: 1, heading: 180 } })).toEqual(['forklift@0,1']);
   });
-});
-
-describe('sorting chapter (docs/SORTING.md)', () => {
-  type Box = LevelData['boxes'][number];
-  type Zone = LevelData['zones'][number];
-  const fits = (zone: Zone, box: Box) => meets(criteriaOf(zone), sortableOf(box));
-  const zonesFor = (level: LevelData, box: Box) => level.zones.filter((z) => fits(z, box));
-  const ambiguous = (level: LevelData) => level.boxes.filter((b) => zonesFor(level, b).length > 1);
-  const kinds = (level: LevelData) => new Set(level.zones.map((z) => matchKind(criteriaOf(z))));
-  /** Every complete sorting (box index → zone index, one box per zone), by backtracking. */
-  const sortings = (level: LevelData): number[][] => {
-    const out: number[][] = [];
-    const used = new Set<number>();
-    const pick: number[] = [];
-    const place = (b: number) => {
-      if (b === level.boxes.length) return void out.push([...pick]);
-      level.zones.forEach((zone, z) => {
-        if (used.has(z) || !fits(zone, level.boxes[b])) return;
-        used.add(z);
-        pick.push(z);
-        place(b + 1);
-        pick.pop();
-        used.delete(z);
-      });
-    };
-    place(0);
-    return out;
-  };
-  /** A box put in one of its zones that leaves the other boxes without a complete sorting (a trap, fixable by moving it). */
-  const traps = (level: LevelData) =>
-    level.boxes.flatMap((box, b) =>
-      level.zones
-        .filter((zone) => fits(zone, box))
-        .filter((zone) => {
-          const rest = level.boxes.filter((_, i) => i !== b).map(sortableOf);
-          const open = level.zones.filter((z) => z !== zone).map(criteriaOf);
-          return assignBoxes(rest, open).includes(-1);
-        })
-        .map((zone) => `${box.id}→${zone.id}`),
-    );
-  const box = (level: LevelData, color: ColorId, symbol: SymbolId) => {
-    const found = level.boxes.find((b) => b.color === color && sortableOf(b).symbol === symbol);
-    expect(found, `${color} ${symbol} box`).toBeDefined();
-    return found!;
-  };
-
-  it('follows the stacking chapter: 6 levels that sort by color + symbol, none of them stacking', () => {
-    expect(SORTING).toHaveLength(6);
-    expect(LEVELS.indexOf(SORTING[0])).toBe(CLASSIC.length + STACKING.length);
-    for (const l of SORTING) {
-      expect(l.stackLimit).toBe(1);
-      expect(l.boxes).toHaveLength(l.zones.length);
-      expect(sortings(l).length, l.id).toBeGreaterThan(0);
-    }
-  });
-
-  it('19 sorts by symbol alone: neutral pads, and two boxes of one color go to different zones', () => {
-    const [first] = SORTING;
-    expect(kinds(first)).toEqual(new Set(['symbol']));
-    expect(first.zones.every((z) => z.color === undefined)).toBe(true);
-    const sameColor = first.boxes.filter((b, i) => first.boxes.some((o, j) => j !== i && o.color === b.color));
-    expect(new Set(sameColor.map((b) => zonesFor(first, b)[0].id)).size).toBeGreaterThan(1);
-    for (const b of first.boxes) expect(zonesFor(first, b)).toHaveLength(1);
-  });
-
-  it('20 mixes color zones and symbol zones, and every box still fits exactly one zone', () => {
-    const level = SORTING[1];
-    expect(kinds(level)).toEqual(new Set(['color', 'symbol']));
-    for (const b of level.boxes) expect(zonesFor(level, b), b.id).toHaveLength(1);
-  });
-
-  it('21 brings the first box that fits two zones, and where it goes matters a little', () => {
-    for (const l of SORTING.slice(0, 2)) expect(ambiguous(l), l.id).toEqual([]);
-    const level = SORTING[2];
-    expect(ambiguous(level)).toHaveLength(1);
-    expect(traps(level).length).toBeGreaterThan(0);
-    expect(sortings(level)).toHaveLength(1);
-  });
-
-  it('22 asks for exact boxes: color and symbol, each shared with another zone', () => {
-    const level = SORTING[3];
-    expect(kinds(level)).toEqual(new Set(['exact']));
-    for (const b of level.boxes) {
-      expect(zonesFor(level, b), b.id).toHaveLength(1);
-      // Near misses: another pad has its color, another engraving its symbol.
-      expect(level.zones.some((z) => z.color === b.color && !fits(z, b))).toBe(true);
-      expect(level.zones.some((z) => z.symbol === sortableOf(b).symbol && !fits(z, b))).toBe(true);
-    }
-  });
-
-  it('23 is the sample: two "any ▲", one "any blue", one exact "blue ■"; one complete sorting and the classic trap', () => {
-    const level = SORTING[4];
-    const anyTriangle = level.zones.filter((z) => z.symbol === 'triangle' && z.color === undefined);
-    const anyBlue = level.zones.filter((z) => z.color === 'blue' && z.symbol === undefined);
-    const exact = level.zones.filter((z) => z.color === 'blue' && z.symbol === 'square');
-    expect([anyTriangle.length, anyBlue.length, exact.length, level.zones.length]).toEqual([2, 1, 1, 4]);
-    const blueTriangle = box(level, 'blue', 'triangle');
-    const blueSquare = box(level, 'blue', 'square');
-    const mintTriangle = box(level, 'mint', 'triangle');
-    const blueCircle = box(level, 'blue', 'circle');
-    expect(level.boxes).toHaveLength(4);
-    // The one complete sorting (up to the two identical ▲ zones).
-    const index = (b: Box) => level.boxes.indexOf(b);
-    for (const s of sortings(level)) {
-      expect(level.zones[s[index(blueSquare)]]).toBe(exact[0]);
-      expect(level.zones[s[index(blueCircle)]]).toBe(anyBlue[0]);
-      expect(anyTriangle).toContain(level.zones[s[index(blueTriangle)]]);
-      expect(anyTriangle).toContain(level.zones[s[index(mintTriangle)]]);
-    }
-    // The gentle trap: blue ▲ (or blue ■) in "any blue" leaves blue ● without a zone.
-    expect(traps(level)).toContain(`${blueTriangle.id}→${anyBlue[0].id}`);
-    expect(traps(level)).toContain(`${blueSquare.id}→${anyBlue[0].id}`);
-    // Easy to see: the forklift starts facing blue ▲, and "any blue" lies straight on beyond it.
-    const f = forwardOf(degToRad(level.forklift.heading));
-    const ahead = (p: { x: number; z: number }, d: number) =>
-      p.x === level.forklift.x + Math.round(f.x) * d && p.z === level.forklift.z + Math.round(f.z) * d;
-    expect([1, 2, 3].some((d) => ahead(blueTriangle, d))).toBe(true);
-    expect([4, 5, 6, 7].some((d) => ahead(anyBlue[0], d))).toBe(true);
-  });
-
-  it('24 closes the chapter: every kind of zone, several ambiguous boxes, one complete sorting', () => {
-    const last = SORTING[5];
-    expect(kinds(last)).toEqual(new Set(['color', 'symbol', 'exact']));
-    expect(ambiguous(last).length).toBeGreaterThanOrEqual(2);
-    expect(sortings(last)).toHaveLength(1);
-    expect(last.shelves.length).toBeGreaterThan(0);
-  });
-
-  it.each(SORTING.map((l) => [l.id, l] as const))('%s: the start heading faces a box straight ahead', (_, level) => {
-    const f = forwardOf(degToRad(level.forklift.heading));
-    const ahead = [1, 2, 3, 4].map((d) => ({ x: level.forklift.x + Math.round(f.x) * d, z: level.forklift.z + Math.round(f.z) * d }));
-    expect(level.boxes.some((b) => ahead.some((c) => c.x === b.x && c.z === b.z))).toBe(true);
-  });
-
-  it.each(SORTING.map((l) => [l.id, l] as const))('%s never starts with a box hiding the engraving of a symbol zone that does not take it', (_, level) => {
-    // A box on a pad hides its engraving (docs/SORTING.md): only colour pads may start covered by a wrong box.
-    for (const z of level.zones.filter((zone) => zone.symbol !== undefined)) {
-      const onIt = level.boxes.filter((b) => b.x === z.x && b.z === z.z);
-      for (const b of onIt) expect(fits(z, b), `${b.id} on ${z.id}`).toBe(true);
-    }
-  });
-
-  it.each(SORTING.map((l) => [l.id, l] as const))('%s flows away from the camera', (_, level) => {
-    // The camera sits toward +x / +z: driving away keeps A/D reading as screen left / right. Every zone lies further
-    // from the camera than the forklift starts, so each delivery heads up the screen.
-    const f = forwardOf(degToRad(level.forklift.heading));
-    expect(f.x + f.z).toBeLessThan(0);
-    for (const z of level.zones) expect(z.x + z.z, z.id).toBeLessThan(level.forklift.x + level.forklift.z);
-  });
 
   it('solver model: a trap ranks one step worse until the ambiguous box moves on', () => {
-    const level = SORTING[4];
-    const grid = new LevelGrid(level);
-    const at = (z: Zone) => grid.index(z.x, z.z);
-    const [tri1, tri2] = level.zones.filter((z) => z.symbol === 'triangle');
-    const anyBlue = level.zones.find((z) => z.color === 'blue' && z.symbol === undefined)!;
-    const exact = level.zones.find((z) => z.symbol === 'square')!;
+    const grid = new LevelGrid(SAMPLE);
+    const at = (z: { x: number; z: number }) => grid.index(z.x, z.z);
+    const [tri1, tri2] = SAMPLE.zones.filter((z) => z.symbol === 'triangle');
+    const anyBlue = SAMPLE.zones.find((z) => z.color === 'blue' && z.symbol === undefined)!;
+    const exact = SAMPLE.zones.find((z) => z.symbol === 'square')!;
     const stacks: Stacks = new Array<string>(grid.cellCount).fill('');
     stacks[at(anyBlue)] = code('blue', 'triangle');
     stacks[at(exact)] = code('blue', 'square');
     stacks[at(tri1)] = code('mint', 'triangle');
-    const blueCircle = box(level, 'blue', 'circle');
-    stacks[grid.index(blueCircle.x, blueCircle.z)] = code('blue', 'circle');
+    const blueCircle = SAMPLE.boxes.find((b) => b.color === 'blue' && b.symbol === 'circle')!;
+    stacks[at(blueCircle)] = code('blue', 'circle');
     expect(sortable(grid, stacks)).toBe(false);
     // Blue ▲ moved on to the free ▲ zone: blue ● has its zone again.
     stacks[at(anyBlue)] = '';
@@ -555,27 +394,18 @@ describe('decor', () => {
     const tall = level.shelves.filter((s) => (s.tiers ?? 2) > 2);
     for (const s of tall) expect(s.z === 0 || s.x === 0, `shelf at ${s.x},${s.z}`).toBe(true);
   });
-
 });
 
 describe('special layouts', () => {
-  it('level 4 starts with boxes on wrong zones and needs a temporary park', () => {
-    const level = LEVELS[3];
-    expect(misplacedBoxes(level).length).toBeGreaterThan(0);
-    expect(solve(level, { allowParking: false, maxExpansions: 500 }).solved).toBe(false);
-    expect(solve(level, { allowParking: true, maxExpansions: 500 }).solved).toBe(true);
+  it('boxes starting on each other\'s zones need a temporary park', () => {
+    expect(misplacedBoxes(DISORDER).length).toBeGreaterThan(0);
+    expect(solve(DISORDER, { allowParking: false, maxExpansions: 500 }).solved).toBe(false);
+    expect(solve(DISORDER, { allowParking: true, maxExpansions: 500 }).solved).toBe(true);
   });
 
-  // Classic-chapter guarantees: the stacking chapter must not satisfy them on the classic levels' behalf.
-  it('a later classic level brings misplaced boxes back', () => {
-    expect(CLASSIC.slice(5).some((l) => misplacedBoxes(l).length > 0)).toBe(true);
-  });
-
-  it('a later classic level has a chain: a zone blocked by a wrong box, solvable just by choosing the order', () => {
-    const chain = CLASSIC.slice(5).filter(
-      (l) => blockedZones(l).length > 0 && solve(l, { allowParking: false, maxExpansions: 500 }).solved,
-    );
-    expect(chain.length).toBeGreaterThan(0);
+  it('a chain: a zone blocked by a wrong box, solvable just by choosing the order', () => {
+    expect(blockedZones(CHAIN).map((z) => z.id)).toEqual(['z1']);
+    expect(solve(CHAIN, { allowParking: false, maxExpansions: 500 }).solved).toBe(true);
   });
 });
 

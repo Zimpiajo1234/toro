@@ -2,9 +2,9 @@
  * Level tooling (docs/LEVELS.md):
  *   npm run levels                   every level (the game's, then the special ones in especiales/): map, legend and
  *                                    metrics, then a summary table
- *   npm run levels -- 23 benchmark   those levels in detail (order number, #position, id or file name)
- *   npm run levels -- 23 --estados 2000000  raise the work budget of the exact move search (default 150 000)
- *   npm run levels -- 23 --callejones 2000  explore more states in the dead-end check (default 60 per level)
+ *   npm run levels -- 3 benchmark    those levels in detail (order number, #position, id or file name)
+ *   npm run levels -- 3 --estados 2000000   raise the work budget of the exact move search (default 150 000)
+ *   npm run levels -- 3 --callejones 2000   explore more states in the dead-end check (default 60 per level)
  *   npm run levels:fmt               rewrite every src/data/levels/*.level and especiales/*.level in canonical form
  *   npm run levels:fmt -- --check    only report the files that are not canonical (exit code 1)
  *

@@ -21,6 +21,8 @@ import { ForkliftController, MOVE_EPSILON } from './forklift';
 import { LevelGrid } from './grid';
 import { createDropChoice, createRackAim, Interaction, type DropChoice, type RackAim } from './interaction';
 
+type BoxDropped = Extract<GameEvent, { type: 'boxDropped' }>;
+
 /** Returned when a step emits nothing, so quiet frames allocate no array. */
 const NO_EVENTS = Object.freeze([]) as unknown as GameEvent[];
 
@@ -178,6 +180,7 @@ export class GameState {
         zoneId: zone ? zone.id : null,
         slotId: slot ? slot.id : null,
         correct: false,
+        locked: false,
       };
     });
     for (const zone of zones) {
@@ -308,6 +311,7 @@ export class GameState {
     box.zoneId = null;
     box.slotId = null;
     box.correct = false;
+    box.locked = false;
     if (slot >= 0) {
       // Out of a rack slot: the load starts inside the column's cell, which stays open for it while it backs out.
       const state = this.snapshot.slots[slot];
@@ -381,6 +385,7 @@ export class GameState {
       released = was && !zone.satisfied;
     } else {
       box.correct = false;
+      box.locked = false;
     }
     // A floor drop may touch the body a little (drop tolerance): ease the body out rather than popping it.
     const body = snap.forklift.pos;
@@ -391,17 +396,21 @@ export class GameState {
     this.refreshLoadPassage();
 
     const progress = this.recountProgress();
-    this.emit({
+    const correct = zone !== null && zone.satisfied;
+    const drop: BoxDropped = {
       type: 'boxDropped',
       boxId: box.id,
       cell: { x, z },
       zoneId: box.zoneId,
       level: box.level,
-      correct: zone !== null && zone.satisfied,
+      correct,
       recipeLength: zone ? zone.recipe.length : 0,
       satisfiedCount: progress.satisfied,
       total: progress.total,
-    });
+    };
+    // Levels with racks: a zone that did not get its destined box (plain floor never is a target).
+    if (zone !== null && !correct && this.grid.columns.length > 0) drop.wrongTarget = true;
+    this.emit(drop);
     if (released && zone) this.emit({ type: 'zoneReleased', zoneId: zone.id, boxId: box.id });
     if (progress.satisfied === progress.total) {
       snap.completed = true;
@@ -430,7 +439,7 @@ export class GameState {
     this.refreshRackPassage();
 
     const progress = this.recountProgress();
-    this.emit({
+    const drop: BoxDropped = {
       type: 'boxDropped',
       boxId: box.id,
       cell: { x: state.cell.x, z: state.cell.z },
@@ -441,7 +450,10 @@ export class GameState {
       satisfiedCount: progress.satisfied,
       total: progress.total,
       slotId: state.id,
-    });
+    };
+    // A slot with a cue that did not get its destined box (a trap box that fits the cue too); «libre» slots never.
+    if (state.accepts !== null && !state.satisfied) drop.wrongTarget = true;
+    this.emit(drop);
     if (progress.satisfied === progress.total) {
       snap.completed = true;
       this.emit({ type: 'levelComplete' });
@@ -699,20 +711,27 @@ export class GameState {
     this.snapshot.hint.rack = h;
   }
 
-  /** Slot state from its box: satisfied iff it holds its destined kind (a «libre» slot never is). */
+  /**
+   * Slot state from its box: satisfied iff it holds its destined kind (a «libre» slot never is). Its destined box is
+   * locked there: done, it can no longer be picked up.
+   */
   private refreshSlot(slot: SlotState): void {
     const bi = this.grid.slotBox(this.snapshot.slots.indexOf(slot));
     const box = bi >= 0 ? this.snapshot.boxes[bi] : null;
     slot.occupiedBy = box ? box.id : null;
     slot.satisfied = box !== null && slot.destined !== null && sameKind(slot.destined, box);
-    if (box) box.correct = slot.satisfied;
+    if (box) {
+      box.correct = slot.satisfied;
+      box.locked = slot.satisfied;
+    }
   }
 
   /**
    * Zone state derived from its stack: satisfied iff it holds exactly what it asks for (a bottom box it accepts, then
    * its recipe's colors: core/sorting `fitsLevel`); `next` = the color it takes next while the stack is a correct,
    * unfinished prefix. Boxes on it are `correct` up to the first box that does not fit. Levels with racks: only its
-   * destined kind fits its bottom (and its recipe is one box).
+   * destined kind fits its bottom (and its recipe is one box), and while it is satisfied that box is locked there
+   * (done: never picked up again, nothing stacked on it). Levels without racks never lock a box.
    */
   private refreshZone(zone: ZoneState): void {
     const boxes = this.snapshot.boxes;
@@ -724,18 +743,24 @@ export class GameState {
       if (!box) continue;
       prefix = prefix && (i === 0 && destined !== null ? sameKind(destined, box) : fitsLevel(zone, i, box));
       box.correct = prefix;
+      if (destined !== null) box.locked = false;
     }
     const n = zone.stack.length;
     zone.occupiedBy = n > 0 ? zone.stack[n - 1] : null;
     zone.satisfied = prefix && n === recipe.length;
     zone.next = prefix && n < recipe.length ? recipe[n] : null;
+    if (destined !== null && zone.satisfied) {
+      const box = boxes[this.boxIndex.get(zone.stack[0]) ?? -1];
+      if (box) box.locked = true;
+    }
   }
 
   /**
    * Stacking levels: which stack bases the carried load may pass over (CollisionWorld passable). A stack with room
    * opens once the forks are nearly at its top and stays open while the load is over it (the forks hold there, see
    * clearLevel), so it never turns solid under the load: no push-out. Until then it blocks the load like any box.
-   * Classic levels: never.
+   * A locked box (levels with racks) has no room: it never opens, only stays open while a load lifted off it is still
+   * over it. Classic levels: never.
    */
   private refreshLoadPassage(): void {
     const grid = this.grid;
@@ -750,7 +775,7 @@ export class GameState {
       const h = grid.height(cell.x, cell.z);
       const high = forklift.forkHeight >= h - LOAD_PASS_CLEARANCE;
       const over = load !== null && this.world.isPassable(i) && this.loadNear(load.x, load.z, forklift.heading, b.pos, true);
-      this.world.setPassable(i, h < limit && (high || over));
+      this.world.setPassable(i, h < limit && ((high && !b.locked) || over));
     }
   }
 
@@ -783,7 +808,8 @@ export class GameState {
    * Stacking levels: the lowest carriage height that meets no stack. Carrying: the height of the tallest stack with
    * room the load is over (never sink into it), or will run into before the forks could climb to it at the rig's
    * current motion and throttle (driving or turning; also when held at its face), so it is lifted in time to clear
-   * the stack instead of stopping there. Empty: the top box of a stack the forks are at or reaching the same way.
+   * the stack instead of stopping there (a locked box has no room: the load meets it like a full stack, unless it is
+   * still over it). Empty: the top box of a stack the forks are at or reaching the same way.
    */
   private clearLevel(carrying: boolean): number {
     const grid = this.grid;
@@ -799,7 +825,7 @@ export class GameState {
       const cell = b.cell;
       if (!cell || b.level > 0) continue;
       const h = grid.height(cell.x, cell.z);
-      const top = carrying ? (h < limit ? h : 0) : h - 1;
+      const top = carrying ? (h < limit && (!b.locked || this.world.isPassable(i)) ? h : 0) : h - 1;
       if (top <= level) continue;
       // Predicted sweep over the time the forks need to clear this stack (sample 0 = now). The load clears it a
       // little below its top; empty tines slide under the top box, so they go all the way (view easing included).

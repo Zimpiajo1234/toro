@@ -10,7 +10,7 @@ no react-three-fiber) · Vitest 5 for pure-logic tests. No other runtime depende
 audio (procedural Web Audio) and no textures required (vertex/flat colors; tiny CanvasTexture allowed).
 
 Commands: `npm run typecheck` (covers `src/`, `dev/` and `vite.config.ts`) · `npm test` · `npx vite build` · `npm run dev` ·
-`npm run levels` (level maps + difficulty metrics; `-- 23` for one level) · `npm run levels:fmt`.
+`npm run levels` (level maps + difficulty metrics; `-- 3` for one level) · `npm run levels:fmt`.
 The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under any subpath.
 
 ## Module map & ownership
@@ -109,7 +109,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   - Nothing to pick: `actionIdle`.
 - `hint` in the snapshot is recomputed every update: `targetBoxId` when not carrying; `dropCell` / `dropZoneId` /
   `dropLevel` preview when carrying.
-- **Stacks** (spec: `docs/STACKING.md`; levels 13–18). `LevelData.stackLimit` (validateLevel fills it: the level's `limit`,
+- **Stacks** (spec: `docs/STACKING.md`; the former levels 13–18, removed on 2026-09-30 to be redone: no shipped level
+  stacks today, the system and its tests on inline layouts remain). `LevelData.stackLimit` (validateLevel fills it: the level's `limit`,
   else `stack.maxHeight` when the level uses stacking — a recipe longer than 1 or a stacked start — else 1, so the
   classic levels behave exactly as before). `LevelZone.recipe` (bottom → top, default `[color]`, `color` must be
   `recipe[0]`); box colors must equal the union of recipes as a multiset. Stacked starts: boxes with the same
@@ -132,8 +133,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   throttle; the forks never go down while over a stack. Rate `forkRiseRate` (`logic/forkRise.ts`):
   `stack.forkRiseSpeed / (1 + 0.25·level)` (3.2: level 1 in 0.39 s, level 2 in 0.94 s). All of it is gated on
   `stackLimit > 1`.
-- **Sorting** (spec: `docs/SORTING.md`; levels 19–24). Every box has a colour and a symbol (`BoxState.symbol`:
-  `LevelBox.symbol`, else `DEFAULT_SYMBOL[color]`, so levels 1–18 are unchanged). A zone declares what it accepts
+- **Sorting** (spec: `docs/SORTING.md`; the former levels 19–24, removed on 2026-09-30 to be redone: today only the
+  «Benchmark» uses symbols, the system and its tests on inline layouts remain). Every box has a colour and a symbol
+  (`BoxState.symbol`: `LevelBox.symbol`, else `DEFAULT_SYMBOL[color]`, so classic levels are unchanged). A zone declares what it accepts
   (`LevelZone.color?` / `symbol?`, at least one → `ZoneState.accepts`): colour only = any box of that colour,
   symbol only = any box with that symbol, both = that exact box. `accepts(zone, box)` (core/sorting) is the single
   source of truth: a zone is satisfied iff its (bottom) box meets all its criteria, boxes above it follow the colour
@@ -155,7 +157,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   and stays open while the load is inside; meanwhile the heading is locked (`ForkliftController.setHeadingLock`) and
   the level cannot change. Pick / drop act on the selected slot only with the forks at its level; facing a column never
   drops on the floor. Events keep their shape plus `boxPicked.fromSlotId`, `boxDropped.slotId` (`zoneId: null`),
-  `zoneReleased { zoneId: null, slotId }`.
+  `zoneReleased { zoneId: null, slotId }`. Rack levels only (2026-09-30): a box resting on its destined zone or slot
+  is locked (`BoxState.locked`; never a pick, drop or stack target, picking at it gives the gentle `actionIdle`), and
+  `boxDropped.wrongTarget` is true when a box lands on a floor zone or a cued slot that is not its destiny («libre»
+  slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every zone is satisfied and nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
@@ -172,11 +177,14 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   placed on the map cell or legend entry to fix). Ids and orders must be unique across both formats. `renderLevel`
   writes any LevelData back as canonical text; `parseLevel(renderLevel(l))` deep-equals `l` (tested for every shipped
   level). The 24 JSON levels were migrated with a deep-equality proof and deleted: `.level` is the single source.
+  Levels 4–24 were then removed (2026-09-30) to be redone: the game ships levels 1–3 (`SHIPPED` in `levels.test.ts`).
+  Saves written by the 24-level game still load: `ProgressStore` reads indices past the last level as the last one
+  and ignores times of ids no longer in the game (the stored document is not rewritten).
 - Special levels: `src/data/levels/especiales/*.level`, same format and validation, outside the game's order. The
   `LEVELS` glob is not recursive, so they never reach `LEVELS`, saved times, unlocks or "Continuar"; the registry loads
   them apart (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`) and refuses an id or order that clashes
   with a game level (`loadSpecialSources`). Today only the «Benchmark» (`BENCHMARK_ID = 'benchmark'`, order 100), played
-  from test mode (`Game.startBenchmark`). `npm run levels` reports them after the game's levels ("Toro · 24 niveles + 1
+  from test mode (`Game.startBenchmark`). `npm run levels` reports them after the game's levels ("Toro · 3 niveles + 1
   especial"), `levels:fmt` and the round-trip test cover them too.
 - Level ids key saved progress (and seed the decor RNG): never change a shipped id. Box / zone ids are generated
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
@@ -196,13 +204,15 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Storage racks (docs/RACKS.md) are loaded by driving straight at a column: its front cell and the cell behind it must
   be free floor (validateLevel checks the front cell; the solvability tests catch the rest).
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
-  somewhere reachable to park a box temporarily (level 4+ needs spare space to reorganize).
+  somewhere reachable to park a box temporarily (a level whose boxes start on wrong zones needs spare space to
+  reorganize).
 - Level 1 is one straight run along the forklift's start heading, so holding W alone (`"vehicle"` mapping) reaches
   the box and then the zone (`src/integration/level1Controls.test.ts` simulates it with the real GameState). 3-tier shelves only against the back walls (z = 0 or x = 0).
-- Three chapters: 1–12 classic (stackLimit 1), 13–18 stacking (13–14 stackLimit 2), 19–24 sorting by colour +
-  symbol (stackLimit 1). Box count and area grow within each chapter. Start headings face a box straight ahead;
-  the stacking and sorting chapters drive away from the camera (every sorting zone lies further from it than the
-  start). The shared grid model (`src/data/levels/solver.ts`, used by `levels.test.ts` and the autopilot in
+- Today the game ships levels 1–3 (classic, stackLimit 1); levels 4–24 were removed on 2026-09-30 to be redone.
+  They were three chapters: 1–12 classic, 13–18 stacking (13–14 stackLimit 2), 19–24 sorting by colour + symbol
+  (stackLimit 1). The level tests keep the chapter-aware checks (box count and area grow within each chapter, which
+  starts small again). Start headings face a box straight ahead; the stacking and sorting chapters drove away from the
+  camera (every sorting zone further from it than the start). The shared grid model (`src/data/levels/solver.ts`, used by `levels.test.ts` and the autopilot in
   `src/integration/levelsPlayable.test.ts`) keeps per-cell stacks of boxes (colour × symbol): a move lifts
   a stack's top box and drops it on the floor or on a stack with room (conservative: stacks block driving and turning
   sweeps); zones accept by their criteria, and in sorting levels a layout whose loose boxes have no complete sorting
@@ -322,7 +332,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
   horquilla · rueda · X B mando".
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
-  "Continuar", discreet level dots in even rows of twelve (24 levels = two rows; 22 px dots on short windows such as
+  "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
+  short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · M silencio (M activar sonido when muted)
   · T tiempo · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
@@ -358,6 +369,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, highest unlocked index, last level
   (index + `lastLevelId`, additive, same version), settings. Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
+  Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
+  longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
   Every call re-reads storage first and each change writes only its own delta (read-modify-write), so two tabs
   never erase each other's progress.
 
@@ -377,7 +390,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `start()` with the same index or no index ("Continuar") resumes it, even a level only test mode opened; the clock
   restarts on the first input. Turning test mode off on the title drops such a suspended level and shows the real
   "Continuar" level. "Continuar" follows `flow.continueTarget`: a saved last level already cleared, whose next level
-  is open but not cleared, moves on to that next level (an old 12-level save leads into levels 13–18).
+  is open but not cleared, moves on to that next level (a save from before new levels were added leads into the first
+  new one).
 - `startBenchmark()` (test mode on, else a no-op): loads `getSpecialLevel(BENCHMARK_ID)` without touching progress (no
   `record`, no `unlock`, no `setLastLevel`; `LevelResult.practice` true); `levelIndex` keeps naming the game level
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real

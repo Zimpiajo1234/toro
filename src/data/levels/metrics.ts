@@ -11,6 +11,7 @@ import {
   boxCode,
   correctPrefix,
   deadEnds,
+  lockedAt,
   minMoves,
   occupancyOf,
   reachableFrom,
@@ -228,6 +229,8 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
         });
   const needed: number[] = [];
   for (let c = 0; c < grid.posCount; c++) {
+    // A locked box (levels with racks) is never lifted and takes nothing more: no reason to reach it.
+    if (lockedAt(grid, stacks, c)) continue;
     const steps = grid.steps[c];
     const open = steps !== null && correctPrefix(grid, stacks, c) === stacks[c].length && stacks[c].length < steps.length;
     if (stacks[c].length > 0 || open) needed.push(c);
@@ -237,7 +240,8 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
   const gatekeepers: string[] = [];
   if (unreached.length > 0) {
     for (const [cell, boxes] of byCell) {
-      if (grid.isSlot(cell) || !touches(base, cell)) continue;
+      // A locked box (levels with racks: on its destiny from the start) never moves, so it opens nothing.
+      if (grid.isSlot(cell) || !touches(base, cell) || lockedAt(grid, stacks, cell)) continue;
       const without = occupancy.slice();
       without[cell] = -1;
       const region = reachableFrom(grid, without, start);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseLevel } from '../asciiLevel';
 import { parseTargets } from '../difficulty';
-import { LEVEL_SOURCES, LEVELS } from './index';
+import { LEVEL_SOURCES, LEVELS, type LevelSource } from './index';
 import { checkLevelTargets, checkTargets, levelMetrics, metricRange } from './metrics';
 import { levelsReport, selectSources } from './report';
 import {
@@ -24,6 +24,157 @@ import {
 
 const level = (lines: string[]) => parseLevel(`${lines.join('\n')}\n`).level;
 const byId = (id: string) => LEVELS.find((l) => l.id === id)!;
+
+/*
+ * Levels 4–24 were removed (2026-09-30) to be redone. The layouts below that name one of them are that level, inline,
+ * so the solver and metrics keep their expectations on stacks and symbols while no shipped level uses them.
+ */
+
+/** A layout as a registry source (for the report), its text kept as written. */
+const sourceOf = (file: string, lines: string[]): LevelSource => {
+  const text = `${lines.join('\n')}\n`;
+  return { file, format: 'level', ...parseLevel(text, file), text };
+};
+
+/** The former level 13: the blue base already on its zone, the mint box goes on top. */
+const ONE_ON_TOP = level([
+  '# 13 · Una encima de otra',
+  'id: una-encima',
+  'limit: 2',
+  'ventanas: norte 2-4',
+  '',
+  '  0123456',
+  '0 ......p',
+  '1 .......',
+  '2 .1.a.<.',
+  '3 .......',
+  '4 .......',
+  '5 p......',
+  '',
+  '1 = zona pila azul,menta + caja azul',
+  'a = caja menta',
+]);
+
+/** The former level 14: a 2-high recipe built from two loose boxes, next to a nook between a shelf and a plant. */
+const BASE_FIRST = level([
+  '# 14 · Primero la base',
+  'id: primero-la-base',
+  'limit: 2',
+  'ventanas: norte 5-6, oeste 2-3',
+  '',
+  '  01234567',
+  '0 ...##..p',
+  '1 ........',
+  '2 .a...1..',
+  '3 ........',
+  '4 .^...b..',
+  '5 p.......',
+  '',
+  '1 = zona pila amarillo,azul',
+  'a = caja amarillo              b = caja azul',
+]);
+
+/** The former level 16: a stack that starts upside down on its zone, and a zone whose base is already in place. */
+const UPSIDE_DOWN = level([
+  '# 16 · Al revés',
+  'id: al-reves',
+  'limit: 3',
+  'ventanas: norte 7-8, oeste 2-4',
+  '',
+  '  0123456789',
+  '0 p..HHH...p',
+  '1 ..........',
+  '2 ..........',
+  '3 ...1...<..',
+  '4 ..........',
+  '5 ......2.a.',
+  '6 p.........',
+  '',
+  '1 = zona pila coral,lavanda + pila lavanda,coral        2 = zona pila azul,menta + caja azul',
+  'a = caja menta',
+  'H = estantería 3 alturas',
+]);
+
+/** The former level 17: a 3-high tower whose first two boxes start stacked away from the zone. */
+const TOWER = level([
+  '# 17 · Torre de tres',
+  'id: torre-de-tres',
+  'limit: 3',
+  'ventanas: norte 5-7, oeste 1-2',
+  '',
+  '  01234567890',
+  '0 p.........p',
+  '1 ...........',
+  '2 .....a..<..',
+  '3 ..1........',
+  '4 .........2.',
+  '5 H..........',
+  '6 H......b.c.',
+  '7 p..........',
+  '',
+  '1 = zona pila azul,amarillo,lavanda                     2 = zona menta',
+  'a = pila azul,amarillo      b = caja lavanda            c = caja menta',
+  'H = estantería 3 alturas',
+]);
+
+/** The former level 21: the first box that fits two zones (coral ■: «coral» or «■»). */
+const TWO_PLACES = level([
+  '# 21 · Dos sitios posibles',
+  'id: dos-sitios-posibles',
+  'limit: 1',
+  'ventanas: norte 2-4, oeste 2-3',
+  '',
+  '  012345678',
+  '0 p......##',
+  '1 .1.2.3...',
+  '2 .........',
+  '3 ....d.a.<',
+  '4 .4.......',
+  '5 ....b.c..',
+  '6 p........',
+  '',
+  '1 = zona coral         2 = zona ■             3 = zona azul          4 = zona ▲',
+  'a = caja coral ■       b = caja amarillo ■    c = caja azul ●        d = caja menta ▲',
+]);
+
+/** The former level 23, «La muestra» (docs/SORTING.md), as the report reads it: canonical text, order 23. */
+const SAMPLE_SOURCE = sourceOf('src/data/levels/muestra.level', [
+  '# 23 · La muestra',
+  'id: la-muestra',
+  'limit: 1',
+  'ventanas: norte 2-4, oeste 3-4',
+  '',
+  '  0123456789',
+  '0 p.........',
+  '1 .1.2.3.4..',
+  '2 ..........',
+  '3 ..........',
+  '4 ....b..a..',
+  '5 ..c.......',
+  '6 .....d.^.p',
+  '',
+  '1 2 = zona ▲        3 = zona azul ■     4 = zona azul',
+  'a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●',
+]);
+const SAMPLE = SAMPLE_SOURCE.level;
+
+/** Stacking: each mint box fits the second step of the tower and the mint zone, so both have two destinations. */
+const TWO_DESTINATIONS = level([
+  '# 5 · Dos destinos',
+  'id: dos-destinos',
+  'limit: 2',
+  '',
+  '  0123456',
+  '0 .......',
+  '1 .1...2.',
+  '2 .......',
+  '3 .a.b.c.',
+  '4 .......',
+  '5 ...^...',
+  '',
+  '1 = zona pila coral,menta      2 = zona menta',
+  'a = caja coral      b c = caja menta',
+]);
 
 /** Shortest plans of the shipped levels, searched once for the tests below that need one. */
 const shortest = new Map<string, ReturnType<typeof minMoves>>();
@@ -85,15 +236,16 @@ describe('minMoves (exact A* over box moves)', () => {
   });
 
   it('reports a proven lower bound when the search is capped', () => {
-    // Level 16 in the forward-only model: its first plans are a move too long, so a capped search leaves a range.
-    const capped = minMoves(byId('al-reves'), { maxWork: 1, reverse: false });
+    // The former level 16 in the forward-only model: its first plans are a move too long, so a capped search leaves a
+    // range.
+    const capped = minMoves(UPSIDE_DOWN, { maxWork: 1, reverse: false });
     expect(capped.exact).toBe(false);
     expect(capped.lower).toBeGreaterThanOrEqual(3);
     expect(capped.lower).toBeLessThanOrEqual(5);
     expect(capped.upper).toBeGreaterThanOrEqual(5);
-    expect(minMoves(byId('al-reves'), { reverse: false })).toMatchObject({ lower: 5, upper: 5, exact: true });
+    expect(minMoves(UPSIDE_DOWN, { reverse: false })).toMatchObject({ lower: 5, upper: 5, exact: true });
     // With the reverse gear (the default model) its greedy plan is already a shortest one; the towers still need A*.
-    expect(minMoves(byId('al-reves'))).toMatchObject({ lower: 5, upper: 5, exact: true });
+    expect(minMoves(UPSIDE_DOWN)).toMatchObject({ lower: 5, upper: 5, exact: true });
     const towers = minMoves(REVERSED, { maxWork: 1 });
     expect(towers.exact).toBe(false);
     expect(towers.lower).toBeGreaterThanOrEqual(6);
@@ -215,8 +367,8 @@ describe('the exact search heuristic', () => {
 
 describe('dead ends («callejones»)', () => {
   it('finds a real dead end when the forklift cannot back up, and none with the reverse gear', () => {
-    // Level 14: two boxes pushed into the nook between the shelf and the plant can only come out backwards.
-    const nook = byId('primero-la-base');
+    // The former level 14: two boxes pushed into the nook between the shelf and the plant can only come out backwards.
+    const nook = BASE_FIRST;
     const forward = deadEnds(nook, { reverse: false, maxStates: 300, checkWork: 20_000 });
     expect(forward.found).toBeGreaterThan(0);
     expect(forward.example).not.toBeNull();
@@ -230,7 +382,7 @@ describe('dead ends («callejones»)', () => {
     const range = metricRange(levelMetrics(byId('primer-encargo'), { deadEndStates: 1000 }), 'callejones');
     expect(range).toEqual({ lower: 0, upper: 0 });
     // A partial search only proves a lower bound.
-    const partial = metricRange(levelMetrics(byId('el-gran-almacen'), { deadEndStates: 5 }), 'callejones');
+    const partial = metricRange(levelMetrics(byId('rincon-tranquilo'), { deadEndStates: 5 }), 'callejones');
     expect(partial).toEqual({ lower: 0, upper: Infinity });
   });
 });
@@ -267,21 +419,22 @@ describe('levelMetrics', () => {
   });
 
   it('stacks: boxes above a wrong base or on top of a box that must move are blockers', () => {
-    expect(levelMetrics(byId('al-reves')).blockers.covering).toEqual(['b1', 'b2']);
-    expect(levelMetrics(byId('torre-de-tres')).blockers.covering).toEqual(['b2']);
-    expect(levelMetrics(byId('una-encima')).blockers.count).toBe(0);
+    expect(levelMetrics(UPSIDE_DOWN).blockers.covering).toEqual(['b1', 'b2']);
+    expect(levelMetrics(TOWER).blockers.covering).toEqual(['b2']);
+    expect(levelMetrics(ONE_ON_TOP).blockers.count).toBe(0);
   });
 
   it('sorting levels: ambiguous boxes, trap placements and distinct complete sortings', () => {
-    const summary = (id: string) => {
-      const m = levelMetrics(byId(id));
+    const summary = (lvl: (typeof LEVELS)[number]) => {
+      const m = levelMetrics(lvl);
       return [m.ambiguous, m.traps, m.sortings];
     };
-    expect(summary('dos-sitios-posibles')).toEqual([1, 1, 1]);
-    expect(summary('la-muestra')).toEqual([2, 2, 1]);
-    expect(summary('el-gran-reparto')).toEqual([3, 3, 1]);
+    expect(summary(TWO_PLACES)).toEqual([1, 1, 1]);
+    expect(summary(SAMPLE)).toEqual([2, 2, 1]);
+    // Classic levels do not sort by symbol: no sortings to count.
+    expect(summary(LEVELS[0])).toEqual([0, 0, null]);
     // Stacking: a box that fits the base of one zone and a higher step of another has two destinations.
-    expect(levelMetrics(byId('el-gran-apilado')).ambiguous).toBe(6);
+    expect(levelMetrics(TWO_DESTINATIONS).ambiguous).toBe(2);
   });
 
   it('checkLevelTargets measures only what the targets need and stops once they are decided', () => {
@@ -297,7 +450,7 @@ describe('levelMetrics', () => {
     const results = checkTargets(m, parseTargets('extra>=1, bloqueos=2, movimientos<=3, extra>=2, repartos>=0, libre>=80'));
     expect(results.map((r) => r.ok)).toEqual([true, true, true, false, false, true]);
     expect(metricRange(m, 'movimientos')).toEqual({ lower: 3, upper: 3 });
-    const capped = levelMetrics(byId('al-reves'), { maxWork: 1 });
+    const capped = levelMetrics(UPSIDE_DOWN, { maxWork: 1 });
     expect(metricRange(capped, 'movimientos').lower).toBe(capped.moves.lower);
     expect(checkTargets(capped, parseTargets('movimientos<=5'))[0].ok).toBe(capped.moves.upper === 5 && capped.moves.exact);
   });
@@ -305,22 +458,26 @@ describe('levelMetrics', () => {
 
 describe('npm run levels report', () => {
   it('selects levels by order, #position, id or file name', () => {
-    const ids = (args: string[]) => selectSources(LEVEL_SOURCES, args).map((s) => s.level.id);
-    expect(ids(['23', '#1', 'dos-colores', 'level-04', 'level-05.level'])).toEqual([
+    const sources = [...LEVEL_SOURCES, SAMPLE_SOURCE];
+    const ids = (args: string[]) => selectSources(sources, args).map((s) => s.level.id);
+    expect(ids(['23', '#1', 'dos-colores', 'level-03', 'level-02.level', 'muestra', '#4'])).toEqual([
       'la-muestra',
       'primer-encargo',
       'dos-colores',
-      'pequeno-desorden',
-      'cruce-de-pasillos',
+      'rincon-tranquilo',
+      'dos-colores',
+      'la-muestra',
+      'la-muestra',
     ]);
-    expect(() => selectSources(LEVEL_SOURCES, ['nada'])).toThrow(/No encuentro el nivel «nada»/);
+    expect(() => selectSources(sources, ['nada'])).toThrow(/No encuentro el nivel «nada»/);
   });
 
   it('prints one level in detail: its text, metrics, targets and a shortest plan', () => {
-    const report = levelsReport(LEVEL_SOURCES, ['23']);
-    expect(report).toBe(levelsReport(LEVEL_SOURCES, ['la-muestra']));
+    const sources = [...LEVEL_SOURCES, SAMPLE_SOURCE];
+    const report = levelsReport(sources, ['23']);
+    expect(report).toBe(levelsReport(sources, ['la-muestra']));
     for (const part of [
-      '== 23 · La muestra · la-muestra · src/data/levels/level-23.level ==',
+      '== 23 · La muestra · la-muestra · src/data/levels/muestra.level ==',
       '4 ....b..a..',
       'a = caja azul ▲',
       'movimientos  4 (exacto)',

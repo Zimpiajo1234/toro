@@ -4,10 +4,15 @@ Decisiones (2026-09-29): segundo atributo = **símbolo** (los glifos que ya exis
 `diamond`, `cross`) · ambigüedad permitida desde el nivel 21 · **sin** combinar con pilas en este capítulo
 (niveles 19–24 con `stackLimit` 1; recetas de pila siguen siendo solo de color).
 
+**Niveles retirados (2026-09-30):** los niveles 19–24 (con todos los del 4 al 24) se retiraron para rehacerlos; hoy
+ningún nivel del juego clasifica por símbolo (sí el Benchmark, docs/RACKS.md). El sistema sigue entero y sus tests usan
+disposiciones escritas en el propio test: «La muestra» (el antiguo 23) y el antiguo 21 en `src/data/levels/levels.test.ts`,
+`metrics.test.ts` y `src/integration/levelsPlayable.test.ts`.
+
 ## Reglas
 1. Cada caja tiene **color** y **símbolo**. En el nivel el símbolo es opcional (`caja azul` frente a `caja azul ▲`,
    docs/LEVELS.md): si falta, se deriva del color con el mapa
-   canónico actual (azul ● · menta ▲ · amarillo ■ · coral ◆ · lavanda ✚), así los niveles 1–18 no cambian.
+   canónico actual (azul ● · menta ▲ · amarillo ■ · coral ◆ · lavanda ✚), así los niveles clásicos no cambian.
 2. Cada zona **acepta** según los criterios que declara (al menos uno):
    - solo `color` → «cualquier caja de ese color» (lo de siempre);
    - solo `symbol` → «cualquier caja con ese símbolo», del color que sea;
@@ -45,7 +50,9 @@ Decisiones (2026-09-29): segundo atributo = **símbolo** (los glifos que ya exis
   campanita de progreso sigue subiendo con cada zona cumplida (misma nota, `chimeNote`). La audio no lee el nivel:
   Game le pasa el tipo de encaje de la zona junto al evento (`handleEvent(event, match)`).
 
-## Niveles 19–24
+## Niveles 19–24 (retirados, para rehacerlos)
+Lo que enseñaba cada uno:
+
 | Nivel | Nombre | Enseña |
 |---|---|---|
 | 19 | Lo que dice la tapa | Solo zonas por símbolo (neutras ● ▲ ■); dos cajas azules van a sitios distintos: el color ya no manda |
@@ -55,11 +62,11 @@ Decisiones (2026-09-29): segundo atributo = **símbolo** (los glifos que ya exis
 | 23 | La muestra | **Nivel de muestra**: los tres tipos a la vez con la trampa clásica (ver abajo) |
 | 24 | El gran reparto | Final: ocho cajas, los tres tipos, tres cajas ambiguas (azul ▲, amarillo ◆, lavanda ▲) y un único reparto completo |
 
-Todos: `stackLimit` 1, arranque mirando la primera caja (a ≤ 4 casillas), recorrido hacia el fondo (lejos de la
+Todos tenían: `stackLimit` 1, arranque mirando la primera caja (a ≤ 4 casillas), recorrido hacia el fondo (lejos de la
 cámara, que está hacia +x,+z: A/D no se invierten en pantalla) con todas las zonas más al fondo que la salida, pasillos
 de ≥ 2 casillas donde se gira con carga, nada tapado por estanterías.
 
-### Nivel 23 (muestra de la lógica)
+### La muestra (el antiguo nivel 23; sigue en los tests como muestra de la lógica)
 - Zonas (fila del fondo, z = 1): «cualquier ▲» (1,1) y (3,1) neutras, «azul ■ exacto» (5,1), «cualquier azul» (7,1).
 - Cajas: azul ▲ (7,4), azul ■ (4,4), menta ▲ (2,5), azul ● (5,6). La carretilla sale en (7,6) mirando al fondo.
 - Único reparto completo: azul ■ → exacta · azul ● → «cualquier azul» · azul ▲ y menta ▲ → las dos «▲».
@@ -88,7 +95,8 @@ de ≥ 2 casillas donde se gira con carga, nada tapado por estanterías.
 - Lógica: `refreshZone` usa `fitsLevel` (abajo `accepts`, encima receta); imán por especificidad; eventos con la misma
   forma que antes (`boxDropped.correct` = la zona aceptó la caja).
 - Tests: `core/sorting` y validador (matriz de aceptación, caminos aumentantes, errores), lógica (satisfacción, imán
-  por especificidad, ambigüedad, la trampa del 23 de principio a fin), render (almohadillas, grabado, tapas, respiración,
-  pista de intercambio, contorno), audio (timbres), Game (tipo de encaje), solver de rejilla y autopiloto con cajas
-  color × símbolo, aceptación por criterios y un paso más de coste cuando el resto ya no tiene reparto completo (así
-  evitan trampas sin prohibirlas); el autopiloto también cae a propósito en la trampa del 23 y sale de ella a 60 y 20 fps.
+  por especificidad, ambigüedad, la trampa de la muestra de principio a fin), render (almohadillas, grabado, tapas,
+  respiración, pista de intercambio, contorno), audio (timbres), Game (tipo de encaje, sobre las zonas del Benchmark),
+  solver de rejilla y autopiloto con cajas color × símbolo, aceptación por criterios y un paso más de coste cuando el
+  resto ya no tiene reparto completo (así evitan trampas sin prohibirlas); el autopiloto también cae a propósito en la
+  trampa de la muestra y sale de ella a 60 y 20 fps.

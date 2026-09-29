@@ -10,7 +10,7 @@ import { validateLevel } from '../validateLevel';
  * Subfolders are not scanned: `especiales/` holds the special levels (SPECIAL_LEVELS below), never part of LEVELS.
  */
 export interface LevelSource {
-  /** Path from the project root, e.g. "src/data/levels/level-23.level". */
+  /** Path from the project root, e.g. "src/data/levels/level-03.level". */
   readonly file: string;
   readonly format: 'level' | 'json';
   readonly level: LevelData;

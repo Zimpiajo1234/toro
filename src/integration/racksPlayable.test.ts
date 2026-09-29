@@ -107,6 +107,11 @@ describe('rack levels are playable with the real controls', () => {
       expect(inSlots.every((d) => d.zoneId === null && d.recipeLength <= 1)).toBe(true);
       expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
       for (const e of out.events) if (e.type === 'boxDropped' || e.type === 'boxPicked') expect(Number.isFinite(e.level)).toBe(true);
+      // A box put on its destiny is locked: never picked up again.
+      for (const d of drops(out.events).filter((x) => x.correct)) {
+        const after = out.events.slice(out.events.indexOf(d) + 1);
+        expect(after.some((e) => e.type === 'boxPicked' && e.boxId === d.boxId), d.boxId).toBe(false);
+      }
     });
   }
 
@@ -126,7 +131,7 @@ describe('rack levels are playable with the real controls', () => {
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     const all = drops(out.events);
-    expect(all[0]).toMatchObject({ boxId: mint.id, slotId: 'r1:0:0', correct: false });
+    expect(all[0]).toMatchObject({ boxId: mint.id, slotId: 'r1:0:0', correct: false, wrongTarget: true });
     expect(all.filter((d) => d.boxId === mint.id).at(-1)).toMatchObject({ slotId: 'r1:0:1', correct: true });
     expect(out.moves).toBeGreaterThanOrEqual(DECOY.boxes.length + 1);
   });

@@ -1,9 +1,14 @@
 # Mecánica: estanterías almacenables
 
 Decisiones (2026-09-29, plan «estanterías almacenables + Benchmark»): el apilado acumulativo pasa a **estanterías
-almacenables** con huecos a varias alturas y pistas de color / símbolo, con **solución única** por nivel. Los niveles
-1–24 no cambian (las recetas de pila de 13–18 quedan como sistema heredado hasta el rediseño de niveles). Hoy solo el
-nivel especial **Benchmark** (Modo prueba, ver abajo) usa estanterías.
+almacenables** con huecos a varias alturas y pistas de color / símbolo, con **solución única** por nivel. Hoy solo el
+nivel especial **Benchmark** (Modo prueba, ver abajo) usa estanterías: el juego trae los niveles 1–3, sin estanterías
+(los niveles 4–24 se retiraron el 2026-09-30 para rehacerlos; las recetas de pila que usaban 13–18 quedan como sistema
+heredado).
+
+Decisiones (2026-09-30), **solo en niveles con estanterías**: la caja destinada queda **fija** en su objetivo (reglas
+10–11), una caja en un objetivo que no es su destino da un **zumbido suave** (regla 12) y, mientras llevas una caja, los
+objetivos cuya pista encaja **brillan mucho más** que antes (regla 5). Los niveles sin estanterías no cambian.
 
 ## Reglas
 1. **Estantería almacenable** = mueble de 1 casilla de fondo, N casillas de ancho (una **columna** por casilla), de 1 a 3
@@ -21,15 +26,26 @@ nivel especial **Benchmark** (Modo prueba, ver abajo) usa estanterías.
    combinan para que exista exactamente un reparto completo (cajas idénticas son intercambiables). Lo comprueba
    `validateLevel`.
 5. **Solo brilla con su caja**: un objetivo solo se cumple (brilla) con su caja destinada; otra caja que encaje en la
-   pista lo deja neutro (nunca rojo ni texto). Al llevar una caja **respiran los huecos cuya pista encaja** (pista, no
-   solución): `cueFits` frente a `isDestined`.
+   pista lo deja neutro (nunca rojo ni texto; solo el zumbido de la regla 12). Al llevar una caja **laten con claridad
+   los objetivos cuya pista encaja** (pista, no solución: `cueFits` frente a `isDestined`), huecos y zonas, en el tono de
+   la caja: un pulso unas 4 veces más fuerte que la respiración suave de antes, al mismo ritmo tranquilo.
 6. **Huecos independientes**: se llenan y vacían en cualquier orden (no hay que llenar el de abajo primero).
 7. **Altura por huecos**: delante de una estantería, **F sube / V baja** un hueco, igual que la **rueda del ratón** (un
    paso de rueda = un hueco) y el mando (**X sube / B baja**). Fuera de las estanterías la horquilla es automática, como
    siempre.
 8. **Suelo**: apilar en el suelo sigue permitido **solo como aparcamiento** (`limit:` o una pila inicial); las zonas de
    suelo piden una caja (sin recetas) y también siguen la regla «solo brilla con su caja».
-9. Niveles sin estanterías: exactamente como antes.
+9. Niveles sin estanterías: exactamente como antes (sin cajas fijas, sin zumbido, el brillo de siempre).
+10. **Caja fija** (2026-09-30): la caja destinada, sola en su zona o en su hueco con pista, está **hecha**: al dejarla,
+    el brillo del objetivo destella intenso, suena la campana de siempre y salta un pequeño efecto de acierto; el brillo
+    se asienta suave y la caja pasa despacio a un **tono más hondo de su mismo color**. Desde entonces **no se puede
+    coger** (la acción ahí da el `actionIdle` suave) y **no se deja ni apila nada encima**. Una caja que empieza en su
+    destino ya empieza fija (sin efecto al cargar).
+11. Como una caja fija no vuelve a salir, colocar una caja en su destino no se deshace: un nivel con estanterías no
+    debe tener un destino que, ocupado, cierre el paso a lo que queda (`deadEnds` lo cuenta como callejón, ver «Solver»).
+12. **Objetivo equivocado**: una caja que cae en una zona o en un hueco con pista que **no** es su destino (también la
+    «trampa» que encaja en la pista) suena con un **zumbido de error suave** y se queda cogible, sin nada visual. Los
+    huecos «libre» y el suelo sin zona nunca zumban.
 
 ## En el archivo `.level`
 
@@ -75,7 +91,8 @@ R = estantería frente oeste: azul ● / ▲ + caja azul ● | menta ▲ / libre
 Una estantería de 2 columnas de frente oeste (se carga desde x = 5). Columna 1 (arriba en el mapa): abajo «azul ●»
 exacto, encima «cualquier ▲», donde empieza la azul ●. Columna 2: abajo «menta ▲» exacto, encima libre. Único reparto:
 azul ● abajo en la columna 1 (sale de su hueco equivocado), azul ▲ al ▲, menta ▲ a su hueco exacto, amarillo ■ a la
-zona. La menta ▲ encaja en la pista «▲» pero no es su destino: ahí no brillaría (una «trampa» amable).
+zona. La menta ▲ encaja en la pista «▲» pero no es su destino: ahí no brillaría y sonaría el zumbido suave (una
+«trampa» amable).
 
 Errores (en español, `archivo:línea:columna`): frente o dos puntos que faltan, más de 3 huecos, hueco vacío, pista
 desconocida, «libre» con otra cosa, caja mal escrita tras el `+`, `/ | :` fuera de una estantería, estantería que no es
@@ -93,9 +110,18 @@ sin reparto completo (señala la caja) o con más de uno (señala la zona o el h
   `id, rackId, column, level, cell, front, facing, pos, accepts` (pista, `null` = libre), `destined` (tipo de caja
   destinada, `null` = libre), `occupiedBy`, `satisfied`. `ZoneState.destined` (con estanterías; `null` sin ellas).
   `BoxState.slotId`. `InteractionHint.rack: RackHint | null` = `{ rackId, column, levels, level (elegido), slotId, ready }`.
+- `BoxState.locked: boolean` (2026-09-30): `true` mientras la caja descansa sola en su zona o su hueco destinado (el
+  objetivo `satisfied`, reglas 10–11), también al empezar el nivel; siempre `false` en niveles sin estanterías. Una caja
+  fija nunca es objetivo de coger (`targetBoxId`) ni de dejar o apilar (`dropCell`); en un hueco con una caja fija,
+  `hint.rack.ready` es `false`.
 - `InputFrame.forkStep?: -1 | 0 | 1`. Eventos con la misma forma y campos opcionales solo cuando tocan un hueco:
   `boxPicked.fromSlotId`, `boxDropped.slotId` (entonces `zoneId: null`, `cell` = casilla de la estantería, `level` =
-  hueco, `recipeLength` 1 con pista / 0 libre), `zoneReleased { zoneId: null, slotId }` al sacar la caja destinada.
+  hueco, `recipeLength` 1 con pista / 0 libre), `zoneReleased { zoneId: null, slotId }` al sacar la caja destinada (ya
+  no ocurre en niveles con estanterías: la caja destinada está fija; tampoco el `zoneReleased` de una zona).
+- `boxDropped.wrongTarget?: true` (2026-09-30), solo en niveles con estanterías: la caja cayó en una zona o en un hueco
+  con pista que no quedó cumplido con ella (no es su destino; la trampa que encaja en la pista, también). Nunca vale
+  `false`: falta con su destino (`correct`), en un hueco «libre», en el suelo sin zona y en todo nivel sin estanterías,
+  así que allí los eventos conservan su forma exacta.
 
 ## Solución única y cajas destinadas
 
@@ -131,6 +157,15 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   tampoco mientras la horquilla va hacia el hueco elegido (entonces no hay vista previa: `dropCell` es `null`). Sí se
   puede aparcar encima de una pila de la casilla del frente cuando la horquilla está sobre ella (más alta que el hueco
   elegido), y en la casilla del frente si la carga no llega a la cara.
+- **Cajas fijas** (`GameState.refreshSlot` / `refreshZone`): `locked` = hueco o zona `satisfied` con esa caja (una zona
+  con estanterías pide una caja: su receta es de 1). Se calcula siempre que cambia el objetivo, así que una caja
+  destinada que empieza debajo de otra (pila inicial en su zona) queda fija cuando se levanta la de encima. Coger la
+  quita (`locked = false`), pero una caja fija no se coge: `Interaction.findPickTarget` la salta y `findDrop` nunca
+  ofrece su casilla (ni suelo ni pila). Para la carga, una caja fija es como una pila llena: la horquilla no sube para
+  pasar sobre ella y la carga no la atraviesa (`refreshLoadPassage`, `clearLevel`); la excepción es la carga que se
+  acaba de levantar de encima de ella, que sigue alta hasta salir de su casilla, sin sacudidas.
+- **Objetivo equivocado**: `dropCarried` / `dropInSlot` marcan `wrongTarget` cuando el objetivo sigue sin cumplir tras
+  dejar la caja (zona: solo con estanterías; hueco: con pista). Nada más cambia: la caja se queda cogible.
 
 ## Solver, métricas y piloto automático
 
@@ -138,8 +173,16 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   desde la casilla de detrás del frente con un paso adelante (cualquier hueco vacío de la columna) y una caja sacada de
   un hueco solo sale marcha atrás. En niveles con estanterías cada objetivo pide su tipo destinado (sin trampas). Las
   cotas de corredores y ciclos se apagan con estanterías (las simples siguen siendo admisibles y consistentes).
+- **Cajas fijas en el modelo**: `lockedAt(grid, stacks, pos)` (su caja destinada, sola en su zona o hueco; siempre
+  `false` sin estanterías), `canLift` y `canStackOn` / `validDrop` / `carrySearch`: las búsquedas, la repetición de un
+  plan (`applyMove`) y `deadEnds` nunca levantan una caja fija ni dejan nada sobre ella. Sin estanterías todo movimiento
+  se deshace (marcha atrás) y `deadEnds` solo comprueba a fondo los que no; con estanterías, dejar una caja en su
+  destino ya no se deshace, así que **cada** movimiento que fija una caja pasa la comprobación completa (voraz y luego
+  exacta): un destino que, ocupado, cierra el paso a lo que queda sale como callejón.
 - Métricas: `repartos` (= 1 en niveles con estanterías: repartos por posición), `trampas` (pista que encaja pero no es
-  el destino), `huecos` (total / con pista / libres), `callejones`.
+  el destino), `huecos` (total / con pista / libres), `callejones`. Una caja fija desde el principio nunca cuenta como
+  la que tapa el paso (`blockersOf`): no se va a mover; tampoco es un sitio al que haya que llegar, así que la caja que
+  solo abre el paso hacia ella no cuenta. Benchmark: `repartos` 1, `callejones` 0, 10 movimientos.
 - `src/integration/autopilot.ts`: elige el hueco con `forkStep` (una pulsación por hueco, como F / V), espera a la
   horquilla, mete la carga (o coge la caja) y sale marcha atrás. `Outcome.controls` (`forkSteps`, `reverseFrames`)
   cuenta las pulsaciones de F / V y los frames marcha atrás, para que los tests comprueben que se usaron de verdad.
@@ -168,11 +211,16 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
 - **Límite**: en estanterías de más de 2 columnas, las columnas del medio no tienen cara lateral: sus pistas solo se
   leen en el panel del fondo (por delante y por detrás). No hay geometría extra para ellas.
 - **`views/RackView.ts`**: una por estantería (armazón fusionado + un panel con su material de brillo por hueco con
-  pista, + la pista de cada hueco, fuera de la columna). Brillo **solo** con `slot.satisfied` (el ritmo de las zonas:
-  sube a ≈ 0,35 y se queda en ≈ 0,15): el panel con su emisivo y la pegatina aclarando su propio color (× 1 +
-  1,2 · brillo, nunca por debajo de × 1). Mientras
-  llevas una caja respiran los huecos vacíos cuya pista encaja (`cueFits`); si ningún objetivo libre la acepta, los
-  ocupados que encajan y no brillan respiran a ≈ ⅓ (la pista de intercambio de las zonas). Cada columna se vuelve
+  pista, + la pista de cada hueco, fuera de la columna, + su **banda de luz**: `buildSlotGlowGeometry`, `SLOT_GLOW`, un
+  marco suave con borde difuminado justo por fuera del hueco en las dos caras, sobre montantes y vigas, que nunca tapa
+  una pista ni el paso de la carga). Brillo **solo** con `slot.satisfied`: el destello y el reposo de
+  `views/success.ts` (abajo). El panel brilla con su emisivo y la pegatina aclara su propio color (× 1 + 1,2 · brillo,
+  nunca por debajo de × 1 ni por encima del tope `CUE_GLOW_CAP` 0,45: siempre un pastel de su color, nunca blanco).
+  Mientras llevas una caja **laten** los huecos vacíos cuya pista encaja (`cueFits`): brillo `INVITE_BASE` 0,4 ±
+  `INVITE_PULSE` 0,16 (0,24–0,56; antes 0,03–0,17) a `INVITE_RATE` 2,3, y la banda a 0,6 ± 0,25 de opacidad, todo en
+  el tono de la caja llevada (`SlotTone`: banda = color de la caja, panel = brillo de zona de ese color), así una pista
+  solo de símbolo no queda crema sobre crema. Si ningún objetivo libre la acepta, los ocupados que encajan y no brillan
+  laten con la fuerza de la pista de intercambio de siempre (`RACK_SWAP_INVITE` 0,1). Cada columna se vuelve
   fantasma por separado (prepaso de profundidad, como `ShelfView`): del todo (0,35) cuando tapa la carretilla o su carga,
   y entonces las cajas de sus huecos se desvanecen con ella; solo un poco (0,6) cuando tapa cajas en reposo o zonas.
   **Sin atenuante**: el fantasma desvanece el armazón y los paneles lisos, nunca las pistas, que siguen opacas y con su
@@ -188,6 +236,27 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   nivelada. **Cajas** (`BoxView`): en reposo a `rackSlotY(level)`; al cogerlas de un hueco, salto y elevación de
   objetivo más pequeños (no tocan la viga de encima); la caída dura `DROP_GLIDE_SEC` (= `box.dropLandSec`, lo que
   espera el audio). Dejar en un hueco no hunde nada debajo (cada hueco tiene su viga).
+- **Zonas con estanterías** (`ZoneView`, `rack`): la almohadilla y su halo laten como los huecos (`INVITE_*`, halo hasta
+  0,85) en el tono de la caja llevada (una zona «cualquier ▲» se enciende del color de la caja, no crema sobre crema) y,
+  cumplida, brillan en el tono de su caja destinada. Sin estanterías, la respiración suave de siempre (0,1 ± 0,07).
+- **Acierto y caja fija** (`views/success.ts`, solo con estanterías; `LevelView` lo dispara cuando una zona o un hueco
+  pasa a `satisfied`, nunca al cargar). Desde que la caja aterriza (`DROP_GLIDE_SEC`):
+  1. el objetivo **destella** a `FLASH_PEAK` 0,8 (subida rápida, `FLASH_RISE_SHARE` 14 %) y baja con calma al reposo
+     `TARGET_REST` 0,15; todo el destello dura `FLASH_SEC` 0,85 s (en los huecos, panel, pegatina y banda a 0,9);
+  2. a la vez, un **efecto de acierto** (`SuccessBurst`, `BURST_SEC` 0,65 s): 7 destellos pequeños (octaedros) del color
+     de la caja, algo aclarado, que se abren y se apagan; en un hueco, además, un anillo redondeado que crece alrededor
+     de la boca, en la cara que ve la cámara (la zona usa su propio anillo de suelo, un poco más fuerte: 0,65). Dos
+     efectos en reserva, creados al cargar el nivel (nada se crea por frame) y liberados con él;
+  3. tras el destello (`LOCK_DELAY` = `DROP_GLIDE_SEC` + `FLASH_SEC`), la caja pasa en `LOCK_SEC` 0,6 s a su **tono
+     hondo** (`BoxPalette.locked`, `lockTintOf`: cada tono pintado de la caja × `locked / base`, así cinta y símbolo
+     conservan su contraste) y su brillo tenue de «correcta» se apaga: se lee hecha y fija.
+  Tonos hondos (`Theme.boxes[color].locked`, mismo matiz ≈ 8–9 puntos más oscuro, nunca negro ni rojo): azul `#76a4d7`,
+  menta `#6cbf99`, amarillo `#e8c060`, coral `#e59ea9` (hacia rosa: nunca rojo, ni en un hueco en sombra), lavanda
+  `#9e86cd`. Al cargar o reiniciar, una caja ya fija sale con su tono hondo sin repetir nada; la ola de nivel completo
+  pasa también por las cajas fijas.
+- **Cajas fijas en pantalla**: sin salto ni brillo de «la cogería» aunque una pista la nombre, el marco del hueco elegido
+  se queda tenue (`ready` falso) y no hay vista previa encima (`dropsOnLocked`). Un objetivo equivocado no enseña nada:
+  solo suena (ver «Audio»).
 
 ## Audio (`src/audio`)
 
@@ -197,8 +266,15 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   **solo** con `correct` (= el hueco tiene su caja destinada); una caja que solo encaja, o cualquiera en un «libre», da
   el toc y nada más. El último objetivo lleva el segundo golpe y el arpegio de siempre.
 - `boxPicked.fromSlotId` → `SfxPlayer.slotLift`: un golpe más ligero que coger del suelo, un tono de metal tenue, un
-  pequeño deslizamiento y el mismo motor de horquilla. Sacar la caja destinada (`zoneReleased.slotId`) da el tic
-  neutro de siempre.
+  pequeño deslizamiento y el mismo motor de horquilla. Sacar la caja destinada (`zoneReleased.slotId`) daba el tic
+  neutro de siempre; con las cajas fijas ya no ocurre.
+- **Zumbido de objetivo equivocado** (2026-09-30): `boxDropped` con `wrongTarget` y sin `correct` (`isWrongTarget`) →
+  `SfxPlayer.wrongBuzz`, en zonas y en huecos con pista (la trampa que encaja, también). Suena después del golpe / toc
+  de siempre, a `DROP_LAND_SEC` + `WRONG_AFTER_LAND_SEC` (0,05 s: donde sonaría la campana de la caja destinada). Un
+  «no» suave y apagado de ≈ 0,2 s: un tono triangular grave (`WRONG_BUZZ_HZ` ≈ 185 Hz) y una sierra más floja a × 1,055
+  (`WRONG_BUZZ_DETUNE`: un batido lento de ≈ 10 Hz, el «bzz»), los dos bajando un poco (hasta × 0,86) bajo un paso bajo
+  cálido a 620 Hz; sin ruido, sin campana ni madera, con un pico por debajo del tic de «nada que hacer» y muy por debajo
+  del golpe de la caja. Nunca en un «libre», en el suelo sin zona, con la caja destinada ni en niveles sin estanterías.
 - Paso de horquilla → `AudioEngine.forkClick(nivel, dirección)`: un clic de retén a la mitad de volumen de un clic de
   UI, algo más agudo por nivel y más brillante al subir. Lo decide `Game` con `ForkStepWatcher` (`audio/forkSteps.ts`),
   solo en niveles con estanterías: suena cuando el jugador pidió un paso ese frame y `hint.rack.level` cambió en la
@@ -215,7 +291,8 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
 - Lo que leen render y audio: `snapshot.slots` (pista `accepts`, destino `destined`, `occupiedBy`, `satisfied`),
   `hint.rack` (hueco elegido, `ready`; `null` también al coger una caja del suelo delante de una columna),
   `hint.dropCell` / `dropLevel` (casilla de la estantería + nivel del hueco), `forklift.forkHeight` (nivel del hueco
-  n = altura n, como las pilas), `box.slotId` / `box.level`. Brillo: `slot.satisfied`; respiración: `cueFits(slot, caja)`.
+  n = altura n, como las pilas), `box.slotId` / `box.level`, `box.locked` (tono hondo, sin vista previa encima) y
+  `boxDropped.wrongTarget` (solo el audio). Brillo y destello: `satisfied` de zonas y huecos; latido: `cueFits(slot, caja)`.
 
 ## Nivel Benchmark (solo Modo prueba)
 

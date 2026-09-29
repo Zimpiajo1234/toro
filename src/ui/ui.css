@@ -651,8 +651,8 @@
 
 /* ---------- Level dots ---------------------------------------------------- */
 
-/* Twelve dots per row (12 × 26 + 11 × 2 = 334 px): the 24 warehouses read as two even rows (classic chapter on top;
-   stacking and sorting below). */
+/* Up to twelve dots per row (12 × 26 + 11 × 2 = 334 px), centred: today's 3 warehouses sit in one short row (levels
+   4–24 are being redone); 24 would read as two even rows. */
 .level-dots {
   display: flex;
   flex-wrap: wrap;
@@ -948,7 +948,7 @@
   .title__wordmark {
     font-size: clamp(48px, 14vh, 80px);
   }
-  /* The same two rows of twelve, a little smaller (12 × 22 + 11 × 2 = 286 px wide, 2 × 22 px tall), so the diorama
+  /* The same rows of up to twelve, a little smaller (12 × 22 + 11 × 2 = 286 px wide, 22 px per row), so the diorama
      band stays clear; the hover / focus ring still fits (the dot grows to 14 px). */
   .level-dots {
     row-gap: 0;

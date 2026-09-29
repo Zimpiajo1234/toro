@@ -109,7 +109,8 @@ export class Interaction {
    * Box the action would lift now, or -1: resting on top of its stack, center within pickupRadius of the fork point and within
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
    * inside another obstacle, so the load collider can always settle smoothly. A box in a rack slot is only a
-   * candidate in the slot the forks work on (RackAim: facing its column, forks at its level).
+   * candidate in the slot the forks work on (RackAim: facing its column, forks at its level). A locked box (levels
+   * with racks: resting on its destined zone or slot) never is.
    */
   findPickTarget(): number {
     const f = this.forklift;
@@ -123,7 +124,7 @@ export class Interaction {
     const aimed = aim.column >= 0 ? this.grid.slotBox(this.grid.slotOf(aim.column, aim.level)) : -1;
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
-      if (b.carried) continue;
+      if (b.carried || b.locked) continue;
       if (b.slotId !== null) {
         if (i !== aimed) continue;
         const dx = b.pos.x - px;
@@ -164,11 +165,11 @@ export class Interaction {
 
   /**
    * Cell the carried `box` would be dropped on. Candidates: the cell under the fork point and its 8
-   * neighbours that are in bounds, free (no shelf or plant; empty, or a stack with room — the box goes on top)
-   * and would not overlap the body by more than DROP_BODY_TOLERANCE. Zone magnet: among the zones within
-   * zoneMagnetRadius that would take this box next (core/sorting `takesNext`: an empty zone that accepts it, or a
-   * stack zone whose recipe asks for its color next), the most specific wins (color + symbol over a single
-   * criterion), then the nearest;
+   * neighbours that are in bounds, free (no shelf or plant; empty, or a stack with room — the box goes on top; never
+   * a locked box, which takes nothing) and would not overlap the body by more than DROP_BODY_TOLERANCE. Zone magnet:
+   * among the zones within zoneMagnetRadius that would take this box next (core/sorting `takesNext`: an empty zone
+   * that accepts it, or a stack zone whose recipe asks for its color next), the most specific wins (color + symbol
+   * over a single criterion), then the nearest;
    * otherwise the nearest candidate (which may be a zone that does not accept it when the forks are over it). If no
    * cell passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
    * is used, so a drop in a snug corner still works. Returns false when nothing fits.
@@ -211,7 +212,7 @@ export class Interaction {
 
     for (let z = cellZ - 1; z <= cellZ + 1; z++) {
       for (let x = cellX - 1; x <= cellX + 1; x++) {
-        if (!this.grid.canTakeBox(x, z)) continue;
+        if (!this.grid.canTakeBox(x, z) || this.lockedAt(x, z)) continue;
         const wx = x + 0.5 - this.halfWidth;
         const wz = z + 0.5 - this.halfDepth;
         const dSq = (wx - px) * (wx - px) + (wz - pz) * (wz - pz);
@@ -267,6 +268,12 @@ export class Interaction {
     out.zoneIndex = this.grid.zoneAt(nearestX, nearestZ);
     out.level = this.grid.height(nearestX, nearestZ);
     return true;
+  }
+
+  /** Levels with racks: the cell holds a locked box (nothing can be dropped or stacked on it). */
+  private lockedAt(x: number, z: number): boolean {
+    const top = this.grid.boxAt(x, z);
+    return top >= 0 && this.boxes[top].locked;
   }
 
   /**

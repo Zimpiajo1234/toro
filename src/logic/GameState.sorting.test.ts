@@ -22,6 +22,7 @@ import {
   type ZoneCriteria,
   type ZoneState,
 } from '../core/types';
+import { parseLevel } from '../data/asciiLevel';
 import { validateLevel } from '../data/validateLevel';
 import { LEVELS } from '../data/levels';
 import { GameState } from './GameState';
@@ -214,7 +215,8 @@ describe('validateLevel: sorting', () => {
   });
 
   it('classic levels are untouched: no symbol keys, the colour multiset rule, default symbols', () => {
-    for (const level of LEVELS.slice(0, 18)) {
+    // The classic levels kept after the level redesign (1–3).
+    for (const level of LEVELS.filter((l) => l.order <= 3)) {
       expect(usesSymbols(level), level.id).toBe(false);
       for (const z of level.zones) expect(Object.keys(z)).not.toContain('symbol');
       for (const b of level.boxes) expect(Object.keys(b)).not.toContain('symbol');
@@ -332,7 +334,27 @@ describe('sorting: zone magnet', () => {
 });
 
 describe('sorting: the level-23 sample (docs/SORTING.md)', () => {
-  const sample = LEVELS.find((l) => l.id === 'la-muestra')!;
+  // The old level 23 «La muestra» (levels 4–24 were removed for the redesign), inline: the trap it teaches still works.
+  const sample = parseLevel(
+    `# 23 · La muestra
+id: la-muestra
+limit: 1
+ventanas: norte 2-4, oeste 3-4
+
+  0123456789
+0 p.........
+1 .1.2.3.4..
+2 ..........
+3 ..........
+4 ....b..a..
+5 ..c.......
+6 .....d.^.p
+
+1 2 = zona ▲        3 = zona azul ■     4 = zona azul
+a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●
+`,
+    'la-muestra.level',
+  ).level;
   const NORTH = 180;
   const EAST = 90;
   const SOUTH = 0;

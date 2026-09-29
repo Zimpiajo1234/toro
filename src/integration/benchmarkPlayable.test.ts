@@ -3,7 +3,8 @@
  * (src/data/levels/especiales/benchmark.level) with the real GameState and the real controls — slot levels with
  * InputFrame.forkStep (one press per slot, like F / V), loads backed out of slots and out of the 1-cell corridor with
  * the reverse gear (S) — at 60 fps and at Game's worst dt (1/20). It also checks the level's gentle trap in the live
- * state: a box that fits a cue but is not the destined one leaves its slot dark, never anything negative.
+ * state: a box that fits a cue but is not the destined one leaves its slot dark (a soft `wrongTarget`, never anything
+ * negative), and a box put on its destiny locks there for good.
  */
 import { describe, expect, it } from 'vitest';
 import { slotsOf } from '../core/racks';
@@ -45,6 +46,15 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(fromSlots.some((p) => p.level === 2)).toBe(true);
     // Everything lit at the end: the last drop completes the ninth target (3 zones + 6 slots with a cue).
     expect(drops(out.events).at(-1)).toMatchObject({ correct: true, satisfiedCount: 9, total: 9 });
+    // Each box placed on its destiny locks there: it is never picked up again, and every target is lit once.
+    const placed = drops(out.events).filter((d) => d.correct);
+    expect(placed).toHaveLength(9);
+    for (const d of placed) {
+      expect(d).not.toHaveProperty('wrongTarget');
+      const after = out.events.slice(out.events.indexOf(d) + 1);
+      expect(picks(after).some((p) => p.boxId === d.boxId), d.boxId).toBe(false);
+    }
+    expect(out.events.some((e) => e.type === 'zoneReleased')).toBe(false);
   });
 });
 
@@ -83,6 +93,7 @@ describe('the Benchmark in the live game state', () => {
     expect(out.solved).toBe(true);
     const [park, second, third] = drops(out.events);
     expect(park).toMatchObject({ slotId: top.id, level: 2, correct: false, recipeLength: 0 });
+    expect(park).not.toHaveProperty('wrongTarget'); // a «libre» slot is never a wrong target
     expect(second).toMatchObject({ slotId: diamondSlot.id, level: 1, correct: true });
     expect(third).toMatchObject({ slotId: mintSlot.id, level: 0, correct: true });
     // No move wasted: the park is the one extra move the level needs.
@@ -99,7 +110,7 @@ describe('the Benchmark in the live game state', () => {
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     const all = drops(out.events);
-    expect(all[0]).toMatchObject({ boxId: yellow.id, slotId: circle.id, zoneId: null, correct: false, recipeLength: 1 });
+    expect(all[0]).toMatchObject({ boxId: yellow.id, slotId: circle.id, zoneId: null, correct: false, recipeLength: 1, wrongTarget: true });
     const last = all.filter((d) => d.boxId === yellow.id).at(-1)!;
     expect(last.correct).toBe(true);
     expect(last.slotId).not.toBe(circle.id);

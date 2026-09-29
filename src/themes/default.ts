@@ -41,13 +41,15 @@ export const defaultTheme: Theme = {
     light: '#fff5d6',
   },
   // `ink` (the large lid symbol of the sorting levels) and `engrave` (a symbol cut into a pad) are deeper tones of the
-  // same hue: readable from the default camera, never black, coral kept pink so it never reads as red.
+  // same hue: readable from the default camera, never black, coral kept pink so it never reads as red. `locked` (a box
+  // done and fixed on its destiny, levels with racks) is base ≈ 8–9 points darker in lightness, same hue: coral turns
+  // toward rose (hue ≈ 350°) and less saturated, so the deeper tone never reads as red, even in a shaded rack slot.
   boxes: {
-    blue: { base: '#9bbce0', tape: '#89abd2', glyph: '#b5cdea', ink: '#5f87b8' },
-    mint: { base: '#92d2b6', tape: '#80c1a5', glyph: '#b1e1cb', ink: '#4f9a7b' },
-    yellow: { base: '#f3d47c', tape: '#e7c56a', glyph: '#f8e3a6', ink: '#c2952f' },
-    coral: { base: '#f6b4ad', tape: '#eba39b', glyph: '#fad0cb', ink: '#d58780' },
-    lavender: { base: '#b8a6da', tape: '#a896cc', glyph: '#cfc2e8', ink: '#7f69ae' },
+    blue: { base: '#9bbce0', tape: '#89abd2', glyph: '#b5cdea', ink: '#5f87b8', locked: '#76a4d7' },
+    mint: { base: '#92d2b6', tape: '#80c1a5', glyph: '#b1e1cb', ink: '#4f9a7b', locked: '#6cbf99' },
+    yellow: { base: '#f3d47c', tape: '#e7c56a', glyph: '#f8e3a6', ink: '#c2952f', locked: '#e8c060' },
+    coral: { base: '#f6b4ad', tape: '#eba39b', glyph: '#fad0cb', ink: '#d58780', locked: '#e59ea9' },
+    lavender: { base: '#b8a6da', tape: '#a896cc', glyph: '#cfc2e8', ink: '#7f69ae', locked: '#9e86cd' },
   },
   zones: {
     blue: { fill: '#c9dbee', border: '#9dbde0', glow: '#b7d3f2', glyph: '#a7c4e4', engrave: '#86a8d0' },

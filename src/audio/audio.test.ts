@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC, RELEASE_AFTER_LAND_SEC, RESTORE_AFTER_PICK_SEC } from './AudioEngine';
+import {
+  AudioEngine,
+  COMPLETE_AFTER_LAND_SEC,
+  DROP_LAND_SEC,
+  isWrongTarget,
+  RELEASE_AFTER_LAND_SEC,
+  RESTORE_AFTER_PICK_SEC,
+  WRONG_AFTER_LAND_SEC,
+} from './AudioEngine';
 import type { AudioGraph } from './graph';
 import { BellInstrument } from './instruments/bell';
 import { PadInstrument } from './instruments/pad';
@@ -8,8 +16,16 @@ import { completionArpeggio, midiToFreq } from './music/harmony';
 import { biquadQ, filter } from './nodes';
 import { centsToRatio, chance, mulberry32, pick, range, vary, weightedIndex } from './random';
 import { MotorSound } from './motor';
-import { BEAM_LOWPASS_HZ, BEAM_MODES, LEVEL_PITCH, SfxPlayer } from './sfx';
-import { FakeAudioContext, FakeBiquad, FakeEventTarget, FakeGain, FakeOscillator, type FakeParam } from './testing/fakeAudio';
+import { BEAM_LOWPASS_HZ, BEAM_MODES, LEVEL_PITCH, SfxPlayer, WRONG_BUZZ_DETUNE, WRONG_BUZZ_LOWPASS_HZ, WRONG_BUZZ_SAG } from './sfx';
+import {
+  FakeAudioContext,
+  FakeBiquad,
+  FakeBufferSource,
+  FakeEventTarget,
+  FakeGain,
+  FakeOscillator,
+  type FakeParam,
+} from './testing/fakeAudio';
 import { VoicePool, type Voice } from './voices';
 
 describe('random helpers', () => {
@@ -336,6 +352,65 @@ describe('SfxPlayer', () => {
     expect(sum(peaksOf(up.ctx))).toBeLessThan(sum(peaksOf(ui.ctx)) * 0.6);
     // Short: every envelope decays within a few tens of milliseconds.
     for (const g of up.ctx.ofKind(FakeGain)) for (const e of g.gain.events) if (e.kind === 'target') expect(e.tau!).toBeLessThan(0.02);
+  });
+
+  it('a wrong target buzzes softly: low, beating, sagging, under a warm low-pass, about 0.2 s, no chime', () => {
+    const { ctx, sfx } = setup();
+    const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+    const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+    sfx.wrongBuzz(1);
+    expect(bell).not.toHaveBeenCalled();
+    expect(wood).not.toHaveBeenCalled();
+    expect(ctx.ofKind(FakeBufferSource)).toHaveLength(0); // tones only: no noise burst, nothing percussive
+
+    const oscs = ctx.ofKind(FakeOscillator);
+    expect(oscs).toHaveLength(2);
+    for (const o of oscs) {
+      // Low, but above the sub range small speakers drop.
+      expect(o.frequency.value).toBeGreaterThan(160);
+      expect(o.frequency.value).toBeLessThan(220);
+      // Sags a little: a "no", never a rising question.
+      const end = o.frequency.events.find((e) => e.kind === 'exp')!;
+      expect(end.value / o.frequency.value).toBeCloseTo(WRONG_BUZZ_SAG, 9);
+      expect(end.value).toBeLessThan(o.frequency.value);
+      expect(end.value).toBeGreaterThan(o.frequency.value * 0.8);
+      // Filtered: every tone goes through the warm, knee-soft low-pass.
+      const lp = o.outputs[0] as FakeBiquad;
+      expect(lp).toBeInstanceOf(FakeBiquad);
+      expect(lp.type).toBe('lowpass');
+      expect(lp.frequency.value).toBe(WRONG_BUZZ_LOWPASS_HZ);
+      expect(lp.Q.value).toBeLessThan(0); // linear Q < 0.707: no resonant bump
+    }
+    expect(WRONG_BUZZ_LOWPASS_HZ).toBeLessThanOrEqual(800);
+    // A soft buzz, not a note: the two tones beat slowly against each other (a flutter, never a rasp).
+    const [hum, beat] = oscs.map((o) => o.frequency.value).sort((a, b) => a - b);
+    expect(beat / hum).toBeCloseTo(WRONG_BUZZ_DETUNE, 9);
+    expect(beat - hum).toBeGreaterThan(5);
+    expect(beat - hum).toBeLessThan(16);
+    expect(oscs.find((o) => o.type === 'triangle')!.frequency.value).toBe(hum); // the softer wave carries the body
+
+    // Short: every envelope is down 26 dB between ≈ 150 and 250 ms after it starts, and it starts at `t`.
+    const envs = ctx.ofKind(FakeGain).filter((g) => g.gain.events.some((e) => e.kind === 'target' && e.value === 0));
+    expect(envs).toHaveLength(2);
+    for (const g of envs) {
+      const start = g.gain.events.find((e) => e.kind === 'set')!.time;
+      const decay = g.gain.events.find((e) => e.kind === 'target')!;
+      expect(start).toBe(1);
+      const faded = decay.time + 3 * decay.tau! - start;
+      expect(faded).toBeGreaterThanOrEqual(0.15);
+      expect(faded).toBeLessThanOrEqual(0.25);
+    }
+    // Gentle: quieter than the neutral idle tick at its peak, and far under any drop's thump.
+    const buzz = peaksOf(ctx);
+    const idle = setup();
+    idle.sfx.tick(0, 'idle');
+    expect(sum(buzz)).toBeLessThanOrEqual(sum(peaksOf(idle.ctx)) * 1.1);
+    expect(Math.max(...buzz)).toBeLessThan(Math.max(...peaksOf(idle.ctx)));
+    for (const onto of [(s: SfxPlayer) => s.slotDrop(0, null), (s: SfxPlayer) => s.drop(0, null)]) {
+      const landing = setup();
+      onto(landing.sfx);
+      expect(sum(buzz)).toBeLessThan(sum(peaksOf(landing.ctx)) * 0.5);
+    }
   });
 
   it('starts the level-complete swell on the given downbeat and hands its bass over when it ends', () => {
@@ -691,6 +766,69 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       expect(slotLift).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
       engine.dispose();
+    });
+
+    it('buzzes softly just after a box lands on a target that is not its destiny, slot or floor zone', async () => {
+      const { engine, ctx, warn } = await live();
+      const buzz = vi.spyOn(SfxPlayer.prototype, 'wrongBuzz');
+      const slotDrop = vi.spyOn(SfxPlayer.prototype, 'slotDrop');
+      const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
+      const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+      const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+      const landed = () => ctx.currentTime + DROP_LAND_SEC;
+
+      // A trap box in a cued slot it fits: the usual toc as it lands, then the soft "no"; never a chime.
+      engine.handleEvent({ ...inSlot(false, 1, 0), wrongTarget: true }, 'symbol');
+      expect(slotDrop).toHaveBeenCalledTimes(1);
+      expect(slotDrop.mock.calls[0][0]).toBeCloseTo(landed(), 9);
+      expect(slotDrop.mock.calls[0][1]).toBeNull();
+      expect(buzz).toHaveBeenCalledTimes(1);
+      expect(buzz.mock.calls[0][0]).toBeCloseTo(landed() + WRONG_AFTER_LAND_SEC, 9);
+      expect(WRONG_AFTER_LAND_SEC).toBeGreaterThan(0);
+      expect(WRONG_AFTER_LAND_SEC).toBeLessThan(0.1);
+
+      // A floor zone that is not its destiny: the floor thump, then the same buzz.
+      const onZone = { type: 'boxDropped', boxId: 'c', cell: { x: 2, z: 3 }, zoneId: 'z1', level: 0, correct: false, recipeLength: 1, satisfiedCount: 0, total: 3 } as const;
+      engine.handleEvent({ ...onZone, wrongTarget: true }, 'color');
+      expect(drop).toHaveBeenCalledTimes(1);
+      expect(drop.mock.calls[0][0]).toBeCloseTo(landed(), 9);
+      expect(drop.mock.calls[0][1]).toBeNull();
+      expect(buzz).toHaveBeenCalledTimes(2);
+      expect(buzz.mock.calls[1][0]).toBeCloseTo(landed() + WRONG_AFTER_LAND_SEC, 9);
+      expect(bell).not.toHaveBeenCalled();
+      expect(wood).not.toHaveBeenCalled();
+
+      // No flag, no buzz: a «libre» slot, plain floor, the destined box (its chime alone), levels without racks.
+      buzz.mockClear();
+      engine.handleEvent(inSlot(false, 0, 0));
+      engine.handleEvent({ ...onZone, zoneId: null, recipeLength: 0 });
+      engine.handleEvent(onZone); // a level without racks: a wrong colour just thumps, as always
+      engine.handleEvent({ ...onZone, wrongTarget: false });
+      engine.handleEvent(inSlot(true, 1, 1), 'symbol');
+      engine.handleEvent({ ...onZone, correct: true, satisfiedCount: 2 }, 'color');
+      expect(buzz).not.toHaveBeenCalled();
+      expect(wood).toHaveBeenCalledTimes(1);
+      expect(bell).toHaveBeenCalledTimes(1);
+      // Defensive: a destined drop keeps its chime alone even if it came flagged.
+      engine.handleEvent({ ...inSlot(true, 1, 2), wrongTarget: true }, 'symbol');
+      expect(buzz).not.toHaveBeenCalled();
+      expect(wood).toHaveBeenCalledTimes(2);
+
+      // Muted: nothing at all.
+      engine.setMuted(true);
+      engine.handleEvent({ ...onZone, wrongTarget: true });
+      expect(buzz).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('isWrongTarget: only a boxDropped flagged wrongTarget that is not also correct', () => {
+      expect(isWrongTarget({ ...inSlot(false), wrongTarget: true })).toBe(true);
+      expect(isWrongTarget({ ...inSlot(true), wrongTarget: true })).toBe(false);
+      expect(isWrongTarget({ ...inSlot(false), wrongTarget: false })).toBe(false);
+      expect(isWrongTarget(inSlot(false))).toBe(false);
+      expect(isWrongTarget({ type: 'actionIdle', carrying: true })).toBe(false);
+      expect(isWrongTarget({ type: 'levelComplete' })).toBe(false);
     });
 
     it('clicks a fork step on the audio clock, and stays silent while muted', async () => {

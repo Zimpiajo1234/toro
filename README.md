@@ -5,6 +5,11 @@
 Juego web cozy: una carretilla elevadora low poly ordena cajas pastel en sus zonas de entrega.
 Sin derrota, sin presión. Solo un cronómetro opcional y tu mejor tiempo.
 
+**Niveles:** hoy el juego trae los niveles 1–3. Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los
+sistemas que usaban (apilar con recetas, símbolos, estanterías almacenables) siguen en el juego y en sus tests. Un
+progreso guardado con los 24 niveles carga sin problema: lo desbloqueado y "Continuar" se quedan dentro de los niveles
+que hay y los tiempos de los niveles retirados se ignoran (siguen guardados).
+
 ## Arrancar
 
 ```bash
@@ -12,7 +17,7 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # tests de lógica, niveles, storage, helpers
 npm run build      # typecheck + build de producción en dist/
-npm run levels     # mapas y métricas de dificultad de todos los niveles y del Benchmark (npm run levels -- 23: uno en detalle)
+npm run levels     # mapas y métricas de dificultad de todos los niveles y del Benchmark (npm run levels -- 3: uno en detalle)
 ```
 
 `dist/` usa rutas relativas (`base: './'`): funciona servido desde cualquier subruta (itch.io, GitHub Pages).
@@ -74,33 +79,38 @@ src/
 
 Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md).
 
-## Apilar (niveles 13–18)
+## Apilar
 
+Hoy ningún nivel apila (los niveles 13–18 que lo hacían se retiraron para rehacerlos); el sistema sigue ahí.
 Cualquier caja apoyada admite otra encima, hasta `stackLimit` por nivel (máx. `stack.maxHeight` = 3 en
-`gameConfig.json`; los niveles 1–12 no apilan). Sin teclas nuevas: Espacio coge la caja de arriba de la pila de enfrente y deja encima de la
+`gameConfig.json`; con `limit: 1`, lo normal, no se apila). Sin teclas nuevas: Espacio coge la caja de arriba de la pila de enfrente y deja encima de la
 pila de destino si cabe. Una zona con `recipe` (colores de abajo arriba) se cumple cuando su pila coincide
 exactamente; la receta se dibuja en la zona como una mini pila de escalones de color. Reglas completas: [docs/STACKING.md](docs/STACKING.md).
 
-## Clasificar por color y símbolo (niveles 19–24)
+## Clasificar por color y símbolo
+
+Hoy solo el Benchmark lo usa (los niveles 19–24 se retiraron para rehacerlos); el sistema sigue ahí.
 
 Cada caja lleva un color y un símbolo (● ▲ ■ ◆ ✚) en la tapa. Cada zona pide un color (almohadilla de ese color),
 un símbolo (grabado grande sobre una almohadilla neutra) o los dos (esa caja exacta). Cuenta cualquier zona que
 acepte la caja; si otra se queda sin sitio, mueve la primera: mientras llevas una caja respiran las zonas libres que
 la aceptan y, si no queda ninguna, respiran muy suave las ocupadas que la aceptarían. Sin teclas nuevas. Encajar por
-color suena a campana, por símbolo a madera y la exacta a las dos. El nivel 23 («La muestra») reúne los tres tipos y
-la trampa clásica. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
+color suena a campana, por símbolo a madera y la exacta a las dos. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
 
 ## Estanterías almacenables (Benchmark, Modo prueba)
 
-El nuevo sistema de apilado, de momento solo en el nivel **Benchmark** (los niveles 1–24 no cambian). Una estantería
+El nuevo sistema de apilado, de momento solo en el nivel **Benchmark** (los niveles 1–3 no lo usan). Una estantería
 almacenable es un mueble de metal pizarra con vigas crema (las de madera con cajas kraft siguen siendo solo obstáculos):
 columnas de 1 a 3 **huecos** de alto que se cargan y descargan **solo por el frente**, donde hay una línea pintada en el
 suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y en los paneles laterales
 para las columnas de los extremos, así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
 símbolo en negrita sobre una pegatina neutra, los dos (esa caja exacta) o nada («libre»: guarda cualquier caja y nunca
 cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estantería cuando tapa la carretilla. Las pistas se combinan para que haya **un
-solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: otra que
-encaje en la pista lo deja neutro, nunca en rojo. Mientras llevas una caja respiran los huecos cuya pista encaja.
+solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: al dejarla,
+el brillo destella, se asienta suave y la caja toma un tono más hondo de su color y queda **fija** (ya no se coge ni
+admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido suave y se puede volver a coger; nunca
+hay rojo (los huecos «libres» y el suelo no dicen nada). Mientras llevas una caja brillan con claridad los huecos y
+zonas cuya pista encaja. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
 
 Delante de una columna, **F / V** (o la rueda, o X / B en el mando) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la

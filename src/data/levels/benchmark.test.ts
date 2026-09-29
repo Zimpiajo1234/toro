@@ -6,13 +6,14 @@ import { parseLevel, renderLevel } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import { validateLevel } from '../validateLevel';
 import { BENCHMARK_ID, LEVELS, LEVEL_SOURCES, SPECIAL_LEVELS, SPECIAL_LEVEL_SOURCES, getSpecialLevel, loadSpecialSources } from './index';
-import { checkLevelTargets, levelMetrics } from './metrics';
+import { DEAD_END_STATES, checkLevelTargets, levelMetrics } from './metrics';
 import {
   LevelGrid,
   carrySearch,
   deadEndCorridors,
   deadEnds,
   lift,
+  lockedAt,
   minMoves,
   occupancyOf,
   pickupStarts,
@@ -46,8 +47,8 @@ describe('special levels registry', () => {
     expect(level.name).toBe('Benchmark');
     expect(getSpecialLevel(BENCHMARK_ID)).toBe(level);
     expect(getSpecialLevel('primer-encargo')).toBeUndefined();
-    // The game's registry is untouched: its 24 levels, none of them special.
-    expect(LEVELS).toHaveLength(24);
+    // The game's registry: its levels (1–3 while 4–24 are redone), none of them special.
+    expect(LEVELS).toHaveLength(3);
     expect(LEVELS.some((l) => l.id === BENCHMARK_ID)).toBe(false);
     expect(LEVEL_SOURCES.some((s) => s.file.includes('/especiales/'))).toBe(false);
   });
@@ -56,8 +57,8 @@ describe('special levels registry', () => {
     const text = source.text!;
     const clashId = { './especiales/x.level': text.replace('id: benchmark', 'id: primer-encargo') };
     expect(() => loadSpecialSources(clashId, LEVEL_SOURCES)).toThrow(/Nivel repetido: el id «primer-encargo» está en src\/data\/levels\/level-01\.level/);
-    const clashOrder = { './especiales/x.level': text.replace('# 100 · Benchmark', '# 7 · Benchmark') };
-    expect(() => loadSpecialSources(clashOrder, LEVEL_SOURCES)).toThrow(/Orden repetido: 7 está en src\/data\/levels\/level-07\.level/);
+    const clashOrder = { './especiales/x.level': text.replace('# 100 · Benchmark', '# 2 · Benchmark') };
+    expect(() => loadSpecialSources(clashOrder, LEVEL_SOURCES)).toThrow(/Orden repetido: 2 está en src\/data\/levels\/level-02\.level/);
     expect(loadSpecialSources({ './especiales/x.level': text }, LEVEL_SOURCES).map((s) => s.file)).toEqual(['src/data/levels/especiales/x.level']);
   });
 });
@@ -208,12 +209,33 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(solve(level, { allowParking: false, maxExpansions: 2000 }).solved).toBe(false);
   });
 
-  it('no dead ends («callejones» = 0): every slip along a shortest plan can be undone', () => {
+  it('no dead ends («callejones» = 0): every slip along a shortest plan can be undone, or still finishes', () => {
     const plan = shortestPlan().plan!;
     const result = deadEnds(level, { plan, maxStates: plan.length + 1 });
     expect(result.explored).toBe(plan.length + 1);
-    expect(result).toMatchObject({ found: 0, unknown: 0, deepChecks: 0 });
+    // A box put on its destiny locks there (docs/RACKS.md): such a move cannot be undone, so it gets the full check.
+    expect(result).toMatchObject({ found: 0, unknown: 0 });
+    expect(result.deepChecks).toBeGreaterThan(0);
     expect(result.checked).toBeGreaterThan(result.explored);
+    // As far as the report looks (npm run levels): no destiny filled early walls anything off.
+    expect(deadEnds(level, { plan, maxStates: DEAD_END_STATES })).toMatchObject({ found: 0, unknown: 0, explored: DEAD_END_STATES });
+  });
+
+  it('with the lock the shortest plan never lifts a box off its destiny: 10 moves, each box placed once and for good', () => {
+    const plan = shortestPlan().plan!;
+    expect(plan).toHaveLength(10);
+    let stacks = stacksOf(grid, level);
+    for (const move of plan) {
+      expect(lockedAt(grid, stacks, move.from), `move from ${move.from}`).toBe(false);
+      const next = lift(stacks, move.from);
+      next[move.drop] += stacks[move.from].slice(-1);
+      stacks = next;
+    }
+    // Every target (3 zones + 6 slots with a cue) ends with one box, locked there.
+    const targets = stacks.filter((_, pos) => grid.steps[pos] !== null);
+    expect(targets).toHaveLength(9);
+    expect(targets.every((stack) => stack.length === 1)).toBe(true);
+    expect(stacks.every((_, pos) => grid.steps[pos] === null || lockedAt(grid, stacks, pos))).toBe(true);
   });
 
   it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), traps; its «dificultad:» targets all hold', () => {

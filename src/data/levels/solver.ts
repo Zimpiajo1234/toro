@@ -17,14 +17,17 @@
  * complete sorting (a trap) costs one more move.
  *
  * With the reverse gear every move can be undone (drive the same poses backwards and put the box back), so no state
- * the forklift can reach is a dead end; `deadEnds` checks that on the states around a shortest plan.
+ * the forklift can reach is a dead end; `deadEnds` checks that on the states around a shortest plan. In a level with
+ * racks, a box placed on its destiny is locked (see below): those moves cannot be undone, so they are checked in full.
  *
  * Storage racks (docs/RACKS.md): rack cells are solid; every slot is one more position after the floor cells
  * (`cellCount + slot`, core/racks `slotsOf` order) holding at most one box. A slot is loaded only from its column's
  * front cell, facing the rack: a forward step from the cell behind it onto the front cell puts the box in (any empty
  * slot of the column: the forks choose the level), and a box lifted out of a slot starts inside the rack, where the
  * only way out is straight back. In a level with racks every zone and every slot with a cue takes exactly its
- * destined kind of box (the level's unique assignment), so the goal is fixed and there are no traps.
+ * destined kind of box (the level's unique assignment), so the goal is fixed and there are no traps; and a box resting
+ * alone on its destined zone or slot is locked, as in the game (BoxState.locked): it is never lifted again and nothing
+ * is dropped on it (`lockedAt`). A move there can no longer be undone, so the dead-end check fully checks it.
  */
 import {
   COLOR_IDS,
@@ -236,6 +239,21 @@ export function occupancyOf(grid: LevelGrid, stacks: Stacks): Int16Array {
   return occupancy;
 }
 
+/**
+ * Levels with racks: the position holds a locked box, its destined box alone on its zone or in its slot (the game's
+ * BoxState.locked). It is never lifted again and nothing is dropped on it. Always false in levels without racks.
+ */
+export function lockedAt(grid: LevelGrid, stacks: Stacks, pos: number): boolean {
+  if (!grid.racks || pos < 0 || pos >= grid.posCount) return false;
+  const steps = grid.steps[pos];
+  return steps !== null && stacks[pos].length === 1 && meets(steps[0], boxOfCode(stacks[pos]));
+}
+
+/** The top box of `pos` can be lifted: there is one and it is not locked (lockedAt). */
+export function canLift(grid: LevelGrid, stacks: Stacks, pos: number): boolean {
+  return stacks[pos].length > 0 && !lockedAt(grid, stacks, pos);
+}
+
 /** Boxes on a zone that already fit it from the floor up (the bottom one accepted, the rest its recipe's colors). */
 export function correctPrefix(grid: LevelGrid, stacks: Stacks, cell: number): number {
   const steps = grid.steps[cell];
@@ -283,9 +301,16 @@ export function misplacedCount(grid: LevelGrid, stacks: Stacks, total: number): 
   return total - placed + (grid.sorting && placed < total && !sortable(grid, stacks) ? 1 : 0);
 }
 
-/** A stack (not empty) on the floor that still has room for one more box. */
+/** A stack (not empty) on the floor that still has room for one more box (never a locked box: lockedAt). */
 export function canStackOn(grid: LevelGrid, stacks: Stacks, cell: number): boolean {
-  return cell >= 0 && cell < grid.cellCount && grid.solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < grid.stackLimit;
+  return (
+    cell >= 0 &&
+    cell < grid.cellCount &&
+    grid.solid[cell] === 0 &&
+    stacks[cell].length > 0 &&
+    stacks[cell].length < grid.stackLimit &&
+    !lockedAt(grid, stacks, cell)
+  );
 }
 
 export function isFree(grid: LevelGrid, occupancy: Int16Array, cell: number): boolean {
@@ -407,8 +432,8 @@ export interface CarryDrops {
 /**
  * Search over carry poses from `starts` (`occupancy` / `stacks` already without the carried box: a lifted stack's cell
  * stays occupied while boxes remain under it). The box can be dropped on the free cell ahead in any reached pose, or
- * on a stack with room that a forward step or a turn brings ahead, or into an empty rack slot that a forward step onto
- * its front cell (facing the rack) brings ahead. A start pose with the box inside a rack (just lifted out of a slot)
+ * on a stack with room (not a locked box) that a forward step or a turn brings ahead, or into an empty rack slot that
+ * a forward step onto its front cell (facing the rack) brings ahead. A start pose with the box inside a rack (just lifted out of a slot)
  * can only back straight out. Chains are the cheapest ones, a step back (grid.reverse) counting double, so a chain
  * only backs up when that saves driving.
  */
@@ -439,7 +464,9 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
   /** Poses in the order they were settled (cheapest first). */
   const queue: number[] = [];
   const free = (cell: number) => cell >= 0 && solid[cell] === 0 && occupancy[cell] === -1;
-  const stackable = (cell: number) => cell >= 0 && solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < limit;
+  const racks = grid.racks;
+  const stackable = (cell: number) =>
+    cell >= 0 && solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < limit && !(racks && lockedAt(grid, stacks, cell));
   const columnAt = grid.columnAt;
   const drops = new Map<number, number[]>();
   /** Per drop position: its forklift cells (the arrays stored in `drops`, in first-found order). */
@@ -619,11 +646,14 @@ export interface Move {
   after?: number;
 }
 
-/** A drop the rules allow: not back where it was, not into a shelf / plant / rack cell, not onto a full stack or slot. */
+/**
+ * A drop the rules allow: not back where it was, not into a shelf / plant / rack cell, not onto a full stack or slot,
+ * nor onto a locked box.
+ */
 function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: number): boolean {
   if (drop === from || drop < 0 || drop >= grid.posCount) return false;
   if (grid.isSlot(drop)) return lifted[drop].length === 0;
-  return grid.solid[drop] === 0 && lifted[drop].length < grid.stackLimit;
+  return grid.solid[drop] === 0 && lifted[drop].length < grid.stackLimit && !lockedAt(grid, lifted, drop);
 }
 
 /** Compact, unique text of a state: the non-empty stacks by cell, then the reachable region (its lowest cell). */
@@ -753,7 +783,7 @@ export function greedySearch(grid: LevelGrid, stacks0: Stacks, forklift: number,
     const lowest = region.indexOf(1);
     for (let from = 0; from < grid.posCount; from++) {
       const stack = stacks[from];
-      if (stack.length === 0) continue;
+      if (!canLift(grid, stacks, from)) continue;
       const starts = pickupStarts(grid, region, from);
       if (starts.length === 0) continue;
       const box = stack[stack.length - 1];
@@ -1371,6 +1401,7 @@ class MoveSearch {
       const corridorDestBefore = this.destOf ? this.corridors.map((_, k) => this.corridorBonus(stacks, k, true)) : [];
       let next = Infinity;
       for (const from of occupied) {
+        if (!canLift(grid, stacks, from)) continue;
         const stack = stacks[from];
         const box = stack[stack.length - 1];
         const stepsFrom = grid.steps[from];
@@ -1591,7 +1622,7 @@ export interface DeadEndResult {
 /** Applies one move in the model (the replay rules); null when it cannot be made. */
 function applyMove(grid: LevelGrid, stacks: Stacks, forklift: number, move: Move): { stacks: Stacks; forklift: number } | null {
   const { from, drop, after } = move;
-  if (from < 0 || from >= grid.posCount || stacks[from].length === 0) return null;
+  if (from < 0 || from >= grid.posCount || !canLift(grid, stacks, from)) return null;
   const occupancy = occupancyOf(grid, stacks);
   const region = reachableFrom(grid, occupancy, forklift);
   const lifted = lift(stacks, from);
@@ -1608,7 +1639,9 @@ function applyMove(grid: LevelGrid, stacks: Stacks, forklift: number, move: Move
  * from each one. A move that can be undone (the box carried back where it was, the forklift back in the same region:
  * carryBackTo) leads to a state as good as the one it left; any other move gets a full solvability check (greedy,
  * then the exact search within `checkWork`). With the reverse gear every move can be undone, so `found` should
- * always be 0: the check guards that property (and any future rule that breaks it) on real levels.
+ * always be 0: the check guards that property (and any future rule that breaks it) on real levels. In a level with
+ * racks a box placed on its destiny is locked (lockedAt), so every such move gets the full check: a destiny that
+ * walls off what is still to do would be a dead end.
  */
 export function deadEnds(level: LevelData, options: DeadEndOptions = {}): DeadEndResult {
   const grid = new LevelGrid(level, options);
@@ -1654,7 +1687,7 @@ export function deadEnds(level: LevelData, options: DeadEndOptions = {}): DeadEn
     const occupancy = occupancyOf(grid, state.stacks);
     for (let from = 0; from < grid.posCount; from++) {
       const stack = state.stacks[from];
-      if (stack.length === 0) continue;
+      if (!canLift(grid, state.stacks, from)) continue;
       const starts = pickupStarts(grid, state.region, from);
       if (starts.length === 0) continue;
       const box = stack[stack.length - 1];
@@ -1679,9 +1712,10 @@ export function deadEnds(level: LevelData, options: DeadEndOptions = {}): DeadEn
           regions.push(region);
           const key = stateKey(layout, region);
           if (known.has(key)) continue;
-          // Undone when a pose that picks the box up again (in the region left after the drop) carries it back.
+          // Undone when a pose that picks the box up again (in the region left after the drop) carries it back. A box
+          // locked on its destiny never comes back: that move gets the full check.
           let verdict = 0;
-          for (const pose of pickupStarts(grid, region, drop)) if (back[pose] === 1) verdict = 1;
+          if (!lockedAt(grid, next, drop)) for (const pose of pickupStarts(grid, region, drop)) if (back[pose] === 1) verdict = 1;
           if (verdict === 0) {
             deepChecks++;
             verdict = check(next, cell);

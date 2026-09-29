@@ -6,9 +6,12 @@ import { levelsReport } from './report';
 import {
   LevelGrid,
   boxCode,
+  canLift,
+  canStackOn,
   carrySearch,
   deadEnds,
   lift,
+  lockedAt,
   minMoves,
   misplacedCount,
   movesLowerBounds,
@@ -233,16 +236,179 @@ describe('searches on rack levels', () => {
     expect(pairs).toBeGreaterThan(0);
   });
 
-  it.each(LEVELS.map((l) => [l.id, l] as const))('%s: no dead ends: every move from every state of a shortest plan can be undone', (_, lvl) => {
+  it.each(LEVELS.map((l) => [l.id, l] as const))('%s: no dead ends: every move around a shortest plan can be undone or still finishes', (_, lvl) => {
     const plan = minMoves(lvl).plan!;
     const result = deadEnds(lvl, { plan, maxStates: plan.length + 1 });
     expect(result.explored).toBe(plan.length + 1);
-    expect(result).toMatchObject({ found: 0, unknown: 0, deepChecks: 0 });
+    // A box put on its destiny locks (it cannot simply be undone): those moves get the full check, and pass it.
+    expect(result).toMatchObject({ found: 0, unknown: 0 });
     expect(result.checked).toBeGreaterThan(result.explored);
   });
 
   it('explores the whole state space of the smallest rack level: no dead ends at all', () => {
     expect(deadEnds(UP_DOWN, { maxStates: 2000 })).toMatchObject({ found: 0, unknown: 0, complete: true });
+  });
+});
+
+describe('the lock in the model (a box on its destiny never moves again)', () => {
+  /** A 1-cell corridor: the blue zone at its middle, the mint box at its end (its slot is outside). */
+  const CORRIDOR = level(`
+# 6 · Pasillo
+id: pasillo
+limit: 1
+
+  0123456
+0 .....R.
+1 .......
+2 ####...
+3 a.1....
+4 ####...
+5 .....^b
+
+1 = zona azul
+a = caja menta
+b = caja azul
+R = estantería frente sur: menta
+`);
+
+  /** The same corridor with the blue box already home, in the way of the mint box. */
+  const WALLED = level(`
+# 7 · Tapado
+id: tapado
+limit: 1
+
+  0123456
+0 .....R.
+1 .......
+2 ####...
+3 a.1....
+4 ####...
+5 .....^.
+
+1 = zona azul + caja azul
+a = caja menta
+R = estantería frente sur: menta
+`);
+
+  /** Limit 2: blue ● rests on its zone (locked), the mint box to carry past it. */
+  const ON_TOP = level(`
+# 8 · Encima no
+id: encima-no
+limit: 2
+
+  0123456
+0 .....R.
+1 .......
+2 ...1...
+3 ...a...
+4 ...^...
+
+1 = zona azul + caja azul ●
+a = caja menta
+R = estantería frente sur: menta
+`);
+
+  it('lockedAt: the destined box alone on its zone or in its slot; never a trap box, a «libre» slot or a level without racks', () => {
+    const grid = new LevelGrid(COLUMNS);
+    const stacks = stacksOf(grid, COLUMNS);
+    const slot = (i: number) => grid.cellCount + i;
+    // Blue ● starts in the ▲ slot (not its destiny): free.
+    expect(stacks.map((_, pos) => lockedAt(grid, stacks, pos)).some(Boolean)).toBe(false);
+    expect(canLift(grid, stacks, slot(1))).toBe(true);
+    const blueCircle = boxCode({ color: 'blue', symbol: 'circle' });
+    const mintTriangle = boxCode({ color: 'mint', symbol: 'triangle' });
+    const yellow = boxCode({ color: 'yellow', symbol: 'square' });
+    const placed = stacks.slice();
+    placed[slot(1)] = '';
+    placed[slot(0)] = blueCircle; // its destiny
+    placed[slot(3)] = mintTriangle; // the «libre» slot
+    placed[grid.index(4, 4)] = '';
+    placed[grid.index(3, 6)] = '';
+    placed[grid.index(1, 3)] = yellow; // its zone
+    expect(lockedAt(grid, placed, slot(0))).toBe(true);
+    expect(canLift(grid, placed, slot(0))).toBe(false);
+    expect(lockedAt(grid, placed, grid.index(1, 3))).toBe(true);
+    expect(lockedAt(grid, placed, slot(3))).toBe(false);
+    // Mint ▲ in the ▲ slot fits the cue, but its destiny is the exact «menta ▲» slot: free.
+    const trap = placed.slice();
+    trap[slot(3)] = '';
+    trap[slot(1)] = mintTriangle;
+    expect(lockedAt(grid, trap, slot(1))).toBe(false);
+    // Levels without racks: never, not even a satisfied zone.
+    const classic = level(`
+# 1 · Clásico
+id: clasico
+limit: 1
+
+  01234
+0 .....
+1 .1.a.
+2 ..^..
+
+1 = zona azul
+a = caja azul
+`);
+    const cg = new LevelGrid(classic);
+    const home = stacksOf(cg, classic);
+    home[cg.index(1, 1)] = home[cg.index(3, 1)];
+    home[cg.index(3, 1)] = '';
+    expect(misplacedCount(cg, home, 1)).toBe(0);
+    expect(lockedAt(cg, home, cg.index(1, 1))).toBe(false);
+    expect(canLift(cg, home, cg.index(1, 1))).toBe(true);
+  });
+
+  it('a locked box is never lifted and nothing is dropped on it (no stack drop, no carry chain, no replay)', () => {
+    const grid = new LevelGrid(ON_TOP);
+    const stacks = stacksOf(grid, ON_TOP);
+    const zone = grid.index(3, 2);
+    const mint = grid.index(3, 3);
+    expect(lockedAt(grid, stacks, zone)).toBe(true);
+    expect(canStackOn(grid, stacks, zone)).toBe(false);
+    const occupancy = occupancyOf(grid, stacks);
+    const region = reachableFrom(grid, occupancy, grid.index(3, 4));
+    occupancy[mint] = -1;
+    const drops = carrySearch(grid, occupancy, lift(stacks, mint), pickupStarts(grid, region, mint)).drops;
+    expect(drops.size).toBeGreaterThan(3);
+    expect(drops.has(zone)).toBe(false);
+    expect(replayMoves(ON_TOP, [{ from: mint, drop: zone }])).toBe(false);
+    expect(replayMoves(ON_TOP, [{ from: zone, drop: grid.index(1, 1) }])).toBe(false);
+    // The plan only moves the mint box, into its slot.
+    const result = minMoves(ON_TOP);
+    expect(result).toMatchObject({ exact: true, lower: 1, upper: 1 });
+    expect(result.plan![0].from).toBe(mint);
+    expect(solve(ON_TOP, { allowParking: true, maxExpansions: 500 }).moves).toBe(1);
+  });
+
+  it('plans take the lock into account: the corridor box comes out before its zone is filled', () => {
+    const grid = new LevelGrid(CORRIDOR);
+    const result = minMoves(CORRIDOR);
+    expect(result).toMatchObject({ exact: true, lower: 2, upper: 2, unsolvable: false });
+    expect(result.plan!.map((m) => m.from)).toEqual([grid.index(0, 3), grid.index(6, 5)]);
+    expect(replayMoves(CORRIDOR, result.plan!)).toBe(true);
+    // The other order would lock the blue box across the corridor: the mint box could never come out.
+    const blueFirst = [
+      { from: grid.index(6, 5), drop: grid.index(2, 3) },
+      { from: grid.index(0, 3), drop: grid.cellCount },
+    ];
+    expect(replayMoves(CORRIDOR, blueFirst.slice(0, 1).concat([{ from: grid.index(2, 3), drop: grid.index(6, 5) }]))).toBe(false);
+    expect(replayMoves(CORRIDOR, blueFirst)).toBe(false);
+  });
+
+  it('a box starting on its destiny stays there: a level that needs it moved cannot be finished', () => {
+    // Without the lock this would be 3 moves (blue out, mint out, blue back).
+    expect(minMoves(WALLED)).toMatchObject({ unsolvable: true, upper: null });
+    expect(solve(WALLED, { allowParking: true, maxExpansions: 500 }).solved).toBe(false);
+  });
+
+  it('callejones: a destiny filled too early can wall off the rest; the check finds it (every such move gets a full check)', () => {
+    const result = deadEnds(CORRIDOR, { maxStates: 2000 });
+    expect(result.complete).toBe(true);
+    expect(result.found).toBeGreaterThan(0);
+    expect(result.unknown).toBe(0);
+    expect(result.deepChecks).toBeGreaterThan(0);
+    const grid = new LevelGrid(CORRIDOR);
+    expect(result.example!.move.drop).toBe(grid.index(2, 3));
+    expect(metricRange(levelMetrics(CORRIDOR, { deadEndStates: 2000 }), 'callejones').lower).toBeGreaterThan(0);
   });
 });
 
@@ -256,6 +422,29 @@ describe('metrics and report on rack levels', () => {
     expect(levelMetrics(SWAP).blockers.covering).toEqual(['b2', 'b3', 'b4']);
     expect(metricRange(m, 'huecos')).toEqual({ lower: 4, upper: 4 });
     expect(metricRange(m, 'repartos')).toEqual({ lower: 1, upper: 1 });
+  });
+
+  it('bloqueos: a box locked from the start is no place to reach, so the box in front of it opens nothing', () => {
+    // The blue box rests home at the far end of a pocket; the yellow box at the pocket's mouth only leads to it.
+    const pocket = level(`
+# 9 · Bolsillo
+id: bolsillo
+limit: 1
+
+  012345
+0 1#....
+1 .#....
+2 .#.R..
+3 a.....
+4 ...^..
+
+1 = zona azul + caja azul
+a = caja amarillo
+R = estantería frente sur: amarillo
+`);
+    const grid = new LevelGrid(pocket);
+    expect(lockedAt(grid, stacksOf(grid, pocket), grid.index(0, 0))).toBe(true);
+    expect(levelMetrics(pocket, { skipMoves: true }).blockers).toEqual({ count: 0, covering: [], gatekeepers: [] });
   });
 
   it('difficulty targets can name huecos, repartos and callejones', () => {

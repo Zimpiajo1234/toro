@@ -251,6 +251,12 @@ export interface BoxState {
    * racks: the box rests alone on its zone, or in its slot, and is the destined one (zone / slot `satisfied`).
    */
   correct: boolean;
+  /**
+   * Levels with racks: true while the box rests on its destined zone or slot (docs/RACKS.md). A locked box is done:
+   * it can no longer be picked up (the action there gives the gentle `actionIdle`) and nothing can be dropped or
+   * stacked on it. Always false in levels without racks.
+   */
+  locked: boolean;
 }
 
 export interface ZoneState {
@@ -426,6 +432,12 @@ export type GameEvent =
       total: number;
       /** The rack slot it landed in (only then present; `cell` is the rack cell). */
       slotId?: string;
+      /**
+       * Levels with racks only: true when the box landed on a target that is not its destiny — a floor zone, or a
+       * slot with a cue (a trap box that fits the cue included). Absent otherwise: its destined target (`correct`), a
+       * «libre» slot, plain floor, and every drop in levels without racks.
+       */
+      wrongTarget?: boolean;
     }
   /** Action pressed but nothing to do (no box in reach / no free cell). Feedback must stay gentle. */
   | { type: 'actionIdle'; carrying: boolean }

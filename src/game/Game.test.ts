@@ -340,6 +340,31 @@ describe('Game completion', () => {
     expect(store.get().levelIndex).toBe(0);
   });
 
+  it('the last level ends the game: nothing more unlocks, its card leads back to the title, "Continuar" stays on it', () => {
+    const last = LEVELS.length - 1;
+    const items = savedGame({
+      rankings: Object.fromEntries(LEVELS.slice(0, last).map((l) => [l.id, [60_000]])),
+      highestUnlocked: last,
+      lastLevel: last,
+      lastLevelId: LEVELS[last].id,
+    });
+    const { game, store } = setup();
+    game.start();
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: last });
+    completeLevel(store);
+    advance(GAME_CONFIG.flow.completeDelaySec + GAME_CONFIG.flow.confirmGraceSec + 0.1);
+    expect(store.get()).toMatchObject({ screen: 'complete' });
+    expect(store.get().result).toMatchObject({ isLast: true, practice: false });
+    const saved = JSON.parse(items.get('toro.progress.v1')!) as Record<string, unknown>;
+    expect(saved).toMatchObject({ highestUnlocked: last, lastLevel: last, lastLevelId: LEVELS[last].id });
+    expect(Object.keys(saved.rankings as object)).toEqual(LEVELS.map((l) => l.id));
+
+    game.nextLevel(); // "Volver al inicio"
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: last, canContinue: true });
+    expect(current().level.id).toBe(LEVELS[last].id);
+    expect(store.get().levels.every((l) => l.unlocked && l.bestMs !== null)).toBe(true);
+  });
+
   it('Esc on the card goes to the title, pointing "Continuar" at the next level', () => {
     const { game, store } = setup();
     game.start(0);
@@ -352,32 +377,74 @@ describe('Game completion', () => {
   });
 });
 
+/** A (fake) localStorage holding `saved` as the progress document; returns its items to read what was saved. */
+function savedGame(saved: Record<string, unknown>): Map<string, string> {
+  const items = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => items.get(k) ?? null,
+    setItem: (k: string, v: string) => void items.set(k, v),
+    removeItem: (k: string) => void items.delete(k),
+  });
+  items.set('toro.progress.v1', JSON.stringify({ version: 1, settings: { muted: false, showTimer: true }, ...saved }));
+  return items;
+}
+
+/** Ids of the 24-level game (levels 4–24 were removed on 2026-09-30 to be redone). */
+const OLD_GAME_IDS = [
+  ...LEVELS.slice(0, 3).map((l) => l.id),
+  ...['pequeno-desorden', 'cruce-de-pasillos', 'un-toque-de-coral', 'estanterias-en-fila', 'una-cosa-lleva-a-otra'],
+  ...['tarde-de-lavanda', 'mudanza-a-medias', 'pasillos-de-luz', 'el-gran-almacen', 'una-encima', 'primero-la-base'],
+  ...['dos-pilas', 'al-reves', 'torre-de-tres', 'el-gran-apilado', 'lo-que-dice-la-tapa', 'color-o-forma'],
+  ...['dos-sitios-posibles', 'justo-esa', 'la-muestra', 'el-gran-reparto'],
+];
+
 describe('Game "Continuar" with an older save', () => {
   it('leads a player who cleared the whole earlier game into the first new level', () => {
-    const items = new Map<string, string>();
-    vi.stubGlobal('localStorage', {
-      getItem: (k: string) => items.get(k) ?? null,
-      setItem: (k: string, v: string) => void items.set(k, v),
-      removeItem: (k: string) => void items.delete(k),
+    // Written by a build one level shorter: every level cleared, the last one (then final) kept as "Continuar".
+    const earlier = LEVELS.slice(0, -1);
+    savedGame({
+      rankings: Object.fromEntries(earlier.map((l) => [l.id, [60_000]])),
+      highestUnlocked: earlier.length - 1,
+      lastLevel: earlier.length - 1,
+      lastLevelId: earlier[earlier.length - 1].id,
     });
-    // Written by the 12-level build: every level cleared, the last one (then final) kept as "Continuar".
-    const classic = LEVELS.slice(0, 12);
-    items.set(
-      'toro.progress.v1',
-      JSON.stringify({
-        version: 1,
-        rankings: Object.fromEntries(classic.map((l) => [l.id, [60_000]])),
-        highestUnlocked: 11,
-        lastLevel: 11,
-        lastLevelId: classic[11].id,
-        settings: { muted: false, showTimer: true },
-      }),
-    );
+    const index = earlier.length;
     const { game, store } = setup();
-    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: 12, levelName: LEVELS[12].name, canContinue: true });
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: index, levelName: LEVELS[index].name, canContinue: true });
     game.start();
-    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 12 });
-    expect(current().level.id).toBe(LEVELS[12].id);
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: index });
+    expect(current().level.id).toBe(LEVELS[index].id);
+  });
+
+  it('a save from the 24-level game (levels 4–24 removed since) loads on the last level left, never past it', () => {
+    // Everything cleared and open, "Continuar" on level 13 (gone): its times and indices point past the game.
+    expect(OLD_GAME_IDS).toHaveLength(24);
+    const items = savedGame({
+      rankings: Object.fromEntries(OLD_GAME_IDS.map((id, i) => [id, [60_000 + i * 1000]])),
+      highestUnlocked: 23,
+      lastLevel: 12,
+      lastLevelId: 'una-encima',
+    });
+    const saved = items.get('toro.progress.v1');
+    const last = LEVELS.length - 1;
+    const { game, store } = setup();
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: last, levelName: LEVELS[last].name, canContinue: true });
+    expect(current().level.id).toBe(LEVELS[last].id);
+    // The dots are the levels left: all open, with their own times (the removed ids are ignored).
+    expect(store.get().levels.map((l) => [l.id, l.unlocked, l.bestMs])).toEqual(LEVELS.map((l, i) => [l.id, true, 60_000 + i * 1000]));
+    game.start();
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: last });
+    expect(current().level.id).toBe(LEVELS[last].id);
+    // Reading it changed nothing but the "Continuar" level, now one that exists.
+    const after = JSON.parse(items.get('toro.progress.v1')!) as Record<string, unknown>;
+    expect(after).toMatchObject({ ...JSON.parse(saved!), lastLevel: last, lastLevelId: LEVELS[last].id });
+  });
+
+  it('a save with only times of removed levels is a fresh start', () => {
+    savedGame({ rankings: { 'la-muestra': [30_000], 'el-gran-reparto': [90_000] }, highestUnlocked: 0, lastLevel: 0, lastLevelId: null });
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: 0, canContinue: false });
+    expect(store.get().levels.filter((l) => l.unlocked)).toHaveLength(1);
   });
 });
 
@@ -491,15 +558,16 @@ describe('Game without WebGL', () => {
 });
 
 
-describe('Game: sorting chapter', () => {
+describe('Game: sorting by symbol', () => {
   it('tells audio how the zone of each drop matches (color bell, symbol wood, exact both)', () => {
+    // No shipped level sorts by symbol today (levels 4–24 are being redone): the Benchmark's floor zones do.
     const handle = vi.spyOn(fakes.FakeAudio.prototype, 'handleEvent');
     const { game } = setup();
-    const index = LEVELS.findIndex((l) => l.id === 'la-muestra');
-    expect(index).toBe(22);
-    game.start(index);
+    game.toggleTestMode();
+    game.startBenchmark();
+    const benchmark = getSpecialLevel(BENCHMARK_ID)!;
     const zone = (color: string | undefined, symbol: string | undefined) =>
-      LEVELS[index].zones.find((z) => z.color === color && z.symbol === symbol)!.id;
+      benchmark.zones.find((z) => z.color === color && z.symbol === symbol)!.id;
     const dropOn = (zoneId: string | null): GameEvent => ({
       type: 'boxDropped',
       boxId: 'b1',
@@ -512,7 +580,7 @@ describe('Game: sorting chapter', () => {
       total: 4,
     });
     handle.mockClear();
-    emit(dropOn(zone('blue', undefined)), dropOn(zone(undefined, 'triangle')), dropOn(zone('blue', 'square')), dropOn(null));
+    emit(dropOn(zone('coral', undefined)), dropOn(zone(undefined, 'triangle')), dropOn(zone('blue', 'square')), dropOn(null));
     expect(handle.mock.calls.map((c) => (c as unknown[])[1])).toEqual(['color', 'symbol', 'exact', 'color']);
     // Classic levels ring the bell, as before.
     game.start(0);
@@ -522,24 +590,12 @@ describe('Game: sorting chapter', () => {
     handle.mockRestore();
   });
 
-  it('test mode reaches every level of the chapter, and the chapter ends the game', () => {
-    const { game, store } = setup();
-    game.toggleTestMode();
-    game.start(18);
-    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 18, levelName: LEVELS[18].name });
-    for (let i = 19; i < 24; i++) {
-      tap('PageDown', 'PageDown');
-      expect(store.get().levelIndex).toBe(i);
-      expect(current().level.id).toBe(LEVELS[i].id);
-    }
-    expect(LEVELS).toHaveLength(24);
-    tap('PageDown', 'PageDown');
-    expect(store.get().levelIndex).toBe(23); // the last level
-  });
 });
 
 describe('Game: modo prueba', () => {
   const unlockedCount = (levels: { unlocked: boolean }[]) => levels.filter((l) => l.unlocked).length;
+  /** A level still locked on a fresh save: only test mode opens it. */
+  const LOCKED = LEVELS.length - 1;
   const completeLevel = () => {
     emit({ type: 'levelComplete' });
     advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
@@ -566,7 +622,7 @@ describe('Game: modo prueba', () => {
     expect(store.get().testMode).toBe(true);
   });
 
-  it('every level (including the stacking chapter) can be started, fresh', () => {
+  it('every level can be started, fresh', () => {
     const { game, store } = setup();
     game.toggleTestMode();
     for (let i = 0; i < LEVELS.length; i++) {
@@ -599,10 +655,25 @@ describe('Game: modo prueba', () => {
     expect(store.get().levelIndex).toBe(0); // clamped at the first level
   });
 
+  it('PageDown reaches every level and stops at the last one', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(0);
+    for (let i = 1; i < LEVELS.length; i++) {
+      tap('PageDown', 'PageDown');
+      expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: i, levelName: LEVELS[i].name });
+      expect(current().level.id).toBe(LEVELS[i].id);
+    }
+    const before = sim.states.length;
+    tap('PageDown', 'PageDown');
+    expect(store.get().levelIndex).toBe(LEVELS.length - 1); // the last level, not reloaded
+    expect(sim.states).toHaveLength(before);
+  });
+
   it('never changes unlock progress: a level opened only by test mode records no time and unlocks nothing', () => {
     const { game, store } = setup();
     game.toggleTestMode();
-    game.start(5);
+    game.start(LOCKED);
     emit({ type: 'firstInput' }); // a real, recordable time
     advance(0.5);
     completeLevel();
@@ -614,35 +685,35 @@ describe('Game: modo prueba', () => {
     expect(store.get().levelIndex).toBe(0); // "Continuar" still leads to the real last level
     game.toggleTestMode();
     expect(unlockedCount(store.get().levels)).toBe(1);
-    expect(store.get().levels[5].bestMs).toBeNull();
+    expect(store.get().levels[LOCKED].bestMs).toBeNull();
     expect(store.get().canContinue).toBe(false);
   });
 
   it('Esc → "Continuar" resumes a level only test mode opened, without saving it as the last level', () => {
     const { game, store } = setup();
     game.toggleTestMode();
-    game.start(5);
+    game.start(LOCKED);
     const level = current();
     emit({ type: 'firstInput' });
     emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     tap('Escape', 'Escape');
-    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: 5, canContinue: true });
+    expect(store.get()).toMatchObject({ screen: 'title', levelIndex: LOCKED, canContinue: true });
 
     game.start();
     expect(current()).toBe(level); // same simulation, nothing reloaded
-    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: 5, levelName: LEVELS[5].name, timerStarted: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', levelIndex: LOCKED, levelName: LEVELS[LOCKED].name, timerStarted: true });
     expect(store.get().canContinue).toBe(false); // the saved progress is still a fresh save
 
     tap('Escape', 'Escape');
     tap('Enter', 'Enter'); // confirm on the title resumes too
     expect(current()).toBe(level);
-    expect(store.get().levelIndex).toBe(5);
+    expect(store.get().levelIndex).toBe(LOCKED);
   });
 
   it('turning it off drops a suspended level it opened and shows the real "Continuar" level', () => {
     const { game, store } = setup();
     game.toggleTestMode();
-    game.start(5);
+    game.start(LOCKED);
     emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
     tap('Escape', 'Escape');
     game.toggleTestMode();

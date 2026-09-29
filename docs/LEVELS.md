@@ -4,6 +4,15 @@ Cada nivel es un archivo de texto `src/data/levels/*.level`: un mapa ASCII que s
 leyenda. El registro (`src/data/levels/index.ts`) carga todos los `*.level` (y, por compatibilidad, los `*.json`
 antiguos), los valida al importar y los ordena por su número. Los ids y los números no se pueden repetir.
 
+**Hoy el juego trae los niveles 1–3.** Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los sistemas que
+usaban (recetas de pila, símbolos, estanterías almacenables) siguen en el juego, en el formato y en las métricas, y sus
+tests usan disposiciones escritas en el propio test (entre ellas varias de los niveles retirados, como «La muestra» de
+abajo). Un progreso guardado con los 24 niveles carga igual: lo desbloqueado y «Continuar» se quedan dentro de los
+niveles que hay y los tiempos de los ids retirados se ignoran (`ProgressStore`; el documento guardado no se reescribe).
+Al rehacerlos: usa **ids nuevos** (un id retirado recuperaría los tiempos guardados del nivel antiguo), y ten en cuenta
+que ese progreso antiguo guarda «desbloqueado hasta el 24» como índice, así que abrirá los niveles nuevos hasta ese
+número.
+
 **Niveles especiales**: `src/data/levels/especiales/*.level`, mismo formato, fuera de la progresión del juego. El glob
 de `LEVELS` no entra en subcarpetas, así que nunca llegan a `LEVELS`, a los tiempos guardados, a los desbloqueos ni a
 «Continuar». El registro los carga aparte (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`), los valida
@@ -15,7 +24,7 @@ puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
 - Métricas: `src/data/levels/metrics.ts` · Informe: `src/data/levels/report.ts` · Objetivos: `src/data/difficulty.ts`.
 
-## Un ejemplo: el nivel 23
+## Un ejemplo: «La muestra» (el antiguo nivel 23)
 
 ```
 # 23 · La muestra
@@ -94,7 +103,7 @@ id          = "(" texto sin espacios ")"
 - Símbolos: `● ▲ ■ ◆ ✚` o `círculo triángulo cuadrado rombo cruz` (también `○ △ □ ◇`, y los ids en inglés).
 - Sin mayúsculas ni tildes que importen; un símbolo puede ir pegado (`caja azul▲`).
 - `caja azul` no nombra símbolo (lleva el de su color, azul ●) y **no** es lo mismo que `caja azul ●`: un nivel usa
-  símbolos (capítulo 19–24) si alguna caja o zona nombra uno.
+  símbolos (como los antiguos niveles 19–24) si alguna caja o zona nombra uno.
 - `tipo`: tipo de caja (`standard`, alias `estándar`); solo existe uno hoy.
 
 | Escribes | Resultado |
@@ -136,12 +145,12 @@ numeran después de las del suelo; las estanterías, `r1, r2…`.
 
 ## Errores
 
-Todos dicen archivo, línea y columna, en español, y qué hacer:
+Todos dicen archivo, línea y columna, en español, y qué hacer (aquí, errores metidos en el ejemplo de arriba):
 
 ```
-src/data/levels/level-23.level:6:7: «x» no está en la leyenda: defínelo debajo del mapa, p. ej. «x = caja azul»
-src/data/levels/level-23.level:12:10: palabra desconocida «azu» en una caja: …; ¿quisiste decir «azul»?
-src/data/levels/level-23.level:12:1: sobran cajas menta: hay más que huecos menta en las zonas (…)
+src/data/levels/level-04.level:6:7: «x» no está en la leyenda: defínelo debajo del mapa, p. ej. «x = caja azul»
+src/data/levels/level-04.level:12:10: palabra desconocida «azu» en una caja: …; ¿quisiste decir «azul»?
+src/data/levels/level-04.level:12:1: sobran cajas menta: hay más que huecos menta en las zonas (…)
 ```
 
 Salen al arrancar el juego (`npm run dev`), en `npm test` y en `npm run levels`.
@@ -151,7 +160,8 @@ Salen al arrancar el juego (`npm run dev`), en `npm test` y en `npm run levels`.
 `renderLevel` escribe cualquier `LevelData` en forma canónica (lo que ves en los archivos): cabecera en orden fijo
 (`limit` siempre), regla y números de fila, zonas con `1 2 3 … 9 0 A B…`, cajas con `a b c…` (sin `p` ni `v`), glifos para los
 símbolos, entradas iguales seguidas agrupadas (`b c = caja amarillo`) e ids solo si no son los generados.
-`parseLevel(renderLevel(nivel))` devuelve exactamente el mismo nivel (test permanente para los 24) y volver a
+`parseLevel(renderLevel(nivel))` devuelve exactamente el mismo nivel (test permanente para todos, también los
+especiales) y volver a
 escribirlo da el mismo texto. `npm run levels:fmt` reescribe los archivos así (conserva `dificultad:` y `nota:`).
 Casos raros que el formato normaliza (ninguno se da en los niveles del juego): plantas y estanterías listadas fuera
 del orden de lectura, cajas de una misma pila no seguidas en la lista, o una zona con una caja de más adelante en la
@@ -185,8 +195,8 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
 | `cajas`, `zonas` | Cuántas hay. |
 
-Coste: `npm run levels` mide los 24 niveles y el Benchmark, todos exactos, en ~15 s (sobre todo la búsqueda de
-callejones; el mínimo de movimientos, menos de 1 s por nivel).
+Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de
+callejones; el mínimo de movimientos, menos de 1 s por nivel; con los 24 niveles de antes eran ~15 s).
 
 ## Callejones
 
@@ -204,8 +214,8 @@ tener uno, y los tests lo comprueban (`levels.test.ts`, «no dead ends»).
   sacar marcha atrás), así que desde cualquier estado alcanzable se puede volver al principio y de ahí terminar. La
   búsqueda lo confirma en cada nivel y avisaría si una regla nueva (una puerta de un solo sentido, una caja que no se
   puede volver a coger) lo rompiera.
-- **Sin marcha atrás sí los hay**: con `reverse: false`, el nivel 14 tiene uno (dos cajas empujadas al rincón entre la
-  estantería y la planta solo salen marcha atrás). No es un callejón para el jugador, que tiene S, pero explica por qué
+- **Sin marcha atrás sí los hay**: con `reverse: false`, el antiguo nivel 14 tiene uno (dos cajas empujadas al rincón
+  entre la estantería y la planta solo salen marcha atrás; sigue como disposición en `metrics.test.ts`). No es un callejón para el jugador, que tiene S, pero explica por qué
   el modelo incluye la marcha atrás.
 - Los tests exploran todos los estados de un plan mínimo de cada nivel (cada movimiento posible desde cada uno) y
   exigen 0 callejones, 0 sin decidir y que todos esos movimientos se puedan deshacer. `npm run levels` explora 60
@@ -229,12 +239,12 @@ que no aplica (`repartos` sin símbolos ni estanterías) nunca se cumple. `calle
 
 ```bash
 npm run levels                  # todos (los del juego y luego los especiales): mapa, leyenda y métricas de cada
-                                #   nivel + tabla resumen, con la cabecera «Toro · 24 niveles + 1 especial»
-npm run levels -- 23            # uno en detalle (por número, #posición, id o archivo): texto, métricas,
+                                #   nivel + tabla resumen, con la cabecera «Toro · 3 niveles + 1 especial»
+npm run levels -- 3             # uno en detalle (por número, #posición, id o archivo): texto, métricas,
                                 #   objetivos, un plan mínimo movimiento a movimiento y las casillas estrechas
 npm run levels -- benchmark     # igual con un nivel especial (su id, su número 100 o su archivo)
-npm run levels -- 23 --estados 1000000  # más presupuesto para la búsqueda exacta
-npm run levels -- 23 --callejones 2000  # explorar más estados buscando callejones (60 por defecto)
+npm run levels -- 3 --estados 1000000   # más presupuesto para la búsqueda exacta
+npm run levels -- 3 --callejones 2000   # explorar más estados buscando callejones (60 por defecto)
 npm run levels:fmt              # reescribe los .level (también los de especiales/) en forma canónica
 npm run levels:fmt -- --check   # solo avisa (código de salida 1) de los que no lo están
 ```
@@ -244,11 +254,11 @@ consola muestra mal los símbolos, usa Windows Terminal (UTF-8).
 
 ## Añadir o editar un nivel
 
-1. Copia un archivo parecido (`level-23.level` → `level-25.level`); cambia número y nombre del título y pon un `id`
+1. Copia un archivo parecido (`level-03.level` → `level-04.level`); cambia número y nombre del título y pon un `id`
    nuevo (en minúsculas con guiones; no lo cambies después: guarda los tiempos).
 2. Dibuja el mapa y la leyenda. Para editar un nivel existente, cambia solo el mapa y la leyenda: `id` y número se
    quedan.
-3. `npm run levels -- 25`: mira las métricas y el plan; ajusta hasta que midan lo que buscas y fíjalo con
+3. `npm run levels -- 4`: mira las métricas y el plan; ajusta hasta que midan lo que buscas y fíjalo con
    `dificultad:`.
 4. `npm test`: además de validar, comprueba las reglas de diseño (plantas y ventanas, nada escondido tras una
    estantería, solubilidad, sin callejones, el piloto automático lo juega con los controles reales a 60 y 20 fps) y

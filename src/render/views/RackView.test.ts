@@ -92,6 +92,10 @@ const cueMesh = (view: LevelView, slotId: string) =>
   rackGroup(view, slotId.split(':')[0]).children.find((c) => c.userData.slotCue === slotId) as Mesh<BufferGeometry, MeshBasicMaterial> | undefined;
 const cues = (view: LevelView, id = 'r1') =>
   rackGroup(view, id).children.filter((c) => c.userData.slotCue) as Mesh<BufferGeometry, MeshBasicMaterial>[];
+/** The glow band of a slot with a cue (its pulse and its flash). */
+const glowBand = (view: LevelView, slotId: string) =>
+  rackGroup(view, slotId.split(':')[0]).children.find((c) => c.userData.slotGlow === slotId) as Mesh<BufferGeometry, MeshBasicMaterial> | undefined;
+const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
 const boxGroup = (view: LevelView, id: string) => view.root.children.find((c) => c.userData.boxId === id)!;
 const boxMesh = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Mesh<BufferGeometry, MeshStandardMaterial>;
 const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => c.userData[tag]) as Mesh<BufferGeometry, MeshBasicMaterial>;
@@ -128,18 +132,18 @@ function paintedVertices(mesh: Mesh, hex: string): { p: Vector3; n: Vector3 }[] 
 /** Hand-driven snapshot edits (the view only reads it): rest `box` in `slot`, or lift it onto the forks. */
 function rest(box: BoxState, slot: SlotState): void {
   const destined = isDestined(slot, box);
-  Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, slotId: slot.id, zoneId: null, correct: destined });
+  Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, slotId: slot.id, zoneId: null, correct: destined, locked: destined });
   Object.assign(slot, { occupiedBy: box.id, satisfied: destined });
 }
 function carry(snap: GameSnapshot, box: BoxState): void {
   for (const s of snap.slots) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
-  Object.assign(box, { carried: true, cell: null, level: 0, slotId: null, zoneId: null, correct: false });
+  Object.assign(box, { carried: true, cell: null, level: 0, slotId: null, zoneId: null, correct: false, locked: false });
   snap.forklift.carrying = box.id;
   snap.forklift.forkLift = 1;
 }
 function floor(snap: GameSnapshot, box: BoxState, cell: { x: number; z: number }): void {
   const { width, depth } = snap.level.size;
-  Object.assign(box, { carried: false, cell, pos: { x: cell.x + 0.5 - width / 2, z: cell.z + 0.5 - depth / 2 }, level: 0, slotId: null });
+  Object.assign(box, { carried: false, cell, pos: { x: cell.x + 0.5 - width / 2, z: cell.z + 0.5 - depth / 2 }, level: 0, slotId: null, locked: false });
   if (snap.forklift.carrying === box.id) snap.forklift.carrying = null;
 }
 function atRack(snap: GameSnapshot, slotId: string, ready: boolean): RackHint {
@@ -530,14 +534,24 @@ describe('rack slots: light only with the destined box, breathe for a fitting on
     view.dispose();
   });
 
-  it('while carrying, the empty slots whose cue fits the box breathe; the others stay still', () => {
+  it('while carrying, the empty slots whose cue fits the box pulse clearly; the others stay still', () => {
     const { snap, view } = setup();
     carry(snap, boxOf(snap, 'blue', 'triangle'));
-    let peak = peakGlow(view, snap, 2);
-    expect(peak.get('r1:0:0')).toBeGreaterThan(0.05); // «azul»
-    expect(peak.get('r1:0:1')).toBeGreaterThan(0.05); // «▲»: the cue, not the solution
+    let peak = peakGlow(view, snap, 3);
+    // Much more than the gentle breathing of the levels without racks (≈ 0.17), still a soft pastel light.
+    expect(peak.get('r1:0:0')).toBeGreaterThan(0.5); // «azul»
+    expect(peak.get('r1:0:1')).toBeGreaterThan(0.5); // «▲»: the cue, not the solution
     expect(peak.get('r1:1:0')).toBeLessThan(0.005); // «amarillo ■»
-    expect(peak.get('r1:0:0')).toBeLessThan(0.25); // gentle
+    expect(peak.get('r1:0:0')).toBeLessThan(0.65);
+    // Its glow band pulses in the carried box's tone, around the slot on both faces; none on the slot it does not fit.
+    const band = glowBand(view, 'r1:0:0')!;
+    expect(band.visible).toBe(true);
+    expect(band.material.opacity).toBeGreaterThan(0.3);
+    expect(band.material.opacity).toBeLessThan(0.9);
+    expect(colorDistance(band.material.color, new Color(defaultTheme.boxes.blue.base))).toBeLessThan(1e-3);
+    expect(glowBand(view, 'r1:1:0')!.visible).toBe(false);
+    // The cue brightens with it but stays a pastel of its own colour (capped, never washed to white).
+    expect(cueMesh(view, 'r1:0:0')!.material.color.r).toBeLessThan(1.6);
 
     // Occupied: not an invitation. Holding its destined box it only keeps its rest glow (never hinted).
     const { snap: s2, view: v2 } = setup();

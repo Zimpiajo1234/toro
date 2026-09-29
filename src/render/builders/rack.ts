@@ -1,4 +1,4 @@
-import { Path, PlaneGeometry, Shape, ShapeGeometry, Vector2, type BufferGeometry } from 'three';
+import { BufferAttribute, BufferGeometry, Path, PlaneGeometry, Shape, ShapeGeometry, Vector2 } from 'three';
 import { FACING_X, FACING_Z, runsAlongX } from '../../core/racks';
 import { cueOf } from '../../core/sorting';
 import type { Facing, LevelData, LevelRack } from '../../core/types';
@@ -76,6 +76,15 @@ const MARKER = {
   tabIn: 0.42,
   tabHalf: 0.075,
 } as const;
+
+/**
+ * Glow band of a slot with a cue (views/RackView, levels with racks): a soft rounded frame of light just outside both
+ * faces of its bay, around the slot opening: a solid strip over the uprights (`solidX`) and the beams under and above
+ * it (`solidY`, their height), then a short feather (alpha 1 → 0). It never reaches into the opening of the slot above
+ * or below, nor covers a cue or the load going in. Lit while a carried box fits the cue (a clear pulse) and in the
+ * flash of the destined box.
+ */
+export const SLOT_GLOW = { halfW: 0.45, solidX: 0.035, solidY: 0.035, featherX: 0.045, featherY: 0.012, radius: 0.05, gap: 0.006 } as const;
 
 /**
  * What a slot's cue shows (LevelView picks it from the theme): `fill` = the colour of the box it asks for (the neutral
@@ -288,6 +297,47 @@ export function buildSlotMarkerGeometry(): BufferGeometry {
   face(0.5 + M.gap, 0);
   face(-0.5 - M.gap, Math.PI);
   return parts.build();
+}
+
+/**
+ * Glow band of a slot (SLOT_GLOW), in slot-local space: on the front and on the back face, a rounded frame of light
+ * around the slot opening (from its floor up to the beam of the slot above): RGBA white vertices, a solid strip
+ * (alpha 1) and a feather out to alpha 0. Tinted and faded by its material (a vertex-alpha overlay, both sides).
+ */
+export function buildSlotGlowGeometry(): BufferGeometry {
+  const G = SLOT_GLOW;
+  const halfH = PANEL_HEIGHT / 2;
+  const ring = (dx: number, dy: number) => roundedRectPoints(G.halfW + dx, halfH + dy, G.radius + dy, 3);
+  const inner = ring(0, 0);
+  const solid = ring(G.solidX, G.solidY);
+  const outer = ring(G.solidX + G.featherX, G.solidY + G.featherY);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const push = (p: Vector2, z: number, alpha: number) => {
+    positions.push(p.x, halfH + p.y, z);
+    colors.push(1, 1, 1, alpha);
+  };
+  // A strip of quads between two rings of matching points (same corners, same segments).
+  const strip = (a: Vector2[], alphaA: number, b: Vector2[], alphaB: number, z: number) => {
+    for (let i = 0; i < a.length; i++) {
+      const j = (i + 1) % a.length;
+      push(a[i], z, alphaA);
+      push(b[i], z, alphaB);
+      push(b[j], z, alphaB);
+      push(a[i], z, alphaA);
+      push(b[j], z, alphaB);
+      push(a[j], z, alphaA);
+    }
+  };
+  for (const z of [0.5 + G.gap, -0.5 - G.gap]) {
+    strip(inner, 1, solid, 1, z);
+    strip(solid, 1, outer, 0, z);
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+  geo.setAttribute('color', new BufferAttribute(new Float32Array(colors), 4));
+  geo.computeBoundingSphere();
+  return geo;
 }
 
 /** Rounded-rectangle ring `width` wide (outer half extents given). */

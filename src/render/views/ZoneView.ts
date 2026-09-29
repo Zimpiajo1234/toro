@@ -1,16 +1,21 @@
-import { Group, Mesh, type BufferGeometry, type MeshBasicMaterial, type MeshStandardMaterial } from 'three';
+import { Group, Mesh, type BufferGeometry, type Color, type MeshBasicMaterial, type MeshStandardMaterial } from 'three';
 import type { ColorId, ZoneState } from '../../core/types';
 import { damp, easeInOutSine, easeOutCubic, lerp } from '../../core/math';
 import { ZONE } from '../dims';
 import { OneShot, bump } from '../tween';
+import { FLASH_SEC, INVITE_BASE, INVITE_PULSE, INVITE_RATE, flashGlow } from './success';
 
 const GLOW_PEAK = 0.35;
 const GLOW_REST = 0.15;
 const RISE_SHARE = 0.3;
 const RING_OPACITY = 0.5;
 const RING_GROWTH = 0.45;
-/** Halo opacity per unit of glow. */
+/** Halo opacity per unit of glow, and its cap (higher in levels with racks: the strong pulse and the flash). */
 const HALO_GAIN = 1.5;
+const HALO_MAX = 0.7;
+const RACK_HALO_MAX = 0.85;
+/** Levels with racks: the celebration ring as the destined box lands reads a little stronger. */
+const RACK_RING_OPACITY = 0.65;
 /** Recipe step the carried box would fill: breathes with the pad (same rhythm), a bit brighter as it is small. */
 const STEP_GLOW = 0.16;
 const STEP_PULSE = 0.1;
@@ -23,7 +28,9 @@ export interface ZoneGeometries {
 
 /**
  * Delivery zone: glow rises and settles when satisfied (with one soft expanding ring), eases off
- * when released, breathes gently while a box it would take is being carried.
+ * when released, breathes gently while a box it would take is being carried. In levels with racks (`rack`), only its
+ * destined box satisfies it: then it flashes intense and settles soft (views/success), and it pulses clearly (about
+ * four times the gentle breathing) while a box it would take is carried.
  */
 export class ZoneView {
   readonly id: string;
@@ -41,7 +48,7 @@ export class ZoneView {
   private glow: number;
   private celebrateFrom = 0;
   private breathe = 0;
-  private readonly celebrate = new OneShot(1.1);
+  private readonly celebrate: OneShot;
   private readonly ringAnim = new OneShot(0.8);
   private readonly wave = new OneShot(0.75);
   /** Stack zones: glow material of each recipe step (bottom → top) and its breathe envelope. */
@@ -56,7 +63,16 @@ export class ZoneView {
     private readonly haloMaterial: MeshBasicMaterial,
     /** Delay before the celebration starts (lets the dropped box land first). */
     private readonly landDelay: number,
+    /** A level with storage racks: the flash and the strong invitation (views/success). */
+    private readonly rack = false,
+    /**
+     * Levels with racks: the glow tone (halo and pad emissive) once the zone holds its destined box (that box's zone
+     * glow; null = the pad's own). While inviting it takes the carried box's instead (sync `tint`), so a neutral «any ▲»
+     * pad lights in the colour of the box it would take, not cream on cream. A colour pad's own glow is that anyway.
+     */
+    private readonly destinedTint: Color | null = null,
   ) {
+    this.celebrate = new OneShot(rack ? FLASH_SEC : 1.1);
     this.id = state.id;
     this.color = state.color;
     this.group.userData.zoneId = state.id;
@@ -98,7 +114,7 @@ export class ZoneView {
    * `invite` 0‥1: how strongly the pad breathes for the box being carried (1 = it would take that box next, a small
    * value = a quiet hint, 0 = none). `takesNext`: the zone takes the carried box next (its recipe step breathes too).
    */
-  sync(state: ZoneState, invite: number, takesNext: boolean, time: number, dt: number): void {
+  sync(state: ZoneState, invite: number, takesNext: boolean, time: number, dt: number, tint: Color | null = null): void {
     if (state.satisfied !== this.satisfied) {
       this.satisfied = state.satisfied;
       if (this.satisfied) {
@@ -117,17 +133,21 @@ export class ZoneView {
 
     if (this.celebrate.step(dt)) {
       const p = this.celebrate.p;
-      this.glow =
-        p < RISE_SHARE
-          ? lerp(this.celebrateFrom, GLOW_PEAK, easeOutCubic(p / RISE_SHARE))
-          : lerp(GLOW_PEAK, GLOW_REST, easeInOutSine((p - RISE_SHARE) / (1 - RISE_SHARE)));
+      if (this.rack) this.glow = flashGlow(p, this.celebrateFrom);
+      else
+        this.glow =
+          p < RISE_SHARE
+            ? lerp(this.celebrateFrom, GLOW_PEAK, easeOutCubic(p / RISE_SHARE))
+            : lerp(GLOW_PEAK, GLOW_REST, easeInOutSine((p - RISE_SHARE) / (1 - RISE_SHARE)));
     } else if (!this.celebrate.active && this.releaseHold <= 0) {
       this.glow = damp(this.glow, this.satisfied ? GLOW_REST : 0, this.satisfied ? 4 : 2.2, dt);
     }
 
     // Teach the goal without words: zones that would take the carried box breathe softly.
     this.breathe = damp(this.breathe, invite, 3, dt);
-    const breatheGlow = this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
+    const breatheGlow = this.rack
+      ? this.breathe * (INVITE_BASE + INVITE_PULSE * Math.sin(time * INVITE_RATE))
+      : this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
     // …and so does the recipe step that box would fill (its own envelope: no jump when the next step changes).
     const nextStep = takesNext ? state.stack.length : -1;
     for (let i = 0; i < this.stepMaterials.length; i++) {
@@ -139,7 +159,14 @@ export class ZoneView {
     const glow = this.glow + breatheGlow + wave * 0.28;
     this.padMaterial.emissiveIntensity = glow;
     this.pad.position.y = wave * 0.012;
-    this.haloMaterial.opacity = Math.min(0.7, glow * HALO_GAIN);
+    if (this.rack) {
+      const tone = (this.satisfied || this.celebrate.active) && this.destinedTint ? this.destinedTint : invite > 0 ? tint : null;
+      if (tone) {
+        this.haloMaterial.color.copy(tone);
+        this.padMaterial.emissive.copy(tone);
+      }
+    }
+    this.haloMaterial.opacity = Math.min(this.rack ? RACK_HALO_MAX : HALO_MAX, glow * HALO_GAIN);
     this.halo.visible = this.haloMaterial.opacity > 0.01;
 
     if (this.ringAnim.step(dt)) {
@@ -147,7 +174,7 @@ export class ZoneView {
       const s = 1 + RING_GROWTH * easeOutCubic(p);
       this.ring.visible = p < 1;
       this.ring.scale.set(s, 1, s);
-      this.ringMaterial.opacity = RING_OPACITY * (1 - p) * (1 - p);
+      this.ringMaterial.opacity = (this.rack ? RACK_RING_OPACITY : RING_OPACITY) * (1 - p) * (1 - p);
     } else if (!this.ringAnim.active) {
       this.ring.visible = false;
     }

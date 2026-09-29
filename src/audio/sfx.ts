@@ -58,11 +58,21 @@ export const BEAM_MODES: readonly (readonly [number, number, number])[] = [
 ];
 /** Low-pass over the beam modes: warm, never a clang. */
 export const BEAM_LOWPASS_HZ = 2400;
+/**
+ * The wrong-target buzz (levels with racks): its hum starts here and sags to WRONG_BUZZ_SAG of it. Low, yet still in
+ * the range laptop speakers reproduce (a sub-only "no" would vanish on them).
+ */
+export const WRONG_BUZZ_HZ = 185;
+export const WRONG_BUZZ_SAG = 0.86;
+/** Its partner sits this ratio above the hum: ≈ 10 Hz of slow beating, the soft "bzz" (a flutter, never a rasp). */
+export const WRONG_BUZZ_DETUNE = 1.055;
+/** Warm low-pass over the buzz: no bright partials, a muffled "no" behind a closed door. */
+export const WRONG_BUZZ_LOWPASS_HZ = 620;
 
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
- * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh, nothing sounds
- * "wrong".
+ * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh; the only "no" is
+ * the soft, muffled wrong-target buzz of the levels with racks (wrongBuzz).
  */
 export class SfxPlayer {
   private readonly pool: VoicePool;
@@ -170,6 +180,22 @@ export class SfxPlayer {
     const k = (1 + LEVEL_PITCH * Math.max(0, level)) * (direction > 0 ? 1.04 : 0.96);
     this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1250 * k, VARIANCE), q: 3.5, peak: vary(r, 0.1, VARIANCE), attack: 0.0015, tau: 0.007 });
     this.toneHit(t, { type: 'sine', freq: vary(r, 520 * k, VARIANCE), freqEnd: vary(r, 470 * k, VARIANCE), glideSec: 0.03, peak: vary(r, 0.04, VARIANCE), attack: 0.002, tau: 0.018 });
+  }
+
+  /**
+   * Levels with racks: a box set down on a target that is not its destiny (a floor zone, or a slot with a cue, even
+   * one it fits), at `t` (just after its landing thump / toc). A soft, low, muffled "nuh": a warm triangle hum and a
+   * quieter sawtooth a few hertz above it beating against it (the gentle buzz), both sagging a little in pitch under
+   * a warm low-pass, ≈ 0.2 s. Says "not here" without alarm: no bright partials, no second hit, far softer than the
+   * drop itself (and well under the music).
+   */
+  wrongBuzz(t: number): void {
+    const r = this.rng;
+    const hum = vary(r, WRONG_BUZZ_HZ, VARIANCE);
+    const beat = hum * WRONG_BUZZ_DETUNE;
+    const lowpass = WRONG_BUZZ_LOWPASS_HZ;
+    this.toneHit(t, { type: 'triangle', freq: hum, freqEnd: hum * WRONG_BUZZ_SAG, glideSec: 0.18, peak: vary(r, 0.05, VARIANCE), attack: 0.014, hold: 0.1, tau: 0.03, lowpass });
+    this.toneHit(t, { type: 'sawtooth', freq: beat, freqEnd: beat * WRONG_BUZZ_SAG, glideSec: 0.18, peak: vary(r, 0.022, VARIANCE), attack: 0.02, hold: 0.09, tau: 0.03, lowpass });
   }
 
   /**

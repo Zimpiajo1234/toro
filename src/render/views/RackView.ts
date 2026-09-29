@@ -4,15 +4,17 @@ import {
   LessEqualDepth,
   Mesh,
   type BufferGeometry,
+  type Color,
   type Material,
   type MeshBasicMaterial,
   type MeshStandardMaterial,
 } from 'three';
-import { damp, easeInOutSine, easeOutCubic, lerp } from '../../core/math';
+import { damp } from '../../core/math';
 import type { SlotState } from '../../core/types';
 import { outwardYaw } from '../builders/rack';
 import { rackSlotY } from '../dims';
 import { OneShot, bump } from '../tween';
+import { FLASH_SEC, INVITE_BASE, INVITE_PULSE, INVITE_RATE, TARGET_REST, flashEnvelope, flashGlow } from './success';
 
 /** Opacity of a rack bay while it stands in front of the forklift or its load (as the wooden shelves). */
 const GHOST_OPACITY = 0.35;
@@ -24,73 +26,106 @@ const FADE_RATE = 6;
 const SOLID_ORDER = -1;
 const GHOST_ORDER = 10;
 
-/** Slot glow: the zone rhythm (views/ZoneView), so a slot lights like a pad when its destined box lands. */
-const GLOW_PEAK = 0.35;
-const GLOW_REST = 0.15;
-const RISE_SHARE = 0.3;
+/** Level complete: each slot with a cue pulses once, like the zones. */
 const WAVE_GLOW = 0.28;
 /**
  * The cue sticker is unlit: it glows by brightening its own colour (× 1 + gain · glow), about what the panel's emissive
- * adds to a pastel. Never below × 1: the cue never dims.
+ * adds to a pastel. Never below × 1: the cue never dims; and never past the cap, so a strong pulse or the flash keep it
+ * a pastel of its colour (never washed to white).
  */
 const CUE_GLOW_GAIN = 1.2;
+const CUE_GLOW_CAP = 0.45;
+/** Glow band (builders/rack SLOT_GLOW): its opacity while inviting (base ± pulse) and at the peak of the flash. */
+const BAND_BASE = 0.6;
+const BAND_PULSE = 0.25;
+const BAND_FLASH = 0.9;
 
 /**
- * One slot with a cue: its panel mesh (lit, its own glow material) and its cue (unlit stickers + lip tape, its own
- * material), which glow together. Lights ONLY when the slot holds its destined box (`satisfied`); breathes softly
- * while a box that fits its cue is being carried; a box that merely fits leaves it neutral (never red, never text).
+ * The tones a slot lights in for a box of some colour (LevelView): `band` = the glow band (the box colour itself, so it
+ * reads on the slate frame), `glow` = the panel's emissive (the colour's zone glow). A colour cue's own glow is its
+ * colour's anyway; a symbol-only cue thus lights in the colour of the box it is about, never cream on cream.
+ */
+export interface SlotTone {
+  band: Color;
+  glow: Color;
+}
+
+/**
+ * One slot with a cue: its panel mesh (lit, its own glow material), its cue (unlit stickers + lip tape, its own
+ * material) and its glow band (a feathered frame on both faces, its own overlay material), which glow together.
+ * Lights ONLY when the slot holds its destined box (`satisfied`): a flash as the box lands (views/success), then a soft
+ * steady glow. While a box that fits its cue is being carried it pulses clearly (panel, cue and band in the carried
+ * box's tone); a box that merely fits leaves it neutral (never red, never text).
  */
 class SlotLight {
   private satisfied: boolean;
   private glow: number;
-  private celebrateFrom = 0;
+  private flashFrom = 0;
+  private flash = 0;
   private breathe = 0;
-  private readonly celebrate = new OneShot(1.1);
+  private readonly celebrate = new OneShot(FLASH_SEC);
   private readonly wave = new OneShot(0.75);
 
   constructor(
     state: SlotState,
     private readonly material: MeshStandardMaterial,
     private readonly cue: MeshBasicMaterial,
+    private readonly band: Mesh,
+    private readonly bandMaterial: MeshBasicMaterial,
+    /** Its tones once it holds its destined box (in the flash and at rest); null = keep the last ones. */
+    private readonly destined: SlotTone | null,
     private readonly landDelay: number,
   ) {
     this.satisfied = state.satisfied;
-    this.glow = state.satisfied ? GLOW_REST : 0;
-    this.apply(this.glow);
+    this.glow = state.satisfied ? TARGET_REST : 0;
+    if (destined) {
+      bandMaterial.color.copy(destined.band);
+      if (state.satisfied) material.emissive.copy(destined.glow);
+    }
+    this.apply(this.glow, 0);
   }
 
   playWave(delay: number): void {
     this.wave.start(delay);
   }
 
-  sync(satisfied: boolean, invite: number, time: number, dt: number): void {
+  /** `carried` = the tones of the carried box, or null when nothing is carried. */
+  sync(satisfied: boolean, invite: number, carried: SlotTone | null, time: number, dt: number): void {
     if (satisfied !== this.satisfied) {
       this.satisfied = satisfied;
       if (satisfied) {
-        this.celebrateFrom = this.glow;
+        this.flashFrom = this.glow;
         this.celebrate.start(this.landDelay);
       } else {
         this.celebrate.stop();
       }
     }
+    this.flash = 0;
     if (this.celebrate.step(dt)) {
       const p = this.celebrate.p;
-      this.glow =
-        p < RISE_SHARE
-          ? lerp(this.celebrateFrom, GLOW_PEAK, easeOutCubic(p / RISE_SHARE))
-          : lerp(GLOW_PEAK, GLOW_REST, easeInOutSine((p - RISE_SHARE) / (1 - RISE_SHARE)));
+      this.glow = flashGlow(p, this.flashFrom);
+      this.flash = flashEnvelope(p);
     } else if (!this.celebrate.active) {
-      this.glow = damp(this.glow, this.satisfied ? GLOW_REST : 0, this.satisfied ? 4 : 2.2, dt);
+      this.glow = damp(this.glow, this.satisfied ? TARGET_REST : 0, this.satisfied ? 4 : 2.2, dt);
     }
     this.breathe = damp(this.breathe, invite, 3, dt);
-    const breatheGlow = this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
+    const pulse = Math.sin(time * INVITE_RATE);
+    const breatheGlow = this.breathe * (INVITE_BASE + INVITE_PULSE * pulse);
     const wave = this.wave.step(dt) ? bump(this.wave.p) : 0;
-    this.apply(this.glow + breatheGlow + wave * WAVE_GLOW);
+    const tone = (this.satisfied || this.celebrate.active) && this.destined ? this.destined : invite > 0 ? carried : null;
+    if (tone) {
+      this.bandMaterial.color.copy(tone.band);
+      this.material.emissive.copy(tone.glow);
+    }
+    const band = Math.max(this.breathe * (BAND_BASE + BAND_PULSE * pulse), this.flash * BAND_FLASH);
+    this.apply(this.glow + breatheGlow + wave * WAVE_GLOW, band);
   }
 
-  private apply(glow: number): void {
+  private apply(glow: number, band: number): void {
     this.material.emissiveIntensity = glow;
-    this.cue.color.setScalar(1 + CUE_GLOW_GAIN * Math.max(0, glow));
+    this.cue.color.setScalar(1 + CUE_GLOW_GAIN * Math.min(CUE_GLOW_CAP, Math.max(0, glow)));
+    this.bandMaterial.opacity = band;
+    this.band.visible = band > 0.01;
   }
 }
 
@@ -213,7 +248,8 @@ export class RackView {
 
   /**
    * A slot with a cue, from slot-local geometries (builders/rack): its panel mesh, in its bay (glows, fades with it),
-   * and its cue mesh (`cueMaterial`: unlit, opaque; glows with the panel, never fades).
+   * its cue mesh (`cueMaterial`: unlit, opaque; glows with the panel, never fades) and its glow band (`bandGeometry`,
+   * `bandMaterial`: a vertex-alpha overlay, hidden until it glows; `destined` = its tones with its destined box).
    */
   addSlot(
     state: SlotState,
@@ -221,17 +257,24 @@ export class RackView {
     material: MeshStandardMaterial,
     cueGeometry: BufferGeometry,
     cueMaterial: MeshBasicMaterial,
+    bandGeometry: BufferGeometry,
+    bandMaterial: MeshBasicMaterial,
+    destined: SlotTone | null,
   ): Mesh {
     const mesh = this.bays[state.column].addPart(geometry, material);
     const cue = new Mesh(cueGeometry, cueMaterial);
-    for (const m of [mesh, cue]) {
+    const band = new Mesh(bandGeometry, bandMaterial);
+    band.renderOrder = 1;
+    band.visible = false;
+    for (const m of [mesh, cue, band]) {
       m.position.set(state.pos.x, rackSlotY(state.level), state.pos.z);
       m.rotation.y = outwardYaw(state.facing);
     }
     mesh.userData.slotId = state.id;
     cue.userData.slotCue = state.id;
-    this.group.add(cue);
-    this.lights.set(state.id, new SlotLight(state, material, cueMaterial, this.landDelay));
+    band.userData.slotGlow = state.id;
+    this.group.add(cue, band);
+    this.lights.set(state.id, new SlotLight(state, material, cueMaterial, band, bandMaterial, destined, this.landDelay));
     return mesh;
   }
 
@@ -240,9 +283,12 @@ export class RackView {
     return this.bays[slot.column];
   }
 
-  /** `invite` 0‥1: how strongly the slot breathes for the box being carried (0 = still). */
-  syncSlot(state: SlotState, invite: number, time: number, dt: number): void {
-    this.lights.get(state.id)?.sync(state.satisfied, invite, time, dt);
+  /**
+   * `invite` 0‥1: how strongly the slot pulses for the box being carried (0 = still); `carried` = that box's tones
+   * (null when nothing is carried).
+   */
+  syncSlot(state: SlotState, invite: number, carried: SlotTone | null, time: number, dt: number): void {
+    this.lights.get(state.id)?.sync(state.satisfied, invite, carried, time, dt);
   }
 
   /** Level complete: a slot's panel pulses once, after `delay`. */

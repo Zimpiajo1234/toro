@@ -20,7 +20,7 @@ export interface ReportOptions {
   deadEndStates?: number;
 }
 
-/** Levels named on the command line: an order number ("23"), a position ("#23"), an id or a file name. */
+/** Levels named on the command line: an order number ("3"), a position ("#3"), an id or a file name. */
 export function selectSources(sources: readonly LevelSource[], args: readonly string[]): LevelSource[] {
   return args.map((arg) => {
     const base = (s: LevelSource) => s.file.replace(/^.*\//, '');
@@ -28,7 +28,7 @@ export function selectSources(sources: readonly LevelSource[], args: readonly st
       (/^-?\d+(?:\.\d+)?$/.test(arg) ? sources.find((s) => s.level.order === Number(arg)) : undefined) ??
       (/^#\d+$/.test(arg) ? sources[Number(arg.slice(1)) - 1] : undefined) ??
       sources.find((s) => s.level.id === arg || base(s) === arg || base(s).replace(/\.[^.]+$/, '') === arg);
-    if (!found) throw new Error(`No encuentro el nivel «${arg}»: usa su número de orden (23), su posición (#23), su id o su archivo`);
+    if (!found) throw new Error(`No encuentro el nivel «${arg}»: usa su número de orden (3), su posición (#3), su id o su archivo`);
     return found;
   });
 }

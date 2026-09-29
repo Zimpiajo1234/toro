@@ -30,6 +30,11 @@ export const DROP_LAND_SEC = GAME_CONFIG.box.dropLandSec;
  * stack's figure delays that chime further, and the arpeggio waits for that too.
  */
 export const COMPLETE_AFTER_LAND_SEC = 0.2;
+/**
+ * Levels with racks: a box set down on a target that is not its destiny buzzes softly this long after it lands (its
+ * thump / toc first, where a destined box's chime would ring).
+ */
+export const WRONG_AFTER_LAND_SEC = 0.05;
 /** A zone un-completed by a box stacked on top ticks just after that box lands (its knock first). */
 export const RELEASE_AFTER_LAND_SEC = 0.03;
 /** A zone satisfied again by lifting a wrong top box chimes this long after the pickup knock. */
@@ -112,13 +117,16 @@ export class AudioEngine {
             // Into a rack slot: the metal toc. `correct` = the slot now holds its destined box, the only one that
             // chimes; a box that merely fits the cue (or any box in a «libre» slot) just settles, never a success sound.
             rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, match);
-            break;
+          } else {
+            const stack =
+              event.correct && event.recipeLength > 1
+                ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
+                : null;
+            rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack, match);
           }
-          const stack =
-            event.correct && event.recipeLength > 1
-              ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
-              : null;
-          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack, match);
+          // Levels with racks: on a floor zone or a cued slot that is not its destiny (trap boxes included), the soft
+          // "no" follows the landing. A «libre» slot, plain floor and every level without racks never set it.
+          if (isWrongTarget(event)) rt.sfx.wrongBuzz(now + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC);
           break;
         }
         case 'zoneRestored': {
@@ -408,6 +416,14 @@ export class AudioEngine {
 }
 
 const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'] as const;
+
+/**
+ * Whether a drop earns the soft wrong-target buzz: only a `boxDropped` flagged `wrongTarget` (levels with racks), and
+ * never one that is also `correct` (the destined box keeps its chime alone, whatever the flag says).
+ */
+export function isWrongTarget(event: GameEvent): boolean {
+  return event.type === 'boxDropped' && event.wrongTarget === true && !event.correct;
+}
 
 function audioContextCtor(): AudioContextCtor | null {
   const g = globalThis as { AudioContext?: AudioContextCtor; webkitAudioContext?: AudioContextCtor };

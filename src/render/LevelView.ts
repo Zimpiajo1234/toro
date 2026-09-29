@@ -1,4 +1,4 @@
-import { Box3, Color, Group, Mesh, MeshBasicMaterial, Vector3, type BufferGeometry, type Material } from 'three';
+import { Box3, Color, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
 import { degToRad } from '../core/math';
 import { hasRacks } from '../core/racks';
@@ -22,7 +22,19 @@ import { buildBoxGeometry, type LidMark } from './builders/box';
 import { addFloor } from './builders/floor';
 import { buildForkliftGeometry } from './builders/forklift';
 import { addPlant } from './builders/plant';
-import { addRackLines, buildRackBays, buildSlotCue, buildSlotMarkerGeometry, buildSlotPanel, cueEndSides, type CueLook } from './builders/rack';
+import {
+  PANEL_HEIGHT,
+  SLOT_GLOW,
+  addRackLines,
+  buildRackBays,
+  buildSlotCue,
+  buildSlotGlowGeometry,
+  buildSlotMarkerGeometry,
+  buildSlotPanel,
+  cueEndSides,
+  outwardYaw,
+  type CueLook,
+} from './builders/rack';
 import { addShelf } from './builders/shelf';
 import { buildWallGeometry, toWallLocal, wallLayouts } from './builders/walls';
 import { buildHaloGeometry, buildOutlineGeometry, buildRecipeGeometry, buildZoneGeometry, type ZoneMark } from './builders/zone';
@@ -33,12 +45,13 @@ import { createCueMaterial, createGlowMaterial, createOverlayMaterial, createSha
 import { PartList } from './paint';
 import { createRng } from './random';
 import { ResourceBag } from './resources';
-import { BoxView, DROP_GLIDE_SEC } from './views/BoxView';
+import { BoxView, DROP_GLIDE_SEC, lockTintOf } from './views/BoxView';
 import { DropPreview } from './views/DropPreview';
 import { ForkliftView } from './views/ForkliftView';
-import { RackView, type RackBay } from './views/RackView';
+import { RackView, type RackBay, type SlotTone } from './views/RackView';
 import { ShelfView, hidesBehind } from './views/ShelfView';
 import { SlotMarker } from './views/SlotMarker';
+import { RACK_SWAP_INVITE, SuccessBurst } from './views/success';
 import { WallView } from './views/WallView';
 import { ZoneView } from './views/ZoneView';
 
@@ -74,6 +87,13 @@ const STACK_GLOW_STEP = 0.14;
 const SWAP_INVITE = 0.32;
 /** Drop preview inside a rack slot: the outline hugs the box between the uprights. */
 const SLOT_PREVIEW_SCALE = 0.82;
+/**
+ * Levels with racks: success bursts kept ready (a drop plays one; two can overlap), their ring's line width, and how
+ * much of the way from the box colour to white their sparkles are (the box's own colour, a touch lighter).
+ */
+const BURSTS = 2;
+const BURST_RING_WIDTH = 0.05;
+const SPARKLE_LIGHTEN = 0.08;
 
 /** A tall piece of furniture that fades to a ghost while it hides an actor (wooden shelf or storage rack). */
 interface Occluder {
@@ -114,6 +134,10 @@ export class LevelView {
   private readonly zoneViews = new Map<string, ZoneView>();
   /** Zone border tone per color: the drop preview takes the carried box's on a zone that takes that box. */
   private readonly borders = new Map<ColorId, Color>();
+  /** Zone glow tone per color: levels with racks light a zone in the box it is about (views/ZoneView). */
+  private readonly glows = new Map<ColorId, Color>();
+  /** …and a rack slot (views/RackView SlotTone: its band in the box colour, its panel in its glow). */
+  private readonly slotTones = new Map<ColorId, SlotTone>();
   private readonly zoneStates = new Map<string, ZoneState>();
   /** Last seen `satisfied` per stack zone (recipe of 2+), to glow a completed stack bottom → top. */
   private readonly stackSatisfied = new Map<string, boolean>();
@@ -140,6 +164,15 @@ export class LevelView {
   private readonly bayOfSlot = new Map<string, RackBay>();
   private readonly slotStates = new Map<string, SlotState>();
   private readonly marker: SlotMarker | null = null;
+  /**
+   * Levels with racks: the success bursts (pooled) and the sparkle tone of each box colour; last seen `satisfied` of
+   * each zone and slot (snapshot order), so a target that just got its destined box plays one (never on load).
+   */
+  private readonly bursts: SuccessBurst[] = [];
+  private nextBurst = 0;
+  private readonly sparkleTones = new Map<ColorId, Color>();
+  private readonly zoneWasSatisfied: boolean[] = [];
+  private readonly slotWasSatisfied: boolean[] = [];
   private readonly depthOnly: MeshBasicMaterial;
   private readonly pitch: number;
   private readonly boxHalf: number;
@@ -158,6 +191,8 @@ export class LevelView {
     this.sorting = usesSymbols(level);
     this.racked = hasRacks(level);
     for (const c of COLOR_IDS) this.borders.set(c, new Color(theme.zones[c].border));
+    for (const c of COLOR_IDS) this.glows.set(c, new Color(theme.zones[c].glow));
+    for (const c of COLOR_IDS) this.slotTones.set(c, { band: new Color(theme.boxes[c].base), glow: this.glows.get(c)! });
     const mats = createSharedMaterials(this.bag);
     // Glass gets its own copy so level-complete warmth can tint it (each wall clones its shafts').
     this.glassMaterial = this.bag.track(mats.unlit.clone());
@@ -199,6 +234,7 @@ export class LevelView {
       const markerMat = createOverlayMaterial(this.bag, theme.forklift.light, 0);
       this.marker = new SlotMarker(this.bag.track(buildSlotMarkerGeometry()), markerMat, new Color(theme.forklift.light));
       this.root.add(this.marker.mesh);
+      this.buildBursts(theme);
     }
 
     const { width: w, depth: d } = level.size;
@@ -247,12 +283,20 @@ export class LevelView {
       for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], carried);
     }
     const swapHint = (this.sorting || this.racked) && !anyTakes;
+    // With racks the invitation is a strong pulse (views/success); the swap hint keeps its quiet strength.
+    const swapInvite = this.racked ? RACK_SWAP_INVITE : SWAP_INVITE;
+    const glowTint = carried ? (this.glows.get(carried.color) ?? null) : null;
+    const slotTone = carried ? (this.slotTones.get(carried.color) ?? null) : null;
     for (let i = 0; i < zones.length; i++) {
       const zone = zones[i];
       const takes = carried !== null && takesNext(zone, carried);
       const swap =
         carried !== null && swapHint && zone.stack.length > 0 && !(this.racked && zone.satisfied) && accepts(zone, carried);
-      this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? SWAP_INVITE : 0, takes, time, dt);
+      this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? swapInvite : 0, takes, time, dt, glowTint);
+      if (this.racked) {
+        if (zone.satisfied && this.zoneWasSatisfied[i] === false) this.playBurstOnZone(zone);
+        this.zoneWasSatisfied[i] = zone.satisfied;
+      }
       const was = this.stackSatisfied.get(zone.id);
       if (was !== undefined && was !== zone.satisfied) {
         this.stackSatisfied.set(zone.id, zone.satisfied);
@@ -263,16 +307,22 @@ export class LevelView {
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
       const fits = carried !== null && cueFits(slot, carried);
-      const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? SWAP_INVITE : 0;
-      this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, time, dt);
+      const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? swapInvite : 0;
+      this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, slotTone, time, dt);
+      if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstInSlot(slot, cameraYaw);
+      this.slotWasSatisfied[i] = slot.satisfied;
     }
+    for (let i = 0; i < this.bursts.length; i++) this.bursts[i].update(dt);
 
     // The preview takes the carried box's zone tone when it would land on a zone that takes that box, or in a rack
     // slot whose cue fits it. Into a slot it floats on the slot floor, and the slot marker frames the selected slot.
     const rack = hint.rack;
     const selected = rack !== null && !snapshot.completed ? (this.slotStates.get(rack.slotId) ?? null) : null;
-    const ready = rack !== null && rack.ready;
-    const intoSlot = carried !== null && selected !== null && ready && hint.dropCell !== null;
+    // A locked box is done: its slot never reads as ready to pick, and nothing previews on top of it.
+    const lockedPick = carried === null && selected !== null && selected.occupiedBy !== null && isLocked(boxes, selected.occupiedBy);
+    const ready = rack !== null && rack.ready && !lockedPick;
+    const dropCell = carried !== null && hint.dropCell !== null && !dropsOnLocked(boxes, hint.dropCell, hint.dropLevel) ? hint.dropCell : null;
+    const intoSlot = carried !== null && selected !== null && ready && dropCell !== null;
     let match: Color | null = null;
     if (carried && selected && intoSlot) {
       if (cueFits(selected, carried)) match = this.borders.get(carried.color) ?? null;
@@ -281,7 +331,7 @@ export class LevelView {
       if (dropZone && takesNext(dropZone, carried)) match = this.borders.get(carried.color) ?? null;
     }
     const topY = intoSlot ? rackSlotY(hint.dropLevel) - ZONE.padHeight : hint.dropLevel * this.boxHeight;
-    this.preview.sync(f.carrying ? hint.dropCell : null, match, dt, topY, intoSlot ? SLOT_PREVIEW_SCALE : 1);
+    this.preview.sync(f.carrying ? dropCell : null, match, dt, topY, intoSlot ? SLOT_PREVIEW_SCALE : 1);
     this.marker?.sync(selected, ready, intoSlot ? match : null, dt);
 
     this.updateOccluders(snapshot, cameraYaw, dt);
@@ -410,6 +460,55 @@ export class LevelView {
     order.sort((a, b) => a.d - b.d);
     order.forEach((t, i) => t.play(WAVE_START_DELAY + i * WAVE_STEP));
     this.forklift.playHappy(WAVE_START_DELAY);
+  }
+
+  /** Levels with racks: the success bursts, built once (a shared ring and sparkle geometry, materials per burst). */
+  private buildBursts(theme: Theme): void {
+    const ring = this.bag.track(buildOutlineGeometry(0.5, BURST_RING_WIDTH, 0.12));
+    const sparkle = this.bag.track(new OctahedronGeometry(1, 0));
+    const white = new Color(1, 1, 1);
+    for (const c of COLOR_IDS) this.sparkleTones.set(c, new Color(theme.boxes[c].base).lerp(white, SPARKLE_LIGHTEN));
+    for (let i = 0; i < BURSTS; i++) {
+      const burst = new SuccessBurst(ring, createOverlayMaterial(this.bag, white, 0), sparkle, createOverlayMaterial(this.bag, white, 0));
+      this.bursts.push(burst);
+      this.root.add(burst.group);
+    }
+  }
+
+  /** The next burst of the pool: a free one if any, else the oldest. */
+  private takeBurst(): SuccessBurst | null {
+    const n = this.bursts.length;
+    for (let k = 0; k < n; k++) {
+      const burst = this.bursts[(this.nextBurst + k) % n];
+      if (!burst.active) {
+        this.nextBurst = (this.nextBurst + k + 1) % n;
+        return burst;
+      }
+    }
+    const oldest = this.bursts[this.nextBurst] ?? null;
+    this.nextBurst = n > 0 ? (this.nextBurst + 1) % n : 0;
+    return oldest;
+  }
+
+  /** A zone just got its destined box: sparkles over it as the box lands (the zone plays its own floor ring). */
+  private playBurstOnZone(zone: ZoneState): void {
+    const color = zone.destined?.color ?? zone.color;
+    const tone = color ? this.sparkleTones.get(color) : undefined;
+    if (tone) this.takeBurst()?.play('floor', zone.pos.x, 0, zone.pos.z, 0, tone, DROP_GLIDE_SEC);
+  }
+
+  /**
+   * A slot just got its destined box: a ring around its opening and sparkles out of it, as the box lands, on the face
+   * the camera sees (its cue reads from both; a rack may turn its back to the camera).
+   */
+  private playBurstInSlot(slot: SlotState, cameraYaw: number): void {
+    const tone = slot.destined ? this.sparkleTones.get(slot.destined.color) : undefined;
+    if (!tone) return;
+    const front = outwardYaw(slot.facing);
+    const towardCamera = Math.sin(front) * Math.sin(cameraYaw) + Math.cos(front) * Math.cos(cameraYaw);
+    const yaw = towardCamera >= 0 ? front : front + Math.PI;
+    const halfW = SLOT_GLOW.halfW + 0.02;
+    this.takeBurst()?.play('slot', slot.pos.x, rackSlotY(slot.level), slot.pos.z, yaw, tone, DROP_GLIDE_SEC, halfW, PANEL_HEIGHT / 2);
   }
 
   /** A stack zone was just completed: its boxes glow one after another, bottom → top, once the last has landed. */
@@ -587,8 +686,11 @@ export class LevelView {
         createOverlayMaterial(this.bag, palette.border, 0),
         createOverlayMaterial(this.bag, palette.glow, 0, true),
         DROP_GLIDE_SEC,
+        this.racked,
+        zone.destined ? (this.glows.get(zone.destined.color) ?? null) : null,
       );
       this.zoneViews.set(zone.id, view);
+      this.zoneWasSatisfied.push(zone.satisfied);
       this.zoneStates.set(zone.id, zone);
       // Stack recipes are color-only (validateLevel): every step names its color.
       const recipe = zone.recipe.filter((c): c is ColorId => c !== null);
@@ -635,8 +737,10 @@ export class LevelView {
     }
     const rackById = new Map((level.racks ?? []).map((r) => [r.id, r]));
     let panel: BufferGeometry | null = null;
+    let band: BufferGeometry | null = null;
     const cueByLook = new Map<string, BufferGeometry>();
     for (const slot of snapshot.slots) {
+      this.slotWasSatisfied.push(slot.satisfied);
       const view = byId.get(slot.rackId);
       const rack = rackById.get(slot.rackId);
       if (!view || !rack) continue;
@@ -663,8 +767,12 @@ export class LevelView {
         cueByLook.set(key, cueGeometry);
       }
       panel ??= this.bag.track(buildSlotPanel(theme));
+      band ??= this.bag.track(buildSlotGlowGeometry());
       const glow = cue.color ? theme.zones[cue.color].glow : theme.neutralZone.glow;
-      view.addSlot(slot, panel, createGlowMaterial(this.bag, glow), cueGeometry, createCueMaterial(this.bag));
+      // The slot lights in the tones of the box it is about: the carried one while inviting, the destined one after.
+      const destined = slot.destined ? (this.slotTones.get(slot.destined.color) ?? null) : null;
+      const bandMaterial = createOverlayMaterial(this.bag, destined?.band ?? glow, 0, true);
+      view.addSlot(slot, panel, createGlowMaterial(this.bag, glow), cueGeometry, createCueMaterial(this.bag), band, bandMaterial, destined);
     }
   }
 
@@ -673,6 +781,9 @@ export class LevelView {
     const geoByKey = new Map<string, BufferGeometry>();
     // The lid shows the box's own symbol: the small tone-on-tone glyph, or printed large where symbols sort.
     const mark: LidMark = this.sorting ? 'symbol' : 'glyph';
+    // Levels with racks: a box locked on its destiny eases to its deeper tone (one tint per colour).
+    const lockTints = new Map<ColorId, Color>();
+    if (this.racked) for (const c of COLOR_IDS) lockTints.set(c, lockTintOf(theme.boxes[c]));
     for (const box of snapshot.boxes) {
       const key = `${box.kind}:${box.color}:${box.symbol}`;
       let geo = geoByKey.get(key);
@@ -688,6 +799,7 @@ export class LevelView {
         dims.height,
         // Stacked boxes ghost when they hide the forklift; boxes in rack slots ghost with their rack.
         this.stacking || this.racked,
+        lockTints.get(box.color) ?? null,
       );
       this.boxViews.set(box.id, view);
       this.boxList.push(view);
@@ -709,6 +821,25 @@ function sunDirection(level: LevelData, target: Vector3): Vector3 {
   }
   if (west > north) return target.set(-0.72, 1.35, 0.62).normalize();
   return target.set(0.62, 1.35, -0.72).normalize();
+}
+
+/** The box `id` is locked (done on its destiny, levels with racks). */
+function isLocked(boxes: readonly BoxState[], id: string): boolean {
+  for (let i = 0; i < boxes.length; i++) if (boxes[i].id === id) return boxes[i].locked;
+  return false;
+}
+
+/**
+ * A drop on `cell` at `level` would land on a locked box: on top of it (floor, a zone) or into its slot. Logic never
+ * offers one; the render still never previews it.
+ */
+function dropsOnLocked(boxes: readonly BoxState[], cell: CellPos, level: number): boolean {
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (!b.locked || b.carried || !b.cell || b.cell.x !== cell.x || b.cell.z !== cell.z) continue;
+    if (b.slotId === null || b.level === level) return true;
+  }
+  return false;
 }
 
 /** The footprint of half-size `half` around `p` overlaps `bounds` in XZ. */
