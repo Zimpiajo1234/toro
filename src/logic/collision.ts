@@ -173,6 +173,8 @@ export class CollisionWorld {
   private readonly racks: readonly RackCollider[];
   /** Per rack column: 1 while the carried load may enter it (see setRackOpen). */
   private readonly rackOpen: Uint8Array;
+  /** Per rack column: how much its cell is currently shrunk for the load (easing it out after a close, see softenRack). */
+  private readonly rackInsets: Float64Array;
   private settling = false;
   private readonly hit = createContact();
   private readonly bodyHit = createContact();
@@ -184,6 +186,7 @@ export class CollisionWorld {
     this.boxHalf = boxSize / 2;
     this.racks = racks.map((r) => rackCollider(r.cell, r.facing));
     this.rackOpen = new Uint8Array(racks.length);
+    this.rackInsets = new Float64Array(racks.length);
   }
 
   static fromLevel(level: LevelData, boxSize: number): CollisionWorld {
@@ -231,6 +234,25 @@ export class CollisionWorld {
     return index >= 0 && index < this.rackOpen.length && this.rackOpen[index] === 1;
   }
 
+  /**
+   * Rack column `index` closes with the carried load (circle at (cx, cz), radius `r`) already reaching into its cell:
+   * for the load the cell starts shrunk by that overlap and grows back at BOX_SETTLE_SPEED (see settle), so the load is
+   * eased out instead of popping. Returns the overlap (0 = none). Only push-out (deepestContact / resolve) sees it.
+   */
+  softenRack(index: number, cx: number, cz: number, r: number): number {
+    if (index < 0 || index >= this.racks.length) return 0;
+    const c = this.racks[index].cell;
+    const overlap = circleRectContact(cx, cz, r, c.minX, c.minZ, c.maxX, c.maxZ, this.hit);
+    this.rackInsets[index] = Math.min(overlap, (c.maxX - c.minX) / 2, (c.maxZ - c.minZ) / 2);
+    if (overlap > 0) this.settling = true;
+    return overlap;
+  }
+
+  /** Current load inset of rack column `index` (0 = full cell). */
+  rackInset(index: number): number {
+    return index >= 0 && index < this.rackInsets.length ? this.rackInsets[index] : 0;
+  }
+
   /** Boxes are read live from this array every query (only resting ones collide). */
   setBoxes(boxes: readonly BoxState[]): void {
     this.boxes = boxes;
@@ -273,23 +295,18 @@ export class CollisionWorld {
     return index >= 0 && index < this.insets.length ? this.insets[index] : 0;
   }
 
-  /** Grow softened boxes back toward full size over `dt` seconds. */
+  /** Grow softened boxes (and rack cells, for the load) back toward full size over `dt` seconds. */
   settle(dt: number): void {
     if (!this.settling || !(dt > 0)) return;
     const step = BOX_SETTLE_SPEED * dt;
-    let any = false;
-    const insets = this.insets;
-    for (let i = 0; i < insets.length; i++) {
-      if (insets[i] <= 0) continue;
-      insets[i] = Math.max(0, insets[i] - step);
-      if (insets[i] > 0) any = true;
-    }
-    this.settling = any;
+    const boxes = shrinkInsets(this.insets, step);
+    this.settling = shrinkInsets(this.rackInsets, step) || boxes;
   }
 
   /**
    * Deepest overlap of a circle with walls, static obstacles and resting boxes (settling ones shrunk). 0 = free.
-   * `load`: the circle is the carried box, which passes over stacks that still have room.
+   * `load`: the circle is the carried box, which passes over stacks that still have room (and meets a rack column it
+   * is being eased out of shrunk, see softenRack).
    */
   deepestContact(cx: number, cz: number, r: number, out: Contact, load = false): number {
     out.depth = 0;
@@ -313,7 +330,8 @@ export class CollisionWorld {
         }
       } else {
         const s = racks[i].cell;
-        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+        const t = load ? this.rackInsets[i] : 0;
+        if (circleRectContact(cx, cz, r, s.minX + t, s.minZ + t, s.maxX - t, s.maxZ - t, hit) > out.depth) copyContact(hit, out);
       }
     }
     const boxes = this.boxes;
@@ -397,6 +415,17 @@ export class CollisionWorld {
     }
     return d;
   }
+}
+
+/** Ease every positive inset `step` toward 0; true while any is still above 0. */
+function shrinkInsets(insets: Float64Array, step: number): boolean {
+  let any = false;
+  for (let i = 0; i < insets.length; i++) {
+    if (insets[i] <= 0) continue;
+    insets[i] = Math.max(0, insets[i] - step);
+    if (insets[i] > 0) any = true;
+  }
+  return any;
 }
 
 function copyContact(from: Contact, to: Contact): void {

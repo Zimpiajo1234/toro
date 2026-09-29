@@ -35,8 +35,6 @@ export interface UIState {
   showTimer: boolean;
   result: LevelResult | null;
   muted: boolean;
-  /** Transient control hint on the first level(s); hidden after the first successful drop. */
-  showHint: boolean;
   /**
    * 0 … 1 while R / pad Back (or, in "Modo prueba", a level-jump key) is held with work at stake (drawn as a fill
    * on the ↺ pill).
@@ -47,6 +45,16 @@ export interface UIState {
   canContinue: boolean;
   /** "Modo prueba" (persisted): every level dot is open and [ / ] jump between levels while playing. */
   testMode: boolean;
+  /**
+   * The level on screen is the «Benchmark» (test mode's special level, outside LEVELS): HUD and card read
+   * "Benchmark" instead of "Nivel N", and nothing is saved. `levelIndex` keeps naming the game level "Continuar" knows.
+   */
+  benchmark: boolean;
+  /**
+   * The level on screen has storage racks: the control hint (always on screen while playing) adds its fork row,
+   * F / V, the wheel and pad X / B (docs/RACKS.md).
+   */
+  racks: boolean;
 }
 
 /** Commands the UI can issue. Implemented by game/Game.ts. */
@@ -63,6 +71,11 @@ export interface GameActions {
   toggleTimer(): void;
   /** Title: turn "Modo prueba" on / off (never changes the real unlock progress). */
   toggleTestMode(): void;
+  /**
+   * Title, "Modo prueba" only: play the «Benchmark» special level. Nothing is saved (no best time, no unlock, no
+   * "Continuar" target); "Repetir" reloads it and its card leads back to the title.
+   */
+  startBenchmark(): void;
 }
 
 export const initialUIState: UIState = {
@@ -75,11 +88,12 @@ export const initialUIState: UIState = {
   showTimer: true,
   result: null,
   muted: false,
-  showHint: false,
   restartHold: 0,
   levels: [],
   canContinue: false,
   testMode: false,
+  benchmark: false,
+  racks: false,
 };
 
 export function createUIStore(): Store<UIState> {

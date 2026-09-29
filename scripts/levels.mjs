@@ -1,10 +1,11 @@
 /**
  * Level tooling (docs/LEVELS.md):
- *   npm run levels                   every level: map, legend and metrics, then a summary table
- *   npm run levels -- 23 la-muestra  those levels in detail (order number, #position, id or file name)
+ *   npm run levels                   every level (the game's, then the special ones in especiales/): map, legend and
+ *                                    metrics, then a summary table
+ *   npm run levels -- 23 benchmark   those levels in detail (order number, #position, id or file name)
  *   npm run levels -- 23 --estados 2000000  raise the work budget of the exact move search (default 150 000)
  *   npm run levels -- 23 --callejones 2000  explore more states in the dead-end check (default 60 per level)
- *   npm run levels:fmt               rewrite every src/data/levels/*.level in its canonical form
+ *   npm run levels:fmt               rewrite every src/data/levels/*.level and especiales/*.level in canonical form
  *   npm run levels:fmt -- --check    only report the files that are not canonical (exit code 1)
  *
  * The TypeScript sources are loaded through Vite's SSR module loader (TS, extensionless imports, import.meta.glob and
@@ -58,15 +59,19 @@ const server = await createServer({
 try {
   if (fmt) {
     const { formatLevel } = await server.ssrLoadModule('/src/data/asciiLevel.ts');
-    const dir = path.join(root, 'src', 'data', 'levels');
-    const files = (await readdir(dir)).filter((name) => name.endsWith('.level')).sort();
+    // The game's levels and the special ones (especiales/: the registry keeps them out of LEVELS).
+    const files = [];
+    for (const folder of ['src/data/levels', 'src/data/levels/especiales']) {
+      const names = await readdir(path.join(root, folder)).catch(() => []);
+      for (const name of names.filter((n) => n.endsWith('.level')).sort()) files.push(`${folder}/${name}`);
+    }
     const changed = [];
     for (const name of files) {
-      const file = path.join(dir, name);
+      const file = path.join(root, name);
       const text = await readFile(file, 'utf8');
-      const canonical = formatLevel(text, `src/data/levels/${name}`);
+      const canonical = formatLevel(text, name);
       if (canonical === text) continue;
-      changed.push(`src/data/levels/${name}`);
+      changed.push(name);
       if (!check) await writeFile(file, canonical, 'utf8');
     }
     if (check) {
@@ -84,10 +89,10 @@ try {
       );
     }
   } else {
-    const { LEVEL_SOURCES } = await server.ssrLoadModule('/src/data/levels/index.ts');
+    const { LEVEL_SOURCES, SPECIAL_LEVEL_SOURCES } = await server.ssrLoadModule('/src/data/levels/index.ts');
     const { levelsReport } = await server.ssrLoadModule('/src/data/levels/report.ts');
     process.stdout.write(
-      levelsReport(LEVEL_SOURCES, names, {
+      levelsReport([...LEVEL_SOURCES, ...SPECIAL_LEVEL_SOURCES], names, {
         timings: true,
         ...(maxWork === undefined ? {} : { maxWork }),
         ...(deadEndStates === undefined ? {} : { deadEndStates }),

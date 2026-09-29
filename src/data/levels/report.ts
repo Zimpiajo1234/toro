@@ -45,7 +45,10 @@ export function levelsReport(sources: readonly LevelSource[], args: readonly str
   });
   const out: string[] = [];
   if (args.length === 0) {
-    out.push(`Toro · ${sources.length} niveles · métricas en el modelo conservador de carga (docs/LEVELS.md)`, '');
+    // Special levels (src/data/levels/especiales/, outside the game's progression) are counted apart.
+    const special = sources.filter((s) => s.file.includes('/especiales/')).length;
+    const count = `${sources.length - special} niveles${special === 0 ? '' : ` + ${special} ${special === 1 ? 'especial' : 'especiales'}`}`;
+    out.push(`Toro · ${count} · métricas en el modelo conservador de carga (docs/LEVELS.md)`, '');
     for (const m of measured) out.push(...summaryBlock(m.source, m.metrics), '');
   } else {
     for (const m of measured) out.push(...detailBlock(m.source, m.metrics, m.checks));

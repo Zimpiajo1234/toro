@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent } from '../core/types';
 import { GAME_CONFIG } from '../config';
-import { LEVELS } from '../data/levels';
+import { hasRacks } from '../core/racks';
+import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
 
@@ -19,17 +20,23 @@ const fakes = vi.hoisted(() => {
     /** Next GameRenderer construction throws (no WebGL context). */
     failRenderer: false,
     yaw: Math.PI / 4,
+    /**
+     * `hint.rack` of every simulation's snapshot (null = not facing a rack column). A fork step input moves its level
+     * within the column, like the real one.
+     */
+    rack: null as { rackId: string; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
   };
 
   class FakeGameState {
     readonly level: { id: string };
     readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
-    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false };
+    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { rack: sim.rack } };
     constructor(level: { id: string }) {
       this.level = level;
       sim.states.push(this);
     }
     getSnapshot() {
+      this.snapshot.hint.rack = sim.rack;
       return this.snapshot;
     }
     update(
@@ -44,6 +51,8 @@ const fakes = vi.hoisted(() => {
         action: input.actionPressed,
         forkStep: input.forkStep ?? 0,
       });
+      const rack = sim.rack;
+      if (rack && input.forkStep) rack.level = Math.max(0, Math.min(rack.levels - 1, rack.level + input.forkStep));
       if (sim.states[sim.states.length - 1] !== this) return [];
       const events = sim.queue.splice(0) as { type: string }[];
       if (events.some((e) => e.type === 'levelComplete')) this.snapshot.completed = true;
@@ -75,6 +84,7 @@ const fakes = vi.hoisted(() => {
     setScene() {}
     setMotor() {}
     handleEvent() {}
+    forkClick() {}
     dispose() {}
   }
 
@@ -141,6 +151,7 @@ beforeEach(() => {
   sim.queue.length = 0;
   sim.failRenderer = false;
   sim.yaw = Math.PI / 4;
+  sim.rack = null;
   win = fakeWindow();
   rafCallback = null;
   now = 1000;
@@ -716,5 +727,231 @@ describe('Game: modo prueba', () => {
     const second = setup();
     expect(second.store.get().testMode).toBe(true);
     expect(unlockedCount(second.store.get().levels)).toBe(LEVELS.length);
+  });
+});
+
+describe('Game: Benchmark (test mode special level)', () => {
+  const benchmark = getSpecialLevel(BENCHMARK_ID)!;
+  const unlockedCount = (levels: { unlocked: boolean }[]) => levels.filter((l) => l.unlocked).length;
+  /** Real (fake) localStorage, so the tests can read exactly what was saved. */
+  const withStorage = () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    return items;
+  };
+  /** The saved progress without the settings (test mode itself is a setting). */
+  const progressOf = (items: Map<string, string>) => {
+    const { settings: _settings, ...progress } = JSON.parse(items.get('toro.progress.v1') ?? '{}') as Record<string, unknown>;
+    return progress;
+  };
+  /** A timed run to the end, then the completion card (still in its first moments). */
+  const finish = () => {
+    emit({ type: 'firstInput' });
+    advance(0.5);
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+  };
+
+  it('is a special level outside LEVELS, started only with test mode on, labelled by name', () => {
+    expect(benchmark).toBeDefined();
+    expect(LEVELS.some((l) => l.id === BENCHMARK_ID)).toBe(false);
+    const { game, store } = setup();
+    const before = sim.states.length;
+    game.startBenchmark();
+    expect(sim.states).toHaveLength(before);
+    expect(store.get()).toMatchObject({ screen: 'title', benchmark: false });
+
+    game.toggleTestMode();
+    game.startBenchmark();
+    expect(current().level).toBe(benchmark);
+    expect(store.get()).toMatchObject({
+      screen: 'playing',
+      benchmark: true,
+      levelName: benchmark.name,
+      racks: true,
+      elapsedMs: 0,
+      timerStarted: false,
+    });
+  });
+
+  it('saves nothing: no best time, no unlock, never the "Continuar" level, while the timer still runs', () => {
+    const items = withStorage();
+    const { game, store } = setup();
+    game.toggleTestMode();
+    const saved = progressOf(items);
+    game.startBenchmark();
+    finish();
+    expect(store.get().screen).toBe('complete');
+    expect(store.get().result).toMatchObject({ isNewBest: false, isLast: false, practice: true });
+    expect(store.get().result!.timeMs).toBeGreaterThan(400);
+    expect(progressOf(items)).toEqual(saved);
+
+    game.toTitle();
+    expect(progressOf(items)).toEqual(saved);
+    expect(items.get('toro.progress.v1')).not.toContain(BENCHMARK_ID);
+    expect(store.get()).toMatchObject({ screen: 'title', benchmark: false, levelIndex: 0, canContinue: false });
+    game.toggleTestMode();
+    expect(unlockedCount(store.get().levels)).toBe(1);
+    expect(store.get().levels.every((l) => l.bestMs === null)).toBe(true);
+  });
+
+  it('R, the HUD restart and "Repetir" on its card reload the Benchmark', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    const first = current();
+    tap('KeyR', 'r');
+    expect(current()).not.toBe(first);
+    expect(current().level.id).toBe(BENCHMARK_ID);
+
+    emit({ type: 'firstInput' });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    const second = current();
+    game.restart();
+    expect(current()).not.toBe(second);
+    expect(current().level.id).toBe(BENCHMARK_ID);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: true, elapsedMs: 0, timerStarted: false });
+
+    finish();
+    advance(GAME_CONFIG.flow.confirmGraceSec);
+    const before = sim.states.length;
+    tap('KeyR', 'r');
+    expect(sim.states).toHaveLength(before + 1);
+    expect(current().level.id).toBe(BENCHMARK_ID);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: true, result: null });
+  });
+
+  it('its card leads back to the title (confirm, Esc or the primary button), showing the real "Continuar" level', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    const leaves = [() => tap('Space', ' '), () => tap('Escape', 'Escape'), () => game.nextLevel()];
+    for (const leave of leaves) {
+      game.startBenchmark();
+      finish();
+      expect(store.get()).toMatchObject({ screen: 'complete', benchmark: true });
+      advance(GAME_CONFIG.flow.confirmGraceSec);
+      leave();
+      expect(store.get()).toMatchObject({ screen: 'title', benchmark: false, levelIndex: 0, levelName: LEVELS[0].name });
+      expect(current().level.id).toBe(LEVELS[0].id);
+    }
+  });
+
+  it('level jumps ([ / ], PageUp / PageDown) do nothing there, not even held', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    const level = current();
+    tap('BracketRight', ']');
+    tap('BracketLeft', '[');
+    tap('PageDown', 'PageDown');
+    tap('PageUp', 'PageUp');
+    expect(current()).toBe(level);
+
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    press('PageDown', 'PageDown');
+    advance(GAME_CONFIG.flow.restartHoldSec * 2);
+    expect(store.get().restartHold).toBe(0);
+    release('PageDown', 'PageDown');
+    expect(current()).toBe(level);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: true });
+  });
+
+  it('Esc keeps it behind the title: "Continuar" or the Benchmark button resume it; a level dot loads that level', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    const level = current();
+    emit({ type: 'firstInput' });
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    tap('Escape', 'Escape');
+    expect(store.get()).toMatchObject({ screen: 'title', benchmark: true, canContinue: true });
+
+    game.start();
+    expect(current()).toBe(level); // same simulation, nothing reloaded
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: true, timerStarted: true });
+    tap('Escape', 'Escape');
+    game.startBenchmark();
+    expect(current()).toBe(level);
+
+    tap('Escape', 'Escape');
+    game.start(0);
+    expect(current()).not.toBe(level);
+    expect(current().level.id).toBe(LEVELS[0].id);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: false, levelIndex: 0 });
+  });
+
+  it('turning test mode off with the Benchmark behind the title drops it for the real "Continuar" level', () => {
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    tap('Escape', 'Escape');
+    game.toggleTestMode();
+    expect(store.get()).toMatchObject({
+      screen: 'title',
+      testMode: false,
+      benchmark: false,
+      levelIndex: 0,
+      levelName: LEVELS[0].name,
+      canContinue: false,
+    });
+    expect(current().level.id).toBe(LEVELS[0].id);
+    game.startBenchmark(); // without test mode (its button is gone) the action does nothing
+    expect(store.get().screen).toBe('title');
+    game.start();
+    expect(current().level.id).toBe(LEVELS[0].id);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: false });
+  });
+});
+
+describe('Game: control hint', () => {
+  const rackAt = (levels: number, level = 0) => ({ rackId: 'r1', column: 0, levels, level, slotId: `r1:0:${level}`, ready: false });
+  const dropped: GameEvent = {
+    type: 'boxDropped',
+    boxId: 'b1',
+    cell: { x: 1, z: 1 },
+    zoneId: null,
+    level: 0,
+    correct: false,
+    recipeLength: 0,
+    satisfiedCount: 0,
+    total: 1,
+  };
+
+  it('publishes the level on screen having racks (the fork row) and nothing ever takes the hint away while playing', () => {
+    const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
+    const { game, store } = setup();
+    game.start(0);
+    advance(0.2);
+    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[0]) });
+    game.toTitle();
+    game.toggleTestMode();
+    game.startBenchmark();
+    advance(1 / 60);
+    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+
+    // Not a fork step that takes effect, a drop, a restart or the next level of a session: the flag only follows
+    // the level on screen (the hint itself shows whenever the screen is 'playing').
+    sim.rack = rackAt(3, 2);
+    advance(1 / 60);
+    tap('KeyV', 'v');
+    expect(click).toHaveBeenCalledExactlyOnceWith(1, -1);
+    emit(dropped);
+    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    sim.rack = null;
+    game.restart();
+    advance(0.2);
+    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+
+    // Esc keeps the Benchmark behind the title (still its level); another level brings its own flag.
+    tap('Escape', 'Escape');
+    expect(store.get()).toMatchObject({ screen: 'title', racks: true });
+    game.start(1);
+    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[1]) });
+    click.mockRestore();
   });
 });

@@ -4,6 +4,13 @@ Cada nivel es un archivo de texto `src/data/levels/*.level`: un mapa ASCII que s
 leyenda. El registro (`src/data/levels/index.ts`) carga todos los `*.level` (y, por compatibilidad, los `*.json`
 antiguos), los valida al importar y los ordena por su número. Los ids y los números no se pueden repetir.
 
+**Niveles especiales**: `src/data/levels/especiales/*.level`, mismo formato, fuera de la progresión del juego. El glob
+de `LEVELS` no entra en subcarpetas, así que nunca llegan a `LEVELS`, a los tiempos guardados, a los desbloqueos ni a
+«Continuar». El registro los carga aparte (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`), los valida
+igual y rechaza un id o un número que choque con un nivel del juego (`loadSpecialSources`), para que las herramientas
+puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark** (`BENCHMARK_ID = 'benchmark'`, número
+100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`).
+
 - Parser y renderer: `src/data/asciiLevel.ts` (texto → `validateLevel` → `LevelData`, y `LevelData` → texto canónico).
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
 - Métricas: `src/data/levels/metrics.ts` · Informe: `src/data/levels/report.ts` · Objetivos: `src/data/difficulty.ts`.
@@ -178,8 +185,8 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
 | `cajas`, `zonas` | Cuántas hay. |
 
-Coste: `npm run levels` mide los 24 niveles, todos exactos, en ~15 s (sobre todo la búsqueda de callejones; el
-mínimo de movimientos, menos de 1 s por nivel).
+Coste: `npm run levels` mide los 24 niveles y el Benchmark, todos exactos, en ~15 s (sobre todo la búsqueda de
+callejones; el mínimo de movimientos, menos de 1 s por nivel).
 
 ## Callejones
 
@@ -221,12 +228,14 @@ que no aplica (`repartos` sin símbolos ni estanterías) nunca se cumple. `calle
 ## Herramientas
 
 ```bash
-npm run levels                  # todos: mapa, leyenda y métricas de cada nivel + tabla resumen
+npm run levels                  # todos (los del juego y luego los especiales): mapa, leyenda y métricas de cada
+                                #   nivel + tabla resumen, con la cabecera «Toro · 24 niveles + 1 especial»
 npm run levels -- 23            # uno en detalle (por número, #posición, id o archivo): texto, métricas,
                                 #   objetivos, un plan mínimo movimiento a movimiento y las casillas estrechas
+npm run levels -- benchmark     # igual con un nivel especial (su id, su número 100 o su archivo)
 npm run levels -- 23 --estados 1000000  # más presupuesto para la búsqueda exacta
 npm run levels -- 23 --callejones 2000  # explorar más estados buscando callejones (60 por defecto)
-npm run levels:fmt              # reescribe los .level en forma canónica
+npm run levels:fmt              # reescribe los .level (también los de especiales/) en forma canónica
 npm run levels:fmt -- --check   # solo avisa (código de salida 1) de los que no lo están
 ```
 
@@ -247,3 +256,9 @@ consola muestra mal los símbolos, usa Windows Terminal (UTF-8).
 5. Añadir, quitar o reordenar niveles: actualiza la lista `SHIPPED` de `src/data/levels/levels.test.ts` (ids y
    números a propósito: de ellos dependen tiempos guardados y desbloqueos) y los tests de capítulo si cambian.
 6. Opcional: `npm run levels:fmt` para dejarlo en forma canónica.
+
+Un nivel **especial** (fuera de la progresión) va en `src/data/levels/especiales/` con un id y un número que no use
+ningún nivel del juego (el Benchmark usa 100). No hace falta tocar `SHIPPED`: pasa las mismas validaciones, la forma
+canónica (`levels.test.ts`) y `npm run levels`; sus reglas de diseño y su piloto automático van en tests propios
+(`benchmark.test.ts`, `src/integration/benchmarkPlayable.test.ts`). Para jugarlo hace falta una entrada en la UI (hoy,
+el botón «Benchmark» del Modo prueba, `Game.startBenchmark`); nunca pasa por ProgressStore.

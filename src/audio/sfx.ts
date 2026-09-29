@@ -48,6 +48,16 @@ export const CHIME_LEVELS: Readonly<Record<MatchKind, { bell: number; wood: numb
   symbol: { bell: 0, wood: 0.64, final: 0.36 },
   exact: { bell: 0.4, wood: 0.38, final: 0.3 },
 };
+/**
+ * [ratio, relative level, decay factor] — a damped painted-steel beam (storage racks): its two lowest free-bar modes.
+ * Inharmonic, so the "toc" reads as metal and never as a note (the success chime stays the only pitched sound).
+ */
+export const BEAM_MODES: readonly (readonly [number, number, number])[] = [
+  [1, 1, 1],
+  [2.76, 0.45, 0.5],
+];
+/** Low-pass over the beam modes: warm, never a clang. */
+export const BEAM_LOWPASS_HZ = 2400;
 
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
@@ -85,9 +95,21 @@ export class SfxPlayer {
     const lift = 1 + LEVEL_PITCH * Math.max(0, level);
     this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1150 * lift, VARIANCE), q: 3.2, peak: vary(r, 0.5, VARIANCE), attack: 0.002, tau: 0.018 });
     this.toneHit(t, { type: 'sine', freq: vary(r, 196, VARIANCE), freqEnd: vary(r, 150, VARIANCE), glideSec: 0.06, peak: vary(r, 0.34, VARIANCE), attack: 0.003, tau: 0.05 });
-    const servo = vary(r, 210 * lift, VARIANCE);
-    const glide = 0.3 * (1 + 0.25 * Math.max(0, level));
-    this.toneHit(t + 0.03, { type: 'triangle', freq: servo, freqEnd: servo * 1.42, glideSec: glide, peak: vary(r, 0.045, VARIANCE), attack: 0.06, hold: 0.18, tau: 0.07, lowpass: 900 });
+    this.servoLift(t + 0.03, level);
+  }
+
+  /**
+   * The forks lifting a box out of a rack slot at `level`: a softer knock of the tines, the box easing off the painted
+   * beam (a faint beam tone and a brief slide) and the same servo glide as any pickup. Neutral: taking a box out,
+   * even the destined one, never sounds like a mistake.
+   */
+  slotLift(t: number, level = 0): void {
+    const r = this.rng;
+    const k = 1 + LEVEL_PITCH * Math.max(0, level);
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1050 * k, VARIANCE), q: 2.6, peak: vary(r, 0.3, VARIANCE), attack: 0.002, tau: 0.016 });
+    this.beam(t + 0.02, vary(r, 500 * k, VARIANCE), vary(r, 0.035, VARIANCE));
+    this.noiseHit(t + 0.03, { type: 'bandpass', freq: vary(r, 820 * k, VARIANCE), q: 1.4, peak: vary(r, 0.07, VARIANCE), attack: 0.03, tau: 0.05 });
+    this.servoLift(t + 0.03, level);
   }
 
   /**
@@ -119,6 +141,35 @@ export class SfxPlayer {
     }
     if (chimeMidi === null) return;
     this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, stackNotes, match);
+  }
+
+  /**
+   * A box settling into a rack slot at `level`, at `t` (as it lands): a soft, muted metallic "toc" (the box's felt body
+   * on the painted beam, then the beam's two damped modes), a little higher per level, no floor sub. Pass `chimeMidi`
+   * only when the slot now holds its destined box: it adds the chime in the timbre of the cue's `match` (see
+   * chime()). A box that merely fits the cue settles with the same neutral toc and nothing else.
+   */
+  slotDrop(t: number, chimeMidi: number | null, final = false, level = 0, match: MatchKind = 'color'): void {
+    const r = this.rng;
+    const k = 1 + LEVEL_PITCH * Math.max(0, level);
+    this.toneHit(t, { type: 'sine', freq: vary(r, 165 * k, VARIANCE), freqEnd: vary(r, 104 * k, VARIANCE), glideSec: 0.07, peak: vary(r, 0.18, VARIANCE), attack: 0.004, tau: 0.055, lowpass: 520 });
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 680 * k, VARIANCE), q: 1.3, peak: vary(r, 0.22, VARIANCE), attack: 0.002, tau: 0.03 });
+    this.noiseHit(t, { type: 'lowpass', freq: vary(r, 450 * k, VARIANCE), q: 0.6, peak: vary(r, 0.14, VARIANCE), attack: 0.003, tau: 0.03 });
+    this.beam(t + 0.004, vary(r, 470 * k, VARIANCE), vary(r, 0.075, VARIANCE));
+    if (chimeMidi === null) return;
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Soft detent click as the forks step one rack slot (F / V, the wheel, pad X / B): a tiny muffled latch, a little
+   * higher per `level` (the slot just selected) and a hair brighter going up (`direction` +1) than down. About half a
+   * UI click: it confirms the step without competing with the servo or the music.
+   */
+  forkClick(t: number, level: number, direction: 1 | -1): void {
+    const r = this.rng;
+    const k = (1 + LEVEL_PITCH * Math.max(0, level)) * (direction > 0 ? 1.04 : 0.96);
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1250 * k, VARIANCE), q: 3.5, peak: vary(r, 0.1, VARIANCE), attack: 0.0015, tau: 0.007 });
+    this.toneHit(t, { type: 'sine', freq: vary(r, 520 * k, VARIANCE), freqEnd: vary(r, 470 * k, VARIANCE), glideSec: 0.03, peak: vary(r, 0.04, VARIANCE), attack: 0.002, tau: 0.018 });
   }
 
   /**
@@ -186,6 +237,21 @@ export class SfxPlayer {
     this.bell.releaseAll();
     this.wood.releaseAll();
     this.swell.releaseAll();
+  }
+
+  /** Soft servo glide as the forks lift a load (`level` = height it leaves: a little higher and longer up a stack). */
+  private servoLift(t: number, level: number): void {
+    const r = this.rng;
+    const servo = vary(r, 210 * (1 + LEVEL_PITCH * Math.max(0, level)), VARIANCE);
+    const glide = 0.3 * (1 + 0.25 * Math.max(0, level));
+    this.toneHit(t, { type: 'triangle', freq: servo, freqEnd: servo * 1.42, glideSec: glide, peak: vary(r, 0.045, VARIANCE), attack: 0.06, hold: 0.18, tau: 0.07, lowpass: 900 });
+  }
+
+  /** A damped painted-steel beam at `base` Hz (BEAM_MODES): short sine modes under a warm low-pass. */
+  private beam(t: number, base: number, peak: number): void {
+    for (const [ratio, level, decay] of BEAM_MODES) {
+      this.toneHit(t, { type: 'sine', freq: base * ratio, peak: peak * level, attack: 0.002, tau: 0.07 * decay, lowpass: BEAM_LOWPASS_HZ });
+    }
   }
 
   private noiseHit(t0: number, p: NoiseHit): void {

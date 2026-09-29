@@ -456,11 +456,18 @@ export class GameState {
     return this.grid.slotOf(this.grid.columnAt(cell.x, cell.z), box.level);
   }
 
-  /** F / V, wheel, gamepad X / B: one slot level up or down at the rack column the rig is at (never through a board). */
+  /**
+   * F / V, wheel, gamepad X / B: one slot level up or down at the rack column the rig works at (hint.rack: not while
+   * it lifts a floor box there), never through a board.
+   */
   private stepForkLevel(step: -1 | 1): void {
-    if (this.engaged < 0 || this.loadInside) return;
-    const levels = this.grid.columns[this.engaged].levels;
-    this.forkLevel = clamp(this.forkLevel + step, 0, levels - 1);
+    const engaged = this.engaged;
+    if (engaged < 0 || this.snapshot.hint.rack === null || this.loadInside) return;
+    const level = clamp(this.forkLevel + step, 0, this.grid.columns[engaged].levels - 1);
+    if (level === this.forkLevel) return;
+    this.forkLevel = level;
+    // Open for the load at the old level: it closes now, before the rig moves (a load just reaching in is eased out).
+    this.closeRack(engaged);
   }
 
   /**
@@ -515,9 +522,12 @@ export class GameState {
     this.forksInside = this.loadInside;
     // Pick and drop act on the slot only once the forks stand at its level (the tines / the load fit its opening).
     const atLevel = Math.abs(f.forkHeight - this.forkLevel) <= LOAD_PASS_CLEARANCE;
+    const within = engaged >= 0 && this.facing && bestDepth >= -RACK_DROP_REACH;
     aim.column = engaged >= 0 && this.facing && atLevel ? engaged : -1;
     aim.level = this.forkLevel;
-    aim.reach = aim.column >= 0 && bestDepth >= -RACK_DROP_REACH;
+    aim.reach = aim.column >= 0 && within;
+    // The load at the face while the forks go to the selected level (not up to a floor stack it is over): no drop.
+    aim.travel = within && carrying && !atLevel && this.clearLevel(true) <= this.forkLevel;
   }
 
   /** The rig is still at rack column `c` (the looser hold margins around facing it). */
@@ -531,9 +541,10 @@ export class GameState {
   /**
    * Levels with racks: which rack columns the carried load may enter (CollisionWorld.setRackOpen). The faced column
    * opens once the forks stand at the selected slot level and that slot is empty, and stays open while the load is in
-   * its cell at that level (it never turns solid around the load: the level is locked once the load is in); every
-   * other column blocks the load like a shelf. Inside, the load meets the slot's back panel and side uprights, so it
-   * goes in and out straight. The body never enters.
+   * its cell at that level (it never turns solid around the load: the level is locked once the load is in, and a load
+   * only just reaching into a column that closes is eased out, see closeRack); every other column blocks the load like
+   * a shelf. Inside, the load meets the slot's back panel and side uprights, so it goes in and out straight. The body
+   * never enters.
    */
   private refreshRackPassage(): void {
     const columns = this.grid.columns;
@@ -541,10 +552,7 @@ export class GameState {
     const world = this.world;
     const open = this.openLevels;
     if (this.carriedIndex < 0) {
-      for (let c = 0; c < columns.length; c++) {
-        world.setRackOpen(c, false);
-        open[c] = -1;
-      }
+      for (let c = 0; c < columns.length; c++) this.closeRack(c);
       return;
     }
     const load = this.snapshot.boxes[this.carriedIndex].pos;
@@ -558,9 +566,26 @@ export class GameState {
         const cell = world.rackCell(c);
         if (pointRectDistance(load.x, load.z, cell.minX, cell.minZ, cell.maxX, cell.maxZ) < r) level = open[c];
       }
-      open[c] = level;
-      world.setRackOpen(c, level >= 0);
+      if (level < 0) this.closeRack(c);
+      else {
+        open[c] = level;
+        world.setRackOpen(c, true);
+      }
     }
+  }
+
+  /**
+   * Close rack column `c` for the carried load. A load already reaching into its cell (a level step or the forks
+   * leaving just as it went in) is eased out of it (CollisionWorld.softenRack) instead of popping out in one frame.
+   */
+  private closeRack(c: number): void {
+    const world = this.world;
+    if (this.carriedIndex >= 0 && world.isRackOpen(c)) {
+      const load = this.snapshot.boxes[this.carriedIndex].pos;
+      world.softenRack(c, load.x, load.z, this.config.forklift.carriedBoxRadius);
+    }
+    world.setRackOpen(c, false);
+    this.openLevels[c] = -1;
   }
 
   /**
@@ -637,7 +662,8 @@ export class GameState {
       this.pickLevel = target >= 0 ? snap.boxes[target].level : 0;
       hint.dropCell = null;
       hint.dropZoneId = null;
-      this.fillRackHint(target >= 0 && snap.boxes[target].slotId !== null);
+      // A floor box targeted at a rack column is lifted as anywhere else: no slot selected, automatic height.
+      if (target < 0 || snap.boxes[target].slotId !== null) this.fillRackHint(target >= 0);
       return;
     }
     const drop = this.drop;
@@ -655,7 +681,10 @@ export class GameState {
     hint.dropZoneId = drop.zoneIndex >= 0 ? snap.zones[drop.zoneIndex].id : null;
   }
 
-  /** hint.rack while the rig is at a rack column (null otherwise); `ready` = the action works on its selected slot. */
+  /**
+   * hint.rack while the rig is at a rack column and not lifting a floor box there (null otherwise); `ready` = the
+   * action works on its selected slot.
+   */
   private fillRackHint(ready: boolean): void {
     const engaged = this.engaged;
     if (engaged < 0) return;
@@ -735,8 +764,9 @@ export class GameState {
     const f = snap.forklift;
     let target = 0;
     if (!snap.completed) {
-      // At a rack column the forks go to the selected slot level (never into a stack the load is over).
-      if (this.engaged >= 0) target = this.carriedIndex >= 0 ? Math.max(this.forkLevel, this.clearLevel(true)) : this.forkLevel;
+      // At a rack column (hint.rack) the forks go to the selected slot level, never into a stack the load or the empty
+      // forks are at; a floor box targeted there leaves hint.rack null and is lifted at its level, as anywhere else.
+      if (snap.hint.rack) target = Math.max(this.forkLevel, this.clearLevel(this.carriedIndex >= 0));
       else if (this.carriedIndex >= 0) target = Math.max(snap.hint.dropCell ? snap.hint.dropLevel : 0, this.clearLevel(true));
       else target = snap.hint.targetBoxId ? this.pickLevel : this.clearLevel(false);
     }

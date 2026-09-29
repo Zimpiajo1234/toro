@@ -29,3 +29,6 @@ export function formatPrecise(ms: number): string {
 
 /** Tooltip of the "Modo prueba" switch and HUD tag: what it opens and how to jump levels while playing. */
 export const TEST_MODE_TIP = 'Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente';
+
+/** Tooltip of the title's "Benchmark" button and of the HUD's "sin récord" tag. */
+export const BENCHMARK_TIP = 'Nivel de prueba con todo el juego de estanterías · sin récord: no guarda tiempos ni desbloquea niveles';

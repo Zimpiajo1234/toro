@@ -173,6 +173,35 @@ describe('CollisionWorld settling boxes', () => {
   });
 });
 
+describe('CollisionWorld rack column closing on the load', () => {
+  it('a softened rack cell eases a load reaching into it back out; the body always meets the full cell', () => {
+    // One rack column (z −3‥−2) facing south; the rig faces north with the load 0.92 ahead, 4 cm into the cell.
+    const world = new CollisionWorld(BOUNDS, [], 0.78, [{ cell: { minX: -0.5, minZ: -3, maxX: 0.5, maxZ: -2 }, facing: 'south' }]);
+    const touching = -2 + 0.46; // load centre just touching the cell from the south
+    const pos = { x: 0, z: touching - 0.04 + 0.92 };
+    expect(world.softenRack(0, 0, touching - 0.04, 0.46)).toBeCloseTo(0.04, 9);
+    expect(world.rackInset(0)).toBeCloseTo(0.04, 9);
+    const hit = createContact();
+    expect(world.deepestContact(0, touching - 0.04, 0.46, hit, true)).toBeCloseTo(0, 9);
+    expect(world.deepestContact(0, touching - 0.04, 0.46, hit)).toBeCloseTo(0.04, 9);
+    expect(world.clearance(0, -2)).toBeCloseTo(0, 9);
+    const dt = 1 / 60;
+    for (let i = 0; i < 12; i++) {
+      const z = pos.z;
+      world.settle(dt);
+      world.resolve(pos, 0, -1, 0.42, 0.92, 0.46);
+      expect(pos.z - z).toBeGreaterThanOrEqual(0);
+      expect(pos.z - z).toBeLessThanOrEqual(BOX_SETTLE_SPEED * dt + 1e-5);
+    }
+    expect(world.rackInset(0)).toBe(0);
+    expect(pos.z - 0.92).toBeCloseTo(touching, 5);
+    // No overlap → nothing to soften; out-of-range columns are ignored.
+    expect(world.softenRack(0, 0, touching + 0.1, 0.46)).toBe(0);
+    expect(world.softenRack(3, 0, 0, 0.46)).toBe(0);
+    expect(world.rackInset(3)).toBe(0);
+  });
+});
+
 describe('CollisionWorld passable stack bases', () => {
   it('only the carried load passes over a passable base; the body and plain queries still collide', () => {
     const world = new CollisionWorld(BOUNDS, [], 0.78);

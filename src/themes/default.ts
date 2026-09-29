@@ -15,6 +15,20 @@ export const defaultTheme: Theme = {
   wall: { base: '#f3ece1', trim: '#dcc6a4', top: '#e8dccb' },
   window: { frame: '#d4b98f', glass: '#fff6e2', light: '#fff1d6' },
   shelf: { frame: '#cdb28a', board: '#dcc5a1', storedBoxes: ['#dfcaa8', '#e7d7bd', '#d6bf9b'] },
+  /**
+   * Soft slate metal with cream beams: cool where the wooden shelves are warm. Cue stickers: a cream-white «any colour»
+   * fill with a warm taupe rim, and one deep warm-gray ink for every glyph (≥ 3.5:1 on each box colour, never black).
+   */
+  rack: {
+    frame: '#95a3b0',
+    beam: '#f1e5c9',
+    panel: '#e8e5de',
+    deck: '#b8c2cb',
+    line: '#a9b4be',
+    cueFill: '#fcf9f3',
+    cueRim: '#b3a58f',
+    cueInk: '#574e46',
+  },
   plant: { pot: '#e4d8c6', soil: '#b9a488', leaves: ['#9db592', '#8aa981', '#a9c09c'] },
   forklift: {
     body: '#f7f2e9',

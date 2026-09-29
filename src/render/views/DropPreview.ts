@@ -27,13 +27,15 @@ export class DropPreview {
     this.mesh.position.y = ZONE.padHeight + 0.008;
     this.mesh.renderOrder = 2;
     this.mesh.visible = false;
+    this.mesh.userData.dropPreview = true;
   }
 
   /**
    * `match` = border color of a matching zone under the drop cell, or null. `topY` = height of the surface the
    * box would land on (0 = floor, else the top of the stack): the outline floats there as a ghost contour.
+   * `scale` shrinks the outline (a rack slot: it hugs the box between the uprights).
    */
-  sync(cell: CellPos | null, match: Color | null, dt: number, topY = 0): void {
+  sync(cell: CellPos | null, match: Color | null, dt: number, topY = 0, scale = 1): void {
     const m = this.mesh;
     if (cell) {
       const x = cell.x + 0.5 - this.size.width / 2;
@@ -41,10 +43,12 @@ export class DropPreview {
       const y = ZONE.padHeight + 0.008 + topY;
       if (this.opacity < 0.05) {
         m.position.set(x, y, z);
+        m.scale.setScalar(scale);
       } else {
         m.position.x = damp(m.position.x, x, 22, dt);
         m.position.z = damp(m.position.z, z, 22, dt);
         m.position.y = damp(m.position.y, y, 16, dt);
+        m.scale.setScalar(damp(m.scale.x, scale, 16, dt));
       }
     }
     this.opacity = damp(this.opacity, cell ? OPACITY : 0, cell ? 14 : 10, dt);

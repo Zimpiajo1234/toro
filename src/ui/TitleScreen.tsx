@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { useStore, type Store } from '../core/store';
-import { TEST_MODE_TIP } from './format';
+import { BENCHMARK_TIP, TEST_MODE_TIP } from './format';
 import { SoundIcon, ToroMark } from './icons';
 import { onScreen, useAutoFocus } from './interaction';
 import { Keycap } from './Keycap';
-import { LevelCaption, LevelDots } from './LevelDots';
+import { LevelCaption, LevelDots, SpecialCaption } from './LevelDots';
 import { Presence } from './Presence';
 import type { GameActions, UIState } from './uiState';
 
@@ -53,6 +53,7 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
             ·
           </span>
           <TestModeToggle store={store} actions={actions} />
+          <BenchmarkButton store={store} actions={actions} />
         </p>
       </div>
     </Presence>
@@ -78,6 +79,28 @@ function TestModeToggle({ store, actions }: { store: Store<UIState>; actions: Ga
   );
 }
 
+/**
+ * Next to the "Modo prueba" switch, only while it is on: plays the «Benchmark» (every storage rack mechanic in one
+ * small warehouse), which saves nothing. A plain button, so Tab reaches it and Enter / Space press it.
+ */
+function BenchmarkButton({ store, actions }: { store: Store<UIState>; actions: GameActions }) {
+  const on = useStore(store, (s) => s.testMode);
+  if (!on) return null;
+  return (
+    // Eases in (ui-swap) when test mode turns on.
+    <button
+      type="button"
+      className="title__bench ui-swap"
+      title={BENCHMARK_TIP}
+      // As the switch: a mouse press leaves focus where it was (the title fades out right after anyway).
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onScreen(store, 'title', () => actions.startBenchmark())}
+    >
+      Benchmark
+    </button>
+  );
+}
+
 /** Footer mute hint that tells the truth: a returning player whose saved setting is muted sees why. */
 function SoundHint({ store }: { store: Store<UIState> }) {
   const muted = useStore(store, (s) => s.muted);
@@ -95,6 +118,8 @@ function TitleMenu({ store, actions, active }: Omit<TitleScreenProps, 'show'> & 
   const levels = useStore(store, (s) => s.levels);
   const currentIndex = useStore(store, (s) => s.levelIndex);
   const showTimes = useStore(store, (s) => s.showTimer);
+  // A Benchmark left with Esc waits behind the title: "Continuar" resumes it, and the caption names it.
+  const benchmark = useStore(store, (s) => s.benchmark);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
   useAutoFocus(primaryRef, active);
@@ -110,12 +135,16 @@ function TitleMenu({ store, actions, active }: Omit<TitleScreenProps, 'show'> & 
         <>
           <LevelDots
             levels={levels}
-            currentIndex={currentIndex}
+            currentIndex={benchmark ? -1 : currentIndex}
             showTimes={showTimes}
             onPick={start}
             onPreview={setPreviewIndex}
           />
-          <LevelCaption level={levels[previewIndex ?? currentIndex]} showTimes={showTimes} />
+          {benchmark && previewIndex === null ? (
+            <SpecialCaption name="Benchmark" note="sin récord" />
+          ) : (
+            <LevelCaption level={levels[previewIndex ?? currentIndex]} showTimes={showTimes} />
+          )}
         </>
       )}
     </div>

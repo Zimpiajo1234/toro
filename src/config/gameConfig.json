@@ -46,7 +46,6 @@
   "flow": {
     "completeDelaySec": 1.6,
     "confirmGraceSec": 0.45,
-    "restartHoldSec": 0.55,
-    "hintLevels": 1
+    "restartHoldSec": 0.55
   }
 }

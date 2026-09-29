@@ -45,10 +45,15 @@ export interface RackAim {
   level: number;
   /** Carrying: the fork point is close enough to the rack face for the box to go into the slot. */
   reach: boolean;
+  /**
+   * Carrying: facing a column with the fork point that close while the forks are still on their way to the selected
+   * level (not held up by a floor stack the load is over): nothing can be dropped, not even on the floor in front.
+   */
+  travel: boolean;
 }
 
 export function createRackAim(): RackAim {
-  return { column: -1, level: 0, reach: false };
+  return { column: -1, level: 0, reach: false, travel: false };
 }
 
 /**
@@ -176,8 +181,10 @@ export class Interaction {
     const cellZ = Math.floor(pz + this.halfDepth);
     out.slot = -1;
 
-    // Facing a rack column with the forks at the selected slot and the load at its face: that slot, or nothing.
+    // Facing a rack column with the load at its face: the selected slot once the forks stand at it, or nothing (also
+    // while they travel there: never the floor in front).
     const aim = this.aim;
+    if (aim.travel) return false;
     if (aim.column >= 0 && aim.reach) {
       const slot = this.grid.slotOf(aim.column, aim.level);
       if (slot < 0 || this.grid.slotBox(slot) >= 0) return false;

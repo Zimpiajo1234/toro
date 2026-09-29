@@ -357,15 +357,15 @@
 
 /* ---------- Control hint -------------------------------------------------- */
 
+/* Always on screen while playing: one soft panel, the move row and (levels with racks) the fork row under it. */
 .hint {
   position: absolute;
   left: 50%;
   bottom: max(clamp(18px, 5vh, 44px), env(safe-area-inset-bottom, 0px));
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px 14px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
   width: max-content;
   max-width: calc(100% - 32px);
   margin: 0;
@@ -381,6 +381,23 @@
   font-size: 13.5px;
   font-weight: 700;
 }
+.hint--rows {
+  border-radius: 22px;
+  padding: 9px 20px 10px;
+}
+.hint__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  margin: 0;
+}
+/* A hairline between the rows, in the panel's own border tone. */
+.hint__row + .hint__row {
+  padding-top: 7px;
+  border-top: 1px solid var(--ui-panel-border);
+}
 .hint__group {
   display: inline-flex;
   align-items: center;
@@ -390,6 +407,12 @@
 .hint__keys {
   display: inline-flex;
   gap: 3px;
+}
+/* The mouse wheel in the fork hint: a keycap-sized line icon. */
+.hint__icon {
+  width: 20px;
+  height: 20px;
+  color: var(--ui-text);
 }
 .hint__sep {
   opacity: 0.6;
@@ -516,8 +539,9 @@
 .title__sep {
   opacity: 0.6;
 }
-/* "Modo prueba": a quiet footer switch, same weight as the hints around it. */
-.title__test {
+/* "Modo prueba": a quiet footer switch, same weight as the hints around it; "Benchmark" (test mode only) beside it. */
+.title__test,
+.title__bench {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -534,8 +558,13 @@
     background-color 0.25s ease;
 }
 .title__test:hover,
-.title__test:focus-visible {
+.title__test:focus-visible,
+.title__bench:hover,
+.title__bench:focus-visible {
   opacity: 1;
+}
+.title__bench {
+  padding: 2px 10px;
 }
 .title__test-dot {
   width: 8px;
@@ -831,8 +860,16 @@
     font-size: 16px;
   }
   .hint {
+    gap: 6px;
+    padding: 8px 14px;
     border-radius: 18px;
     font-size: 12.5px;
+  }
+  .hint__row {
+    gap: 6px 12px;
+  }
+  .hint__row + .hint__row {
+    padding-top: 6px;
   }
   .hint__sep {
     display: none;

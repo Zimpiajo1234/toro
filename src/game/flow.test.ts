@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LevelData } from '../core/types';
-import { Countdown, buildLevelSummaries, continueIndexAfter, continueTarget, resolveStartLevel, shouldShowHint } from './flow';
+import { Countdown, buildLevelSummaries, continueIndexAfter, continueTarget, resolveStartLevel } from './flow';
 
 const fresh = { lastLevel: 0, highestUnlocked: 0, hasProgress: false };
 
@@ -71,14 +71,6 @@ describe('continueTarget', () => {
     expect(continueTarget(2, 5, clearedUpTo(4))).toBe(2); // a replay: the next level is cleared too
     expect(continueTarget(7, 7, clearedUpTo(7))).toBe(7); // everything cleared: nothing after the last level
     expect(continueTarget(0, 0, () => false)).toBe(0); // fresh save
-  });
-});
-
-describe('shouldShowHint', () => {
-  it('shows only on the first hint levels until the first drop', () => {
-    expect(shouldShowHint(0, 1, false)).toBe(true);
-    expect(shouldShowHint(0, 1, true)).toBe(false);
-    expect(shouldShowHint(1, 1, false)).toBe(false);
   });
 });
 

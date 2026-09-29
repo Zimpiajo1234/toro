@@ -5,7 +5,7 @@ import { assignBoxes, criteriaOf, matchKind, meets, sortableOf, usesSymbols } fr
 import { parseLevel, renderLevel } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import { validateLevel } from '../validateLevel';
-import { LEVELS, LEVEL_SOURCES } from './index';
+import { LEVELS, LEVEL_SOURCES, SPECIAL_LEVEL_SOURCES } from './index';
 import { checkLevelTargets } from './metrics';
 import {
   LevelGrid,
@@ -188,7 +188,9 @@ describe('level files (.level, docs/LEVELS.md)', () => {
     expect(sources.every((s) => s.file.startsWith('src/data/levels/') && s.file.endsWith('.level'))).toBe(true);
   });
 
-  it.each(LEVEL_SOURCES.map((s) => [s.file, s] as const))('%s: parse(render(level)) is the level again, and rendering is idempotent', (_, source) => {
+  // The special levels (especiales/, outside LEVELS) keep the same canonical form.
+  const everyFile = [...LEVEL_SOURCES, ...SPECIAL_LEVEL_SOURCES];
+  it.each(everyFile.map((s) => [s.file, s] as const))('%s: parse(render(level)) is the level again, and rendering is idempotent', (_, source) => {
     const text = renderLevel(source.level, source);
     const again = parseLevel(text, source.file);
     expect(again.level).toStrictEqual(source.level);

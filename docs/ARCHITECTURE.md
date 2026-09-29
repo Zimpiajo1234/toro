@@ -18,12 +18,12 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | Path | Owner | Responsibility |
 |---|---|---|
 | `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids) |
-| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`, `hintLevels`) |
+| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
 | `src/data/asciiLevel.ts`, `src/data/difficulty.ts` | shared | `.level` text format: parser (→ validateLevel) and canonical renderer; `dificultad:` targets |
-| `src/data/levels/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md) |
-| `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry; grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
+| `src/data/levels/*.level`, `src/data/levels/especiales/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md); `especiales/` = special levels outside the game's order (today the «Benchmark» of test mode) |
+| `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions, tests |
 | `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation |
 | `src/audio/**` | **audio** | Procedural music + SFX |
@@ -142,7 +142,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   A level uses symbols iff a box or zone names one (`usesSymbols`); validateLevel then requires stackLimit 1 (no
   recipes, no stacked starts), one box per zone and a complete sorting (`assignBoxes`, augmenting paths). Events keep
   their shape (`boxDropped.correct` = accepted); Game passes the zone's `matchKind` to audio with each event.
-- **Storage racks** (spec: `docs/RACKS.md`; no shipped level yet). `LevelData.racks?` (`LevelRack { id, x, z, w, facing,
+- **Storage racks** (spec: `docs/RACKS.md`; no level of the game uses them yet, only the «Benchmark» special level). `LevelData.racks?` (`LevelRack { id, x, z, w, facing,
   columns: RackSlot[][] }`, slots bottom → top, cue `{ color?, symbol? }`, none = «libre»; a box starting in a slot is a
   `LevelBox` with `level`). Rack cells are solid for the body and for floor boxes; loading / unloading only from the
   front (`facing`), the cues are visible from both faces. Targets = zones + slots with a cue; validateLevel needs one box
@@ -172,6 +172,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   placed on the map cell or legend entry to fix). Ids and orders must be unique across both formats. `renderLevel`
   writes any LevelData back as canonical text; `parseLevel(renderLevel(l))` deep-equals `l` (tested for every shipped
   level). The 24 JSON levels were migrated with a deep-equality proof and deleted: `.level` is the single source.
+- Special levels: `src/data/levels/especiales/*.level`, same format and validation, outside the game's order. The
+  `LEVELS` glob is not recursive, so they never reach `LEVELS`, saved times, unlocks or "Continuar"; the registry loads
+  them apart (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`) and refuses an id or order that clashes
+  with a game level (`loadSpecialSources`). Today only the «Benchmark» (`BENCHMARK_ID = 'benchmark'`, order 100), played
+  from test mode (`Game.startBenchmark`). `npm run levels` reports them after the game's levels ("Toro · 24 niveles + 1
+  especial"), `levels:fmt` and the round-trip test cover them too.
 - Level ids key saved progress (and seed the decor RNG): never change a shipped id. Box / zone ids are generated
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
 - `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
@@ -253,6 +259,18 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
+- Storage racks (docs/RACKS.md, «Render»): their own furniture (`builders/rack.ts`, `views/RackView.ts`): plain
+  low-poly slate metal (no diagonal braces), cream beams, open slots, solid end panels, a back panel per slot, and a
+  loading line painted on the floor in front (`Theme.rack`). The cue is an unlit, opaque sticker (`createCueMaterial`)
+  in the exact box colour (or the neutral cue fill) with a bold `rack.cueInk` glyph, on both faces of the back panel
+  and on the outer face of the end panel for the end columns, so a rack reads from all four camera angles. Slot n's
+  floor is at `rackSlotY(n)` (`dims.ts` `RACK`, taller than a stack level). A slot (panel emissive + cue brightening)
+  glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried (≈ ⅓ swap hint on an occupied,
+  unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35 over the forklift or
+  its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
+  in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
+  brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
+  slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 
@@ -277,6 +295,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
     servo rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
     chime (the lower notes skip avoid notes over the sounding chord). `zoneRestored`: the zone's chime (and stack
     climb) 0.12 s after the pickup knock, no final flourish.
+  - storage racks (docs/RACKS.md, «Audio»): `boxDropped.slotId` → `slotDrop`, a soft metal "toc" (no floor bass,
+    rises per level) whose chime (by the cue's `matchKind`) plays only when `correct` (the destined box); a box that
+    merely fits, or any box in a «libre» slot, just settles. `boxPicked.fromSlotId` → `slotLift` (lighter knock, faint
+    metal, same fork servo). `AudioEngine.forkClick(level, direction)`: a soft detent click per fork step that took
+    effect at a rack column (Game decides with `audio/forkSteps.ts` `ForkStepWatcher`).
   - zoneReleased / actionIdle: barely audible soft tick (never a buzzer, never "wrong"). A release caused by
     stacking onto a satisfied zone ticks when that box lands (0.03 s after its knock); a pick-up releases at once.
   - levelComplete: gentle ascending arpeggio (on the 8th-note grid, after the final landing chime and a completed
@@ -294,8 +317,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   clicking it or T toggles hide/show — hidden shows a small faint clock glyph), restart button (round, icon ↺,
   `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing else. Fades in
   gently. HUD buttons never take focus from a mouse press (Space stays the game's key).
-- Control hint (only first level, `showHint`): tiny keycaps at the bottom center — "W S avanzar / atrás · A D girar · Espacio
-  recoger / dejar" — fades out when `showHint` turns false.
+- Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
+  bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar" — and, in levels with storage racks
+  (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
+  horquilla · rueda · X B mando".
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in even rows of twelve (24 levels = two rows; 22 px dots on short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
@@ -311,6 +336,13 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Tiempo" plus the quiet line "Modo prueba · este tiempo no se guarda" (`LevelResult.practice`). Genuinely
   unlocked levels behave normally. HUD adds a faint "prueba" tag next to "Nivel N"; tag and switch share the
   tooltip "Todos los niveles abiertos (U) · RePág / AvPág: nivel anterior / siguiente".
+- **Benchmark** (test mode only; `GameActions.startBenchmark()`, `UIState.benchmark`): a quiet "Benchmark" button right
+  after the switch, shown only while test mode is on (a plain button: Tab / Enter / Space; the title has no gamepad
+  focus navigation, as for the dots and the switch). It plays the special level of the same name, which saves nothing.
+  HUD: "Benchmark" instead of "Nivel N" with the faint tag "sin récord" (tooltip `BENCHMARK_TIP`). Card: eyebrow
+  "Benchmark", "Tiempo" only, the line "Modo prueba · sin récord", primary "Volver al inicio", quiet "Repetir". Behind
+  the title (left with Esc) the caption reads "Benchmark · sin récord" and no level dot is marked current. The app
+  shell takes the theme from the Benchmark while it is on screen.
 - Mute toggles are confirmed by a polite live region and, in a level, a brief top-center pill (~1.6 s).
 - Completion card: compact (≤ 420 px) and anchored at the bottom center so the tidied warehouse stays in view;
   rises in, settles down on exit. Positive `result.message` as heading, "Tiempo 0:42.3", "Mejor tiempo 0:38.9",
@@ -334,8 +366,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - `mount()`: load progress + settings, fill `levels` summaries, show title with the last played level's diorama
   behind it (`setIdleOrbit(true)`), start rAF loop. dt = min(real dt, 1/20). No WebGL 2 → warn, screen
   `unsupported`, nothing else created. A `storage` event for the progress key refreshes the title's summaries.
-- `start(i)`: `audio.unlock()` (user gesture), load level i, screen `playing`, hint if i < `flow.hintLevels`
-  and no drop done yet. Timer starts on `firstInput`, ticks with dt, stops on `levelComplete`.
+- `start(i)`: `audio.unlock()` (user gesture), load level i, screen `playing` (the control hint shows while playing).
+  Timer starts on `firstInput`, ticks with dt, stops on `levelComplete`.
 - On `levelComplete`: stop timer, record time (ProgressStore), unlock next, wait `flow.completeDelaySec` (1.6 s;
   R / Esc / HUD restart are ignored meanwhile), then screen `complete` with a random positive message from:
   "Buen trabajo", "Almacén organizado", "Perfectamente colocado", "Todo en su sitio", "¡Qué orden tan agradable!".
@@ -346,6 +378,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   restarts on the first input. Turning test mode off on the title drops such a suspended level and shows the real
   "Continuar" level. "Continuar" follows `flow.continueTarget`: a saved last level already cleared, whose next level
   is open but not cleared, moves on to that next level (an old 12-level save leads into levels 13–18).
+- `startBenchmark()` (test mode on, else a no-op): loads `getSpecialLevel(BENCHMARK_ID)` without touching progress (no
+  `record`, no `unlock`, no `setLastLevel`; `LevelResult.practice` true); `levelIndex` keeps naming the game level
+  "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
+  "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
+  it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
 - Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, M mute, T timer, U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as

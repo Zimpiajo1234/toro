@@ -31,6 +31,27 @@ export const ZONE = {
   padRadius: 0.14,
 } as const;
 
+/**
+ * Storage rack heights (docs/RACKS.md). Slot `n` of a column has its floor (the bottom of the box resting in it) at
+ * `base + n·pitch` (rackSlotY). A slot is taller than a stack level (the box height, 0.64): at a rack the load rides
+ * only `forkCarry` above the slot floor, so it clears the beam of the slot above while it goes in and out.
+ */
+export const RACK = {
+  /** Top of the bottom deck: slot 0's floor. */
+  base: 0.04,
+  pitch: 0.74,
+  /** Height of the cream beams: under every slot floor above the deck and on top of each column. */
+  beam: 0.04,
+  /** Fork top above the selected slot floor at a rack: empty (tines just over the beam) and under the load. */
+  forkRest: 0.03,
+  forkCarry: 0.045,
+} as const;
+
+/** World y of the floor of rack slot `level` (fractional levels interpolate: the forks between slots). */
+export function rackSlotY(level: number): number {
+  return RACK.base + level * RACK.pitch;
+}
+
 export interface BoxDims {
   /** Footprint side (config.box.size). */
   size: number;

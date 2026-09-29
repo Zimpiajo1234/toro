@@ -13,6 +13,7 @@ const noopActions: GameActions = {
   toggleMute() {},
   toggleTimer() {},
   toggleTestMode() {},
+  startBenchmark() {},
 };
 
 /** Server-renders the overlay for a given state (no DOM in the test env; effects do not run). */
@@ -74,6 +75,24 @@ describe('Overlay', () => {
     expect(render({ screen: 'playing', levelIndex: 2 })).not.toContain('prueba');
   });
 
+  it('title footer: a "Benchmark" button next to the switch, only while "Modo prueba" is on', () => {
+    const off = render({ screen: 'title', levels, levelCount: 3 });
+    expect(off).not.toContain('Benchmark');
+    const on = render({ screen: 'title', levels, levelCount: 3, testMode: true });
+    // A plain button (Tab reaches it, Enter / Space press it), right after the switch.
+    expect(on).toMatch(
+      /Modo prueba<\/button><button type="button" class="title__bench ui-swap" title="[^"]*sin récord[^"]*">Benchmark<\/button>/,
+    );
+  });
+
+  it('title with a Benchmark left behind it: the caption names it and no level dot is the current one', () => {
+    const html = render({ screen: 'title', levels, levelCount: 3, testMode: true, benchmark: true, canContinue: true });
+    expect(html).toContain('>Continuar</button>');
+    expect(html).toContain('<span class="level-caption__name">Benchmark</span><span class="level-caption__time">sin récord</span>');
+    expect(html).not.toContain('aria-current');
+    expect(html).not.toContain('Nivel 1 · Primer pedido');
+  });
+
   it('title footer shows the saved mute state, without announcing it on load', () => {
     expect(render({ screen: 'title' })).toContain('M</kbd> silencio');
     const muted = render({ screen: 'title', muted: true });
@@ -97,13 +116,47 @@ describe('Overlay', () => {
     expect(render({ screen: 'title', canContinue: true })).toContain('>Continuar</button>');
   });
 
-  it('playing: only level, time and restart (+ hint)', () => {
-    const html = render({ screen: 'playing', levelIndex: 2, elapsedMs: 42_900, timerStarted: true, showHint: true });
+  it('playing: only level, time and restart (+ the control hint, in every level)', () => {
+    const html = render({ screen: 'playing', levelIndex: 2, elapsedMs: 42_900, timerStarted: true });
     expect(html).toContain('Nivel 3');
     expect(html).toContain('>0:42</span>');
     expect(html).toContain('aria-label="Reiniciar nivel"');
     expect(html).toContain('recoger / dejar');
     expect(html).not.toContain('Toro</h1>');
+  });
+
+  it('playing the Benchmark: its name instead of the level number, and a quiet "sin récord"', () => {
+    const html = render({ screen: 'playing', levelIndex: 2, testMode: true, benchmark: true, levelName: 'Benchmark' });
+    expect(html).toContain('<span class="ui-swap">Benchmark</span>');
+    expect(html).not.toContain('Nivel 3');
+    expect(html).toMatch(
+      /<span class="hud-level__test" title="[^"]*"><span aria-hidden="true">sin récord<\/span><span class="ui-visually-hidden">, sin récord<\/span><\/span>/,
+    );
+    expect(html).not.toContain('>prueba<');
+  });
+
+  it('control hint: always the move row while playing and, in levels with racks, the fork row under it', () => {
+    const plain = render({ screen: 'playing' });
+    expect(plain).toMatch(/<div class="hint ui-enter ui-enter--d4" role="note"><p class="hint__row">/);
+    expect(plain).toContain('recoger / dejar');
+    expect(plain).not.toContain('horquilla');
+    expect(plain.match(/class="hint__row"/g)).toHaveLength(1);
+
+    const racks = render({ screen: 'playing', racks: true });
+    expect(racks).toMatch(/<div class="hint ui-enter ui-enter--d4 hint--rows" role="note">/);
+    expect(racks.match(/class="hint__row"/g)).toHaveLength(2);
+    // Move row first, fork row under it.
+    expect(racks.indexOf('recoger / dejar')).toBeLessThan(racks.indexOf('horquilla'));
+    expect(racks).toContain('<kbd class="keycap">F</kbd><kbd class="keycap">V</kbd></span>subir / bajar horquilla');
+    expect(racks).toContain('rueda');
+    expect(racks).toContain('<kbd class="keycap">X</kbd><kbd class="keycap">B</kbd></span>mando');
+
+    // Only while playing.
+    for (const screen of ['title', 'complete'] as const) {
+      const html = render({ screen, racks: true });
+      expect(html).not.toContain('recoger / dejar');
+      expect(html).not.toContain('horquilla');
+    }
   });
 
   it('shows a soft 0:00 before the timer starts', () => {
@@ -147,6 +200,26 @@ describe('Overlay', () => {
     const hidden = render({ screen: 'complete', showTimer: false, result: { ...result, practice: true } });
     expect(hidden).not.toContain('no se guarda');
     expect(hidden).not.toContain('0:42.3');
+  });
+
+  it('complete, Benchmark: named, its time only, "sin récord", and the way back to the title', () => {
+    const html = render({
+      screen: 'complete',
+      levelIndex: 4,
+      levelName: 'Benchmark',
+      benchmark: true,
+      testMode: true,
+      result: { timeMs: 95_400, bestMs: 95_400, isNewBest: false, message: 'Buen trabajo', isLast: false, practice: true },
+    });
+    expect(html).toContain('<p class="card__eyebrow">Benchmark</p>');
+    expect(html).not.toContain('Nivel 5');
+    expect(html).toContain('<dt>Tiempo</dt><dd>1:35.4</dd>');
+    expect(html).not.toContain('Mejor tiempo');
+    expect(html).toContain('>Modo prueba · sin récord</p>');
+    expect(html).toContain('>Volver al inicio</button>');
+    expect(html).not.toContain('Siguiente almacén');
+    expect(html).not.toContain('Todos los almacenes están en orden.');
+    expect(html).toContain('>Repetir</button>');
   });
 
   it('last level offers the way home', () => {

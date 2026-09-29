@@ -14,18 +14,21 @@ interface CompletionCardProps {
 
 /**
  * Compact card at the bottom center after a level (the tidied warehouse stays in view above it):
- * positive message, time, best time, next / repeat. A "Modo prueba" run shows its time only, marked as not kept.
+ * positive message, time, best time, next / repeat. A "Modo prueba" run shows its time only, marked as not kept; the
+ * Benchmark's card reads "Benchmark" and leads back to the title.
  */
 export function CompletionCard({ store, actions, show }: CompletionCardProps) {
   const liveResult = useStore(store, (s) => s.result);
   const liveIndex = useStore(store, (s) => s.levelIndex);
   const liveName = useStore(store, (s) => s.levelName);
+  const liveBenchmark = useStore(store, (s) => s.benchmark);
   const visible = show && liveResult !== null;
 
   // While fading out, keep showing the finished level (the game may already have moved on).
   const result = useFrozen(liveResult, !visible);
   const levelIndex = useFrozen(liveIndex, !visible);
   const levelName = useFrozen(liveName, !visible);
+  const benchmark = useFrozen(liveBenchmark, !visible);
 
   return (
     <Presence show={visible} className="card-layer">
@@ -37,6 +40,7 @@ export function CompletionCard({ store, actions, show }: CompletionCardProps) {
           result={result}
           levelIndex={levelIndex}
           levelName={levelName}
+          benchmark={benchmark}
         />
       )}
     </Presence>
@@ -50,9 +54,11 @@ interface CardBodyProps {
   result: LevelResult;
   levelIndex: number;
   levelName: string;
+  /** The Benchmark (test mode's special level): named instead of numbered, its card leads back to the title. */
+  benchmark: boolean;
 }
 
-function CardBody({ store, actions, active, result, levelIndex, levelName }: CardBodyProps) {
+function CardBody({ store, actions, active, result, levelIndex, levelName, benchmark }: CardBodyProps) {
   // Times belong to the optional timer: if the player hid it, the card stays purely celebratory.
   const showTimes = useStore(store, (s) => s.showTimer);
   // A level only "Modo prueba" opened keeps no time: no best to show, and the card says so.
@@ -63,7 +69,11 @@ function CardBody({ store, actions, active, result, levelIndex, levelName }: Car
 
   const next = () => onScreen(store, 'complete', () => actions.nextLevel());
   const repeat = () => onScreen(store, 'complete', () => actions.restart());
-  const eyebrow = levelName ? `Nivel ${levelIndex + 1} · ${levelName}` : `Nivel ${levelIndex + 1}`;
+  const eyebrow = benchmark
+    ? levelName || 'Benchmark'
+    : levelName
+      ? `Nivel ${levelIndex + 1} · ${levelName}`
+      : `Nivel ${levelIndex + 1}`;
 
   return (
     <section className="ui-panel card ui-enter" role="dialog" aria-labelledby={titleId}>
@@ -88,7 +98,9 @@ function CardBody({ store, actions, active, result, levelIndex, levelName }: Car
         </dl>
       )}
       {showTimes && practice && (
-        <p className="card__line card__practice ui-enter ui-enter--d2">Modo prueba · este tiempo no se guarda</p>
+        <p className="card__line card__practice ui-enter ui-enter--d2">
+          {benchmark ? 'Modo prueba · sin récord' : 'Modo prueba · este tiempo no se guarda'}
+        </p>
       )}
       {showTimes && result.isNewBest && (
         <p className="card__badge ui-enter ui-enter--d3">
@@ -99,7 +111,7 @@ function CardBody({ store, actions, active, result, levelIndex, levelName }: Car
 
       <div className="card__actions">
         <button ref={primaryRef} type="button" className="ui-btn ui-btn--primary" onClick={next}>
-          {result.isLast ? 'Volver al inicio' : 'Siguiente almacén'}
+          {result.isLast || benchmark ? 'Volver al inicio' : 'Siguiente almacén'}
         </button>
         <button type="button" className="ui-btn ui-btn--quiet" onClick={repeat}>
           Repetir

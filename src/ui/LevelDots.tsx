@@ -66,3 +66,15 @@ export function LevelCaption({ level, showTimes }: { level: LevelSummary | undef
     </p>
   );
 }
+
+/** The caption for a special level behind the title (a Benchmark left with Esc): its name and a quiet note. */
+export function SpecialCaption({ name, note }: { name: string; note: string }) {
+  return (
+    <p className="level-caption" aria-hidden="true">
+      <span key="special" className="ui-swap">
+        <span className="level-caption__name">{name}</span>
+        <span className="level-caption__time">{note}</span>
+      </span>
+    </p>
+  );
+}

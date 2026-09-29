@@ -84,6 +84,8 @@ class Pilot {
   readonly state: GameState;
   readonly events: GameEvent[] = [];
   frames = 0;
+  /** Fork level presses (F / V) and frames driven in reverse (S): what the controls did, for the tests. */
+  readonly controls = { forkSteps: 0, reverseFrames: 0 };
   constructor(
     readonly level: LevelData,
     readonly dt: number,
@@ -106,6 +108,7 @@ class Pilot {
   }
   /** One frame with a fork level press (F = +1 / V = −1), then one frame released. */
   fork(step: -1 | 1) {
+    this.controls.forkSteps++;
     for (const e of this.state.update(this.dt, { move: { x: 0, z: 0 }, actionPressed: false, forkStep: step })) this.events.push(e);
     this.frames++;
     this.tick(0, 0);
@@ -131,6 +134,7 @@ class Pilot {
   }
   /** One frame of vehicle controls (the keyboard's W / S / A / D): throttle < 0 backs up. */
   drive(throttle: number, steer: number) {
+    if (throttle < 0) this.controls.reverseFrames++;
     const ev = this.state.update(this.dt, { move: { x: 0, z: 0 }, drive: { throttle, steer }, actionPressed: false });
     for (const e of ev) this.events.push(e);
     this.frames++;
@@ -242,6 +246,8 @@ export interface Outcome {
   moves: number;
   note: string;
   events: GameEvent[];
+  /** Fork level presses (InputFrame.forkStep, F / V) and frames driven in reverse (S, drive throttle < 0). */
+  controls: { forkSteps: number; reverseFrames: number };
 }
 
 /**
@@ -259,7 +265,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
   const fail = (note: string): Outcome => {
     const f = pilot.snap.forklift;
     log?.(`stopped: ${note} · forklift at ${f.pos.x.toFixed(2)},${f.pos.z.toFixed(2)} heading ${((f.heading * 180) / Math.PI).toFixed(0)}° carrying ${f.carrying ?? '-'}`);
-    return { solved: false, seconds: pilot.seconds, moves, note, events: pilot.events };
+    return { solved: false, seconds: pilot.seconds, moves, note, events: pilot.events, controls: pilot.controls };
   };
   /** The approach (empty path to a pick-up pose) and carry chain for `plan` from the live state, or null. */
   const route = (stacks: Stacks, fcell: number, plan: Move) => {
@@ -289,7 +295,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
   };
   for (let iter = 0; iter < 80; iter++) {
     const snap = pilot.snap;
-    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events };
+    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events, controls: pilot.controls };
     const stacks = liveStacks(grid, snap);
     const fc = worldToCell(snap.forklift.pos, level.size);
     const fcell = grid.index(fc.x, fc.z);

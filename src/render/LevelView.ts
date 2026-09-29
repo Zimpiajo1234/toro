@@ -1,7 +1,8 @@
 import { Box3, Color, Group, Mesh, MeshBasicMaterial, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
 import { degToRad } from '../core/math';
-import { accepts, takesNext, usesSymbols } from '../core/sorting';
+import { hasRacks } from '../core/racks';
+import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
 import {
   COLOR_IDS,
   DEFAULT_SYMBOL,
@@ -11,6 +12,9 @@ import {
   type GameEvent,
   type GameSnapshot,
   type LevelData,
+  type SlotState,
+  type Vec2,
+  type ZoneCriteria,
   type ZoneState,
 } from '../core/types';
 import type { Theme } from '../themes/types';
@@ -18,20 +22,23 @@ import { buildBoxGeometry, type LidMark } from './builders/box';
 import { addFloor } from './builders/floor';
 import { buildForkliftGeometry } from './builders/forklift';
 import { addPlant } from './builders/plant';
+import { addRackLines, buildRackBays, buildSlotCue, buildSlotMarkerGeometry, buildSlotPanel, cueEndSides, type CueLook } from './builders/rack';
 import { addShelf } from './builders/shelf';
 import { buildWallGeometry, toWallLocal, wallLayouts } from './builders/walls';
 import { buildHaloGeometry, buildOutlineGeometry, buildRecipeGeometry, buildZoneGeometry, type ZoneMark } from './builders/zone';
 import type { FitBox } from './CameraRig';
-import { DIORAMA, ZONE, boxDims } from './dims';
+import { DIORAMA, ZONE, boxDims, rackSlotY } from './dims';
 import { GLYPH_SYMMETRY } from './glyphs';
-import { createGlowMaterial, createOverlayMaterial, createSharedMaterials, type SharedMaterials } from './materials';
+import { createCueMaterial, createGlowMaterial, createOverlayMaterial, createSharedMaterials, type SharedMaterials } from './materials';
 import { PartList } from './paint';
 import { createRng } from './random';
 import { ResourceBag } from './resources';
 import { BoxView, DROP_GLIDE_SEC } from './views/BoxView';
 import { DropPreview } from './views/DropPreview';
 import { ForkliftView } from './views/ForkliftView';
+import { RackView, type RackBay } from './views/RackView';
 import { ShelfView, hidesBehind } from './views/ShelfView';
+import { SlotMarker } from './views/SlotMarker';
 import { WallView } from './views/WallView';
 import { ZoneView } from './views/ZoneView';
 
@@ -65,6 +72,23 @@ const STACK_GLOW_STEP = 0.14;
  * (share of the full invitation), a quiet "swap" hint. Never red, never text.
  */
 const SWAP_INVITE = 0.32;
+/** Drop preview inside a rack slot: the outline hugs the box between the uprights. */
+const SLOT_PREVIEW_SCALE = 0.82;
+
+/** A tall piece of furniture that fades to a ghost while it hides an actor (wooden shelf or storage rack). */
+interface Occluder {
+  readonly bounds: Box3;
+  /**
+   * A storage rack bay: the whole rack's bounds. A box reaching into them is the rack's own (in one of its slots, or
+   * the load going in or out) and never makes the bay ghost.
+   */
+  readonly holds?: Box3;
+  /**
+   * `hiding`: it covers an actor. `soft`: only resting boxes or zones (not the forklift or its load): a rack bay then
+   * fades just a little (its cues never fade); a shelf ignores it.
+   */
+  sync(hiding: boolean, rank: number, dt: number, soft?: boolean): void;
+}
 
 const _actorMin = new Vector3();
 const _actorMax = new Vector3();
@@ -102,10 +126,21 @@ export class LevelView {
   private readonly sorting: boolean;
   private readonly stackBox = new Box3();
   private readonly walls: WallView[] = [];
-  private readonly shelves: ShelfView[] = [];
-  /** Per-shelf scratch for update(): hides an actor now / distance toward the camera. */
-  private readonly shelfHiding: boolean[] = [];
-  private readonly shelfDepth: number[] = [];
+  /** Shelves and racks, in one list so overlapping ghosts are ranked together. */
+  private readonly occluders: Occluder[] = [];
+  /** Per-occluder scratch for update(): hides an actor now / distance toward the camera. */
+  private readonly occluderHiding: boolean[] = [];
+  private readonly occluderSoft: boolean[] = [];
+  private readonly occluderDepth: number[] = [];
+  /** Storage racks (docs/RACKS.md): their slots light only with the destined box and ghost with their rack. */
+  private readonly racked: boolean;
+  private readonly racks: RackView[] = [];
+  private readonly rackOfSlot = new Map<string, RackView>();
+  /** The bay (rack column) of each slot: its box ghosts with it. */
+  private readonly bayOfSlot = new Map<string, RackBay>();
+  private readonly slotStates = new Map<string, SlotState>();
+  private readonly marker: SlotMarker | null = null;
+  private readonly depthOnly: MeshBasicMaterial;
   private readonly pitch: number;
   private readonly boxHalf: number;
   private readonly boxHeight: number;
@@ -121,15 +156,19 @@ export class LevelView {
     this.boxHeight = dims.height;
     this.stacking = (level.stackLimit ?? 1) > 1;
     this.sorting = usesSymbols(level);
+    this.racked = hasRacks(level);
     for (const c of COLOR_IDS) this.borders.set(c, new Color(theme.zones[c].border));
     const mats = createSharedMaterials(this.bag);
     // Glass gets its own copy so level-complete warmth can tint it (each wall clones its shafts').
     this.glassMaterial = this.bag.track(mats.unlit.clone());
+    // Depth-only prepass shared by every ghosting shelf and rack.
+    this.depthOnly = this.bag.track(new MeshBasicMaterial({ colorWrite: false, transparent: true }));
     sunDirection(level, this.toSun);
 
     this.buildStatic(level, theme, mats);
     this.buildWalls(level, theme, mats, cameraYaw);
     this.buildZones(snapshot, theme, mats);
+    this.buildRacks(snapshot, theme, mats);
     this.buildBoxes(snapshot, theme, config);
 
     const fl = buildForkliftGeometry(theme, {
@@ -155,6 +194,12 @@ export class LevelView {
     const previewMat = createOverlayMaterial(this.bag, theme.floor.edge, 0);
     this.preview = new DropPreview(outline, previewMat, new Color(theme.floor.edge), this.size);
     this.root.add(this.preview.mesh);
+    if (this.racked) {
+      // The warm light of the forklift's own lamps: where it is pointing its forks. Reads on boxes and shaded slots.
+      const markerMat = createOverlayMaterial(this.bag, theme.forklift.light, 0);
+      this.marker = new SlotMarker(this.bag.track(buildSlotMarkerGeometry()), markerMat, new Color(theme.forklift.light));
+      this.root.add(this.marker.mesh);
+    }
 
     const { width: w, depth: d } = level.size;
     const t = DIORAMA.wallThickness + DIORAMA.capOverhang;
@@ -164,13 +209,19 @@ export class LevelView {
       max: new Vector3(w / 2, DIORAMA.contentHeight, d / 2),
       heightScale: 1,
     });
+    // Racks stand taller than the rest of the content: keep them in frame and inside the shadow volume.
+    for (const rack of this.racks) {
+      this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone(), heightScale: 1 });
+      this.shadowBounds.union(rack.bounds);
+    }
 
     this.update(snapshot, 0, 0, cameraYaw, 0);
   }
 
   update(snapshot: GameSnapshot, dt: number, time: number, cameraYaw: number, warmth: number): void {
     const f = snapshot.forklift;
-    this.forklift.sync(f, dt, time);
+    const hint = snapshot.hint;
+    this.forklift.sync(f, dt, time, hint.rack !== null);
     this.forklift.root.updateMatrixWorld(true);
 
     let carried: BoxState | null = null;
@@ -184,16 +235,23 @@ export class LevelView {
       view.sync(box, this.forklift.anchor, box.id === target, dt);
     }
 
-    // Teach the goal without words: the zones that would take the carried box breathe. In a sorting level, when no
-    // free zone takes it, the occupied zones that accept it breathe very faintly instead: the box resting there could
-    // move on (a swap hint).
+    // Teach the goal without words: the zones that would take the carried box breathe, and so do the empty rack slots
+    // whose cue fits it (the cue, never the solution: only the destined box lights them). In a sorting level or one
+    // with racks, when no free target takes it, the occupied ones that accept it breathe very faintly instead: the box
+    // resting there could move on (a swap hint; with racks never on a target that already glows).
     const zones = snapshot.zones;
+    const slots = snapshot.slots;
     let anyTakes = false;
-    if (carried) for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], carried);
+    if (carried) {
+      for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], carried);
+      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], carried);
+    }
+    const swapHint = (this.sorting || this.racked) && !anyTakes;
     for (let i = 0; i < zones.length; i++) {
       const zone = zones[i];
       const takes = carried !== null && takesNext(zone, carried);
-      const swap = carried !== null && this.sorting && !anyTakes && zone.stack.length > 0 && accepts(zone, carried);
+      const swap =
+        carried !== null && swapHint && zone.stack.length > 0 && !(this.racked && zone.satisfied) && accepts(zone, carried);
       this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? SWAP_INVITE : 0, takes, time, dt);
       const was = this.stackSatisfied.get(zone.id);
       if (was !== undefined && was !== zone.satisfied) {
@@ -202,14 +260,33 @@ export class LevelView {
       }
     }
 
-    // The preview takes the carried box's zone tone when it would land on a zone that takes that box.
-    const hint = snapshot.hint;
-    const dropZone = hint.dropZoneId ? this.zoneStates.get(hint.dropZoneId) : undefined;
-    const match = dropZone && carried && takesNext(dropZone, carried) ? (this.borders.get(carried.color) ?? null) : null;
-    this.preview.sync(f.carrying ? hint.dropCell : null, match, dt, hint.dropLevel * this.boxHeight);
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const fits = carried !== null && cueFits(slot, carried);
+      const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? SWAP_INVITE : 0;
+      this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, time, dt);
+    }
 
-    this.updateShelves(snapshot, cameraYaw, dt);
+    // The preview takes the carried box's zone tone when it would land on a zone that takes that box, or in a rack
+    // slot whose cue fits it. Into a slot it floats on the slot floor, and the slot marker frames the selected slot.
+    const rack = hint.rack;
+    const selected = rack !== null && !snapshot.completed ? (this.slotStates.get(rack.slotId) ?? null) : null;
+    const ready = rack !== null && rack.ready;
+    const intoSlot = carried !== null && selected !== null && ready && hint.dropCell !== null;
+    let match: Color | null = null;
+    if (carried && selected && intoSlot) {
+      if (cueFits(selected, carried)) match = this.borders.get(carried.color) ?? null;
+    } else if (carried) {
+      const dropZone = hint.dropZoneId ? this.zoneStates.get(hint.dropZoneId) : undefined;
+      if (dropZone && takesNext(dropZone, carried)) match = this.borders.get(carried.color) ?? null;
+    }
+    const topY = intoSlot ? rackSlotY(hint.dropLevel) - ZONE.padHeight : hint.dropLevel * this.boxHeight;
+    this.preview.sync(f.carrying ? hint.dropCell : null, match, dt, topY, intoSlot ? SLOT_PREVIEW_SCALE : 1);
+    this.marker?.sync(selected, ready, intoSlot ? match : null, dt);
+
+    this.updateOccluders(snapshot, cameraYaw, dt);
     if (this.stacking) this.updateStackGhosts(snapshot, cameraYaw, dt);
+    if (this.racked) this.updateSlotBoxGhosts(snapshot, dt);
 
     const shaftGain = 1 + 0.2 * warmth;
     for (let i = 0; i < this.walls.length; i++) this.walls[i].sync(cameraYaw, dt, false, shaftGain);
@@ -226,8 +303,9 @@ export class LevelView {
         this.playCompletionWave(snapshot);
         break;
       case 'boxDropped':
-        // Stacked on top: as it lands, the whole stack (the new box included) dips a touch together.
-        if (event.level > 0) {
+        // Stacked on top: as it lands, the whole stack (the new box included) dips a touch together. Rack slots hold
+        // one box each on their own beams: nothing below dips.
+        if (event.level > 0 && event.slotId === undefined) {
           for (const box of snapshot.boxes) {
             if (box.cell && box.cell.x === event.cell.x && box.cell.z === event.cell.z) {
               this.boxViews.get(box.id)?.playStackSettle(DROP_GLIDE_SEC);
@@ -247,59 +325,90 @@ export class LevelView {
   }
 
   /**
-   * Ghost every shelf that stands between the camera and the forklift, a box or a zone, so tall
-   * shelves never hide what the player needs to see; back to solid once nothing is behind it.
+   * Ghost every shelf or rack that stands between the camera and the forklift, a box or a zone, so tall
+   * furniture never hides what the player needs to see; back to solid once nothing is behind it. Boxes reaching
+   * into a rack (in its slots, the load going in or out) never count: they ghost with it instead.
    */
-  private updateShelves(snapshot: GameSnapshot, cameraYaw: number, dt: number): void {
-    const n = this.shelves.length;
+  private updateOccluders(snapshot: GameSnapshot, cameraYaw: number, dt: number): void {
+    const n = this.occluders.length;
     if (n === 0) return;
     const cp = Math.cos(this.pitch);
     const back = _back.set(cp * Math.sin(cameraYaw), Math.sin(this.pitch), cp * Math.cos(cameraYaw));
     const f = snapshot.forklift.pos;
+    const boxes = snapshot.boxes;
+    const zones = snapshot.zones;
     for (let i = 0; i < n; i++) {
-      const bounds = this.shelves[i].bounds;
+      const bounds = this.occluders[i].bounds;
+      const holds = this.occluders[i].holds;
       _actorMin.set(f.x - FORKLIFT_HALF, FORKLIFT_Y[0], f.z - FORKLIFT_HALF);
       _actorMax.set(f.x + FORKLIFT_HALF, FORKLIFT_Y[1], f.z + FORKLIFT_HALF);
-      let hiding = hidesBehind(bounds, _actorMin, _actorMax, back);
-      for (let b = 0; b < this.boxList.length && !hiding; b++) {
+      // The forklift or its load (`actor`), or only resting boxes and zones (`resting`).
+      let actor = hidesBehind(bounds, _actorMin, _actorMax, back);
+      let resting = false;
+      // boxList follows snapshot.boxes (buildBoxes).
+      for (let b = 0; b < this.boxList.length && !actor; b++) {
+        const carried = boxes[b]?.carried === true;
+        if (resting && !carried) continue;
         const p = this.boxList[b].group.position;
+        if (holds && reachesInto(holds, p, this.boxHalf + BOX_INSET)) continue;
         _actorMin.set(p.x - this.boxHalf, p.y + this.boxHeight * BOX_VISIBLE_FROM, p.z - this.boxHalf);
         _actorMax.set(p.x + this.boxHalf, p.y + this.boxHeight, p.z + this.boxHalf);
-        hiding = hidesBehind(bounds, _actorMin, _actorMax, back);
+        if (!hidesBehind(bounds, _actorMin, _actorMax, back)) continue;
+        if (carried) actor = true;
+        else resting = true;
       }
-      const zones = snapshot.zones;
-      for (let z = 0; z < zones.length && !hiding; z++) {
+      for (let z = 0; z < zones.length && !actor && !resting; z++) {
         const p = zones[z].pos;
         _actorMin.set(p.x - ZONE_HALF, 0, p.z - ZONE_HALF);
         _actorMax.set(p.x + ZONE_HALF, ZONE.padHeight, p.z + ZONE_HALF);
-        hiding = hidesBehind(bounds, _actorMin, _actorMax, back);
+        resting = hidesBehind(bounds, _actorMin, _actorMax, back);
       }
-      this.shelfHiding[i] = hiding;
-      this.shelfDepth[i] = (bounds.min.x + bounds.max.x) * back.x + (bounds.min.z + bounds.max.z) * back.z;
+      this.occluderHiding[i] = actor || resting;
+      this.occluderSoft[i] = !actor && resting;
+      this.occluderDepth[i] = (bounds.min.x + bounds.max.x) * back.x + (bounds.min.z + bounds.max.z) * back.z;
     }
     // Ghosts draw back to front (rank 0 = farthest from the camera).
+    const depth = this.occluderDepth;
     for (let i = 0; i < n; i++) {
       let rank = 0;
       for (let j = 0; j < n; j++) {
-        if (this.shelfDepth[j] < this.shelfDepth[i] || (this.shelfDepth[j] === this.shelfDepth[i] && j < i)) rank++;
+        if (depth[j] < depth[i] || (depth[j] === depth[i] && j < i)) rank++;
       }
-      this.shelves[i].sync(this.shelfHiding[i], rank, dt);
+      this.occluders[i].sync(this.occluderHiding[i], rank, dt, this.occluderSoft[i]);
     }
   }
 
-  /** Zones glow one after another, starting from the one nearest the forklift (a stack glows bottom → top). */
+  /**
+   * Zones and rack slots with a cue glow one after another, starting from the one nearest the forklift (a stack
+   * glows bottom → top, and so does a rack column).
+   */
   private playCompletionWave(snapshot: GameSnapshot): void {
     const p = snapshot.forklift.pos;
-    const order = snapshot.zones
-      .map((z) => ({ id: z.id, stack: z.stack, d: Math.hypot(z.pos.x - p.x, z.pos.z - p.z) }))
-      .sort((a, b) => a.d - b.d);
-    order.forEach((z, i) => {
-      const delay = WAVE_START_DELAY + i * WAVE_STEP;
-      this.zoneViews.get(z.id)?.playWave(delay);
-      // Boxes in a stack only glow (no bob), so they keep touching.
-      const bob = z.stack.length <= 1;
-      z.stack.forEach((id, level) => this.boxViews.get(id)?.playWave(delay + level * WAVE_STEP * 0.5, bob));
-    });
+    const distance = (q: Vec2) => Math.hypot(q.x - p.x, q.z - p.z);
+    const order: { d: number; play: (delay: number) => void }[] = [];
+    for (const z of snapshot.zones) {
+      order.push({
+        d: distance(z.pos),
+        play: (delay) => {
+          this.zoneViews.get(z.id)?.playWave(delay);
+          // Boxes in a stack only glow (no bob), so they keep touching.
+          const bob = z.stack.length <= 1;
+          z.stack.forEach((id, level) => this.boxViews.get(id)?.playWave(delay + level * WAVE_STEP * 0.5, bob));
+        },
+      });
+    }
+    for (const s of snapshot.slots) {
+      if (s.accepts === null) continue;
+      order.push({
+        d: distance(s.pos),
+        play: (delay) => {
+          this.rackOfSlot.get(s.id)?.playWave(s.id, delay);
+          if (s.occupiedBy) this.boxViews.get(s.occupiedBy)?.playWave(delay);
+        },
+      });
+    }
+    order.sort((a, b) => a.d - b.d);
+    order.forEach((t, i) => t.play(WAVE_START_DELAY + i * WAVE_STEP));
     this.forklift.playHappy(WAVE_START_DELAY);
   }
 
@@ -322,10 +431,27 @@ export class LevelView {
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
       const view = this.boxViews.get(box.id);
-      if (!view) continue;
+      // Boxes in rack slots ghost with their rack (updateSlotBoxGhosts).
+      if (!view || box.slotId !== null) continue;
       // Once complete (input frozen) every box turns solid, so the glow wave always plays on solid stacks.
       const hides = !snapshot.completed && !box.carried && box.level > 0 && box.cell !== null;
       view.setGhost(hides && this.stackBoxHides(box.cell!, view, snapshot, back), dt);
+    }
+  }
+
+  /**
+   * Levels with racks: a box in a slot fades with its bay while the bay hides the forklift or its load (so the ghost is
+   * not blocked by solid boxes), solid again with it and once the level is complete. Without stacking nothing else
+   * ghosts, so every other box is brought back to solid (a box just lifted out of a ghosted rack).
+   */
+  private updateSlotBoxGhosts(snapshot: GameSnapshot, dt: number): void {
+    const boxes = snapshot.boxes;
+    for (let i = 0; i < boxes.length; i++) {
+      const box = boxes[i];
+      const view = this.boxViews.get(box.id);
+      if (!view) continue;
+      if (box.slotId !== null) view.setGhost(!snapshot.completed && (this.bayOfSlot.get(box.slotId)?.hidesActor ?? false), dt);
+      else if (!this.stacking) view.setGhost(false, dt);
     }
   }
 
@@ -383,17 +509,16 @@ export class LevelView {
     const rng = createRng(`${level.id}:decor`);
     const floor = new PartList();
     addFloor(floor, level, theme);
+    // The loading line in front of every rack column is paint on the floor.
+    for (const rack of level.racks ?? []) addRackLines(floor, rack, level, theme);
     this.root.add(this.mesh(floor.build(), mats.painted, false));
 
     // Each shelf is its own mesh (it may fade out of the way); plants stay merged.
-    const depthOnly = this.bag.track(new MeshBasicMaterial({ colorWrite: false, transparent: true }));
     for (const shelf of level.shelves) {
       const parts = new PartList();
       addShelf(parts, shelf, level, theme, rng);
-      const view = new ShelfView(this.bag.track(parts.build()), this.bag.track(mats.painted.clone()), depthOnly);
-      this.shelves.push(view);
-      this.shelfHiding.push(false);
-      this.shelfDepth.push(0);
+      const view = new ShelfView(this.bag.track(parts.build()), this.bag.track(mats.painted.clone()), this.depthOnly);
+      this.addOccluder(view);
       this.root.add(view.mesh);
     }
     const solid = new PartList();
@@ -424,13 +549,21 @@ export class LevelView {
     }
   }
 
+  private addOccluder(view: Occluder): void {
+    this.occluders.push(view);
+    this.occluderHiding.push(false);
+    this.occluderSoft.push(false);
+    this.occluderDepth.push(0);
+  }
+
   /**
-   * What a pad shows in its middle. Levels that never name a symbol: its color's glyph, tone on tone (a colour-blind
-   * aid, as always). Sorting levels: the symbol the zone asks for, engraved, or nothing when it asks for none.
+   * What a pad (or a rack slot's cue) shows in its middle. Levels that never name a symbol: its color's glyph, tone
+   * on tone (a colour-blind aid, as always). Sorting levels: the symbol it asks for, engraved, or nothing when it
+   * asks for none.
    */
-  private zoneMark(zone: ZoneState): ZoneMark | null {
-    if (!this.sorting) return zone.color ? { shape: DEFAULT_SYMBOL[zone.color], style: 'glyph' } : null;
-    return zone.accepts.symbol ? { shape: zone.accepts.symbol, style: 'engraved' } : null;
+  private markOf(criteria: ZoneCriteria): ZoneMark | null {
+    if (!this.sorting) return criteria.color ? { shape: DEFAULT_SYMBOL[criteria.color], style: 'glyph' } : null;
+    return criteria.symbol ? { shape: criteria.symbol, style: 'engraved' } : null;
   }
 
   private buildZones(snapshot: GameSnapshot, theme: Theme, mats: SharedMaterials): void {
@@ -440,7 +573,7 @@ export class LevelView {
     for (const zone of snapshot.zones) {
       // Pad color = the color criterion; a zone that asks for none gets the neutral pad.
       const palette = zone.color ? theme.zones[zone.color] : theme.neutralZone;
-      const mark = this.zoneMark(zone);
+      const mark = this.markOf(zone.accepts);
       const look = `${zone.color ?? 'neutral'}/${mark ? `${mark.style}:${mark.shape}` : 'plain'}`;
       let pad = padByLook.get(look);
       if (!pad) {
@@ -477,6 +610,64 @@ export class LevelView {
     }
   }
 
+  /**
+   * Storage racks (docs/RACKS.md): one RackView per rack, a bay per column (its frame + a glowing panel per slot with a
+   * cue), each fading on its own, and the cue of each slot: an unlit sticker in the exact colour of the box it asks
+   * for, rimmed in that box's ink (the neutral cue fill and rim for a symbol only), with the same mark as a zone (its
+   * symbol, or its colour's glyph in levels without symbols) drawn bold in the cue ink.
+   */
+  private buildRacks(snapshot: GameSnapshot, theme: Theme, mats: SharedMaterials): void {
+    const level = snapshot.level;
+    const byId = new Map<string, RackView>();
+    const frameMaterial = () => {
+      const material = this.bag.track(mats.painted.clone());
+      // Painted metal: a touch more sheen than the matte wood and walls.
+      material.roughness = 0.72;
+      return material;
+    };
+    for (const rack of level.racks ?? []) {
+      const bays = buildRackBays(rack, level, theme).map((g) => this.bag.track(g));
+      const view = new RackView(rack.id, bays, frameMaterial, this.depthOnly, DROP_GLIDE_SEC);
+      byId.set(rack.id, view);
+      this.racks.push(view);
+      for (const bay of view.bays) this.addOccluder(bay);
+      this.root.add(view.group);
+    }
+    const rackById = new Map((level.racks ?? []).map((r) => [r.id, r]));
+    let panel: BufferGeometry | null = null;
+    const cueByLook = new Map<string, BufferGeometry>();
+    for (const slot of snapshot.slots) {
+      const view = byId.get(slot.rackId);
+      const rack = rackById.get(slot.rackId);
+      if (!view || !rack) continue;
+      this.slotStates.set(slot.id, slot);
+      this.rackOfSlot.set(slot.id, view);
+      const bay = view.bayOf(slot);
+      if (bay) this.bayOfSlot.set(slot.id, bay);
+      const cue = slot.accepts;
+      if (!cue) continue; // «libre»: its plain panel is part of the frame
+      const r = theme.rack;
+      const box = cue.color ? theme.boxes[cue.color] : null;
+      const look: CueLook = {
+        fill: box ? box.base : r.cueFill,
+        rim: box ? box.ink : r.cueRim,
+        ink: r.cueInk,
+        glyph: this.markOf(cue)?.shape ?? null,
+        lip: box ? box.base : r.cueRim,
+      };
+      const ends = cueEndSides(rack, slot.column);
+      const key = `${look.fill}/${look.glyph ?? 'plain'}/${ends.join(',')}`;
+      let cueGeometry = cueByLook.get(key);
+      if (!cueGeometry) {
+        cueGeometry = this.bag.track(buildSlotCue(look, ends));
+        cueByLook.set(key, cueGeometry);
+      }
+      panel ??= this.bag.track(buildSlotPanel(theme));
+      const glow = cue.color ? theme.zones[cue.color].glow : theme.neutralZone.glow;
+      view.addSlot(slot, panel, createGlowMaterial(this.bag, glow), cueGeometry, createCueMaterial(this.bag));
+    }
+  }
+
   private buildBoxes(snapshot: GameSnapshot, theme: Theme, config: GameConfig): void {
     const dims = boxDims(config);
     const geoByKey = new Map<string, BufferGeometry>();
@@ -495,7 +686,8 @@ export class LevelView {
         createGlowMaterial(this.bag, theme.zones[box.color].glow),
         GLYPH_SYMMETRY[box.symbol],
         dims.height,
-        this.stacking,
+        // Stacked boxes ghost when they hide the forklift; boxes in rack slots ghost with their rack.
+        this.stacking || this.racked,
       );
       this.boxViews.set(box.id, view);
       this.boxList.push(view);
@@ -517,6 +709,11 @@ function sunDirection(level: LevelData, target: Vector3): Vector3 {
   }
   if (west > north) return target.set(-0.72, 1.35, 0.62).normalize();
   return target.set(0.62, 1.35, -0.72).normalize();
+}
+
+/** The footprint of half-size `half` around `p` overlaps `bounds` in XZ. */
+function reachesInto(bounds: Box3, p: Vector3, half: number): boolean {
+  return p.x + half > bounds.min.x && p.x - half < bounds.max.x && p.z + half > bounds.min.z && p.z - half < bounds.max.z;
 }
 
 /** World AABB of a local box after a Y rotation + translation. */

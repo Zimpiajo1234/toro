@@ -1,0 +1,33 @@
+# 100 · Benchmark
+id: benchmark
+limit: 2
+ventanas: norte 7-8, oeste 2-4
+dificultad: movimientos=10, extra>=1, bloqueos>=3, trampas>=5, repartos=1, huecos=12, libre<=80
+nota: Modo prueba, fuera de la progresión: todo el juego de estanterías en un almacén pequeño.
+nota: Único reparto, por deducción: 1) las pistas exactas: azul ■ a su zona y lavanda ✚ arriba en S.
+nota: 2) La otra lavanda (●) va al hueco «lavanda» y la única amarilla (●) al hueco «amarillo».
+nota: 3) El hueco «●» ya solo puede ser del coral ●, así que la zona coral es del coral ◆.
+nota: 4) El hueco «◆» se queda el menta ◆, el hueco «menta» el menta ▲ y la zona ▲ el azul ▲.
+nota: Trampa: el menta ◆ empieza en el hueco «menta»: encaja en la pista pero no brilla (el suyo es el «◆» de encima).
+nota: Hueco equivocado: el menta ▲ empieza en el «◆»; se cambian los dos aparcando uno en el hueco libre de arriba.
+nota: R mira a la cámara; S le da la espalda: sus pistas se leen por detrás (o girando con Q/E) y se carga rodeándola.
+nota: El lavanda ✚ está al fondo de un pasillo de una casilla: sale marcha atrás. El coral ◆ espera aparcado arriba en S.
+nota: Pila de suelo que deshacer (azul ▲ sobre lavanda ●) y estanterías de madera a una casilla de las almacenables, para comparar (el hueco deja ver las pistas laterales).
+nota: Poco suelo: entre R y S solo hay las filas para cargarlas (su frente y la de detrás); aparcar en un hueco libre alto no estorba.
+
+  0123456789
+0 p#.RR.#..p
+1 ..........
+2 .1......2.
+3 ..a....b..
+4 ..........
+5 .#.SS.#.#.
+6 .c......#.
+7 .3......#.
+8 p..^..d.#e
+
+1 = zona ▲                   2 = zona coral               3 = zona azul ■
+a = caja coral ●             b = caja amarillo ●          c = pila lavanda ●,azul ▲
+d = caja azul ■              e = caja lavanda ✚
+R = estantería frente sur: menta + caja menta ◆ / ◆ + caja menta ▲ / libre | ● / libre / libre
+S = estantería frente norte: libre / amarillo / lavanda ✚ | lavanda / libre / libre + caja coral ◆

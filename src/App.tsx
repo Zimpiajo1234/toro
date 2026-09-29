@@ -4,7 +4,7 @@ import { Overlay } from './ui/Overlay';
 import { UnsupportedCard } from './ui/UnsupportedCard';
 import { createUIStore, type GameActions } from './ui/uiState';
 import { useStore } from './core/store';
-import { getLevel } from './data/levels';
+import { BENCHMARK_ID, getLevel, getSpecialLevel } from './data/levels';
 import { getTheme, themeCssVars } from './themes';
 
 /** App shell: a full-screen canvas host + the DOM overlay, behind an error boundary. Game wiring lives in game/Game.ts. */
@@ -36,9 +36,10 @@ function Shell() {
   }, [store]);
 
   // Gradient behind the canvas + UI tokens follow the theme of the level on screen — the same theme Game hands
-  // the renderer (store.levelIndex always names the loaded level, title diorama included).
+  // the renderer (store.levelIndex names the loaded level, title diorama included, unless the Benchmark is on screen).
   const levelIndex = useStore(store, (s) => s.levelIndex);
-  const theme = getTheme(getLevel(levelIndex)?.theme);
+  const benchmark = useStore(store, (s) => s.benchmark);
+  const theme = getTheme((benchmark ? getSpecialLevel(BENCHMARK_ID) : getLevel(levelIndex))?.theme);
   const style = useMemo(() => themeCssVars(theme) as React.CSSProperties, [theme]);
 
   return (

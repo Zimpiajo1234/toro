@@ -2,6 +2,7 @@ import { Euler, Group, Mesh, Quaternion, Vector3, type BufferGeometry, type Mesh
 import type { BoxState, ColorId } from '../../core/types';
 import { damp, easeInOutSine, easeOutBack, easeOutCubic } from '../../core/math';
 import { GAME_CONFIG } from '../../config';
+import { rackSlotY } from '../dims';
 import { OneShot, bump } from '../tween';
 
 type Phase = 'rest' | 'picking' | 'carried' | 'dropping';
@@ -17,6 +18,12 @@ const PICK_HOP = 0.14;
 const SETTLE_SEC = 0.36;
 /** Pick-target cue: the only "you can act now" affordance, so it must read at play scale (still gentle). */
 const HOVER_LIFT = 0.05;
+/**
+ * Inside a rack slot the beam of the slot above is close (dims RACK): the pick target lifts less and the pick hop is
+ * a small one, so the box never touches it. The glow still reads.
+ */
+const SLOT_HOVER_LIFT = 0.03;
+const SLOT_PICK_HOP = 0.02;
 const HOVER_GLOW = 0.16;
 const CORRECT_GLOW = 0.1;
 const WAVE_GLOW = 0.16;
@@ -72,6 +79,8 @@ export class BoxView {
   private hover = 0;
   private correctGlow: number;
   private glideTurn = 1;
+  /** Resting in a rack slot (last seen while not carried): sets the hover lift and the next pick hop. */
+  private inSlot: boolean;
 
   constructor(
     state: BoxState,
@@ -95,7 +104,8 @@ export class BoxView {
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.userData.boxId = state.id;
-    this.group.position.set(state.pos.x, state.level * stackStep, state.pos.z);
+    this.inSlot = state.slotId !== null;
+    this.group.position.set(state.pos.x, this.restY(state), state.pos.z);
     this.phase = state.carried ? 'carried' : 'rest';
     this.correctGlow = state.correct ? 1 : 0;
   }
@@ -132,6 +142,8 @@ export class BoxView {
     if (state.carried && (this.phase === 'rest' || this.phase === 'dropping')) this.beginPick();
     else if (!state.carried && (this.phase === 'picking' || this.phase === 'carried')) this.beginDrop(state);
 
+    if (!state.carried) this.inSlot = state.slotId !== null;
+
     const g = this.group;
     switch (this.phase) {
       case 'picking': {
@@ -140,7 +152,7 @@ export class BoxView {
         anchor.getWorldPosition(_target);
         anchor.getWorldQuaternion(_targetQuat);
         g.position.lerpVectors(this.from, _target, e);
-        g.position.y += bump(this.pick.p) * PICK_HOP;
+        g.position.y += bump(this.pick.p) * (this.inSlot ? SLOT_PICK_HOP : PICK_HOP);
         g.quaternion.slerpQuaternions(this.fromQuat, _targetQuat, e);
         if (!this.pick.active) this.phase = 'carried';
         break;
@@ -152,7 +164,7 @@ export class BoxView {
       case 'dropping': {
         this.drop.step(dt);
         const p = this.drop.p;
-        const restY = state.level * this.stackStep;
+        const restY = this.restY(state);
         let e: number;
         if (restY > this.from.y + 1e-3) {
           // Landing up on a stack from lower forks: lift first, then slide (and turn) on top.
@@ -174,13 +186,18 @@ export class BoxView {
       case 'rest':
         g.position.x = damp(g.position.x, state.pos.x, 18, dt);
         g.position.z = damp(g.position.z, state.pos.z, 18, dt);
-        g.position.y = damp(g.position.y, state.level * this.stackStep, 18, dt);
+        g.position.y = damp(g.position.y, this.restY(state), 18, dt);
         g.quaternion.slerp(this.restQuat, 1 - Math.exp(-7 * dt));
         break;
     }
 
     this.applySettle(dt);
     this.applyHighlight(state, isTarget, dt);
+  }
+
+  /** Resting height: its stack level, or the floor of its rack slot. */
+  private restY(state: BoxState): number {
+    return state.slotId !== null ? rackSlotY(state.level) : state.level * this.stackStep;
   }
 
   private beginPick(): void {
@@ -224,7 +241,7 @@ export class BoxView {
     if (this.wobble.step(dt)) yaw = Math.sin(this.wobble.p * Math.PI * 5) * (1 - this.wobble.p) * 0.07;
     const wave = this.wave.step(dt) ? bump(this.wave.p) : 0;
     const bob = this.waveBob ? wave * 0.02 : 0;
-    this.mesh.position.y = this.hover * HOVER_LIFT + bob - STACK_SETTLE_DEPTH * this.stackStep * this.stackDip;
+    this.mesh.position.y = this.hover * (this.inSlot ? SLOT_HOVER_LIFT : HOVER_LIFT) + bob - STACK_SETTLE_DEPTH * this.stackStep * this.stackDip;
     this.mesh.rotation.y = yaw;
     this.material.emissiveIntensity = Math.max(this.hover * HOVER_GLOW, this.correctGlow * CORRECT_GLOW) + wave * WAVE_GLOW;
   }

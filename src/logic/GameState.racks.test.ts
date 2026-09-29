@@ -131,6 +131,23 @@ a = caja azul       b = caja menta
 R = estantería frente sur: azul / menta / libre
 `);
 
+/** The forklift one cell from the front of a rack (facing south, row 0), its front cell free: nothing to lift there. */
+const AT_RACK = level(`
+# 1 · Ante la estantería
+id: ante
+limit: 1
+
+  0123456
+0 ...R...
+1 .......
+2 ...^...
+3 .......
+4 .a...b.
+
+a = caja azul       b = caja menta
+R = estantería frente sur: azul / menta / libre
+`);
+
 /** Both cues of the column take a ▲, but each box has one destiny: blue ▲ below, mint ▲ above. */
 const DECOY = level(`
 # 2 · Encaja pero no brilla
@@ -213,9 +230,9 @@ describe('storage racks: snapshot and contracts', () => {
 
 describe('storage racks: fork levels', () => {
   it('in front of a rack F / V select a slot level (clamped), and the forks ease there at the climb rate', () => {
-    const state = new GameState(FRONT);
+    const state = new GameState(AT_RACK);
     const snap = state.getSnapshot();
-    // One cell from the front cell, facing the rack: engaged at the bottom slot at once.
+    // One cell from the front cell, facing the rack (nothing to lift on it): engaged at the bottom slot at once.
     expect(snap.hint.rack).toMatchObject({ rackId: 'r1', column: 0, levels: 3, level: 0, slotId: 'r1:0:0' });
     state.update(DT, fork(-1));
     expect(snap.hint.rack!.level).toBe(0); // clamped at the bottom
@@ -324,6 +341,57 @@ describe('storage racks: loading a slot', () => {
     const drop = press(state).find((e) => e.type === 'boxDropped');
     expect(drop).toMatchObject({ slotId: 'r1:0:1', level: 1, correct: false, satisfiedCount: 0, total: 2, zoneId: null });
     expect(snap.slots[1]).toMatchObject({ occupiedBy: 'b1', satisfied: false });
+  });
+
+  it('with the load at the face nothing is dropped while the forks travel to another slot: no preview, never the floor', () => {
+    const state = new GameState(TAKEN);
+    const snap = state.getSnapshot();
+    press(state);
+    forward(state, 1.5); // level 0 holds the mint box: the load rests against the face
+    expect(snap.hint.dropCell).toBeNull();
+    state.update(DT, fork(1));
+    let frames = 0;
+    while (snap.forklift.forkHeight < 1 - LOAD_PASS_CLEARANCE) {
+      expect(snap.hint.dropCell).toBeNull();
+      expect(snap.hint.rack).toMatchObject({ level: 1, ready: false });
+      expect(types(press(state))).toEqual(['actionIdle']);
+      frames++;
+    }
+    expect(frames).toBeGreaterThan(3);
+    expect(snap.forklift.carrying).toBe('b1');
+    // At the level: the preview goes straight to the slot.
+    for (let t = 0; t < 1 && !snap.hint.dropCell; t += DT) state.update(DT, IDLE);
+    expect(snap.hint).toMatchObject({ dropCell: { x: 3, z: 0 }, dropLevel: 1 });
+    expect(snap.hint.rack).toMatchObject({ level: 1, ready: true });
+  });
+
+  it('facing a column, a box can still be parked on one standing on its front cell (the forks over that stack)', () => {
+    const park = level(`
+# 9 · Aparcar delante
+id: aparcar-delante
+limit: 2
+
+  0123456
+0 ...R...
+1 ...a...
+2 ...b...
+3 ...^...
+4 .......
+
+a = caja azul       b = caja menta
+R = estantería frente sur: azul / menta
+`);
+    const state = new GameState(park);
+    const snap = state.getSnapshot();
+    press(state); // the mint box, in front of the blue one
+    run(state, 0.3, IDLE);
+    forward(state, 2); // the load passes over the blue box and rests against the rack face
+    expect(snap.hint.rack).toMatchObject({ level: 0, ready: false });
+    expect(snap.forklift.forkHeight).toBe(1);
+    expect(snap.hint).toMatchObject({ dropCell: { x: 3, z: 1 }, dropLevel: 1 });
+    const drop = press(state).find((e) => e.type === 'boxDropped');
+    expect(drop).toMatchObject({ boxId: 'b2', cell: { x: 3, z: 1 }, level: 1, zoneId: null });
+    expect(drop).not.toHaveProperty('slotId');
   });
 
   it('a box that fits the cue but is not the destined one leaves the slot neutral (rule 5)', () => {
@@ -448,6 +516,54 @@ describe('storage racks: unloading a slot', () => {
     const out = snap.forklift.heading;
     run(state, 0.6, input(0, 1));
     expect(Math.abs(angleDelta(out, snap.forklift.heading))).toBeGreaterThan(0.3);
+  });
+});
+
+describe('storage racks: a fork step at the opening never jolts the rig', () => {
+  /** Per-frame body displacement (u) along z over `seconds` with a constant input (the rig faces the rack, z). */
+  function steps(state: GameState, seconds: number, frame: InputFrame): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < Math.round(seconds / DT); i++) {
+      const z = state.getSnapshot().forklift.pos.z;
+      state.update(DT, frame);
+      out.push(Math.abs(state.getSnapshot().forklift.pos.z - z));
+    }
+    return out;
+  }
+  const face = faceZ(FRONT.size.depth);
+  /** Fork point depth past the rack face (FRONT: the rig faces north, into the rack). */
+  const depthOf = (state: GameState) => face - (state.getSnapshot().forklift.pos.z - GAME_CONFIG.forklift.forkReach);
+
+  it.each([-0.445, -0.43])('the load only just into the open slot (fork point at %s): a step eases it back out', (depth) => {
+    const state = new GameState(FRONT);
+    const snap = state.getSnapshot();
+    press(state);
+    selectLevel(state, 1); // empty: the column opens for the load
+    for (let t = 0; t < 5 && depthOf(state) < depth; t += DT) state.update(DT, input(0.1));
+    run(state, 0.3, IDLE);
+    expect(depthOf(state)).toBeGreaterThan(-carriedBoxRadius); // the load collider reaches into the cell
+    const z = snap.forklift.pos.z;
+    const moves = [...steps(state, DT, fork(1)), ...steps(state, 1, IDLE)];
+    expect(snap.hint.rack!.level).toBe(2); // not inside yet: the step is taken
+    for (const d of moves) expect(d).toBeLessThan(0.01);
+    // Eased out of the closed column (then parked at its face: the rig was idle).
+    expect(snap.forklift.pos.z - z).toBeGreaterThan(0.01);
+    expect(depthOf(state)).toBeLessThanOrEqual(-carriedBoxRadius + 1e-6);
+  });
+
+  it.each([-0.1, -0.2])('backing slowly out of a slot (throttle %s) pressing V all along: no pop as the column closes', (throttle) => {
+    const state = new GameState(FRONT);
+    const snap = state.getSnapshot();
+    press(state);
+    selectLevel(state, 1);
+    forward(state, 2); // the load goes into the middle slot
+    expect(depthOf(state)).toBeGreaterThan(0);
+    for (let t = 0; t < 5 && depthOf(state) > -0.3; t += DT) state.update(DT, input(-0.4));
+    const moves: number[] = [];
+    for (let t = 0; t < 6 && depthOf(state) > -0.55; t += DT) moves.push(...steps(state, DT, input(throttle, 0, -1)));
+    expect(moves.length).toBeGreaterThan(10);
+    for (const d of moves) expect(d).toBeLessThan(0.01);
+    expect(snap.hint.rack!.level).toBe(0); // the step is taken once the load is no longer inside
   });
 });
 
@@ -579,6 +695,41 @@ R = estantería frente sur: azul ▲
     expect(snap.zones.map((z) => z.satisfied)).toEqual([false, false]);
     expect(snap.slots.map((s) => s.satisfied)).toEqual([false, false, false]);
   });
+
+  it('a stack parked on a column front cell is lifted as off the racks: forks at its top box, no slot selected', () => {
+    const parked = level(`
+# 9 · Pila delante
+id: pila-delante
+limit: 2
+
+  0123456
+0 ...R...
+1 ...a...
+2 ...^...
+3 .......
+4 .b.....
+
+a = pila menta,azul
+b = caja coral
+R = estantería frente sur: azul / menta / coral
+`);
+    const state = new GameState(parked);
+    const snap = state.getSnapshot();
+    run(state, 0.5, IDLE);
+    // Facing the rack one cell back, but what the action lifts is the stack's top box: the forks go to its level.
+    expect(snap.hint.targetBoxId).toBe('b2');
+    expect(snap.hint.rack).toBeNull();
+    expect(snap.forklift.forkHeight).toBe(1);
+    // No slot is selected there, so F / V do nothing.
+    run(state, 0.3, fork(1));
+    expect(snap.hint.rack).toBeNull();
+    expect(snap.forklift.forkHeight).toBe(1);
+    expect(press(state)).toEqual([{ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1 }]);
+    // Carrying at the rack: its bottom slot is selected again, the load held over what is left of the stack.
+    expect(snap.hint.rack).toMatchObject({ level: 0 });
+    run(state, 0.3, IDLE);
+    expect(snap.forklift.forkHeight).toBe(1);
+  });
 });
 
 describe('storage racks: robustness', () => {
@@ -604,7 +755,7 @@ describe('storage racks: robustness', () => {
   });
 
   it('ignores a malformed forkStep', () => {
-    const state = new GameState(FRONT);
+    const state = new GameState(AT_RACK);
     state.update(DT, { ...IDLE, forkStep: 3 as unknown as 1 });
     state.update(DT, { ...IDLE, forkStep: Number.NaN as unknown as 1 });
     expect(state.getSnapshot().hint.rack?.level).toBe(0);

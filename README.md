@@ -12,7 +12,7 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # tests de lógica, niveles, storage, helpers
 npm run build      # typecheck + build de producción en dist/
-npm run levels     # mapas y métricas de dificultad de todos los niveles (npm run levels -- 23: uno en detalle)
+npm run levels     # mapas y métricas de dificultad de todos los niveles y del Benchmark (npm run levels -- 23: uno en detalle)
 ```
 
 `dist/` usa rutas relativas (`base: './'`): funciona servido desde cualquier subruta (itch.io, GitHub Pages).
@@ -26,6 +26,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | S / ↓ | Marcha atrás |
 | A / ← · D / → | Girar a la izquierda · a la derecha (también parado; W + A avanza girando) |
 | Espacio | Recoger / dejar caja |
+| F / V · rueda del ratón | Delante de una estantería almacenable: subir / bajar la horquilla un hueco (un paso de rueda = un hueco; fuera de las estanterías la horquilla es automática) |
 | Q / E | Girar cámara (la conducción W/S/A/D no cambia) |
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
@@ -40,8 +41,14 @@ real; al apagarlo vuelven los candados de siempre. Los tiempos se guardan con no
 desbloqueados; un nivel abierto solo por el Modo prueba no guarda tiempo (guardarlo desbloquearía el siguiente) y
 la tarjeta final lo dice: solo "Tiempo" y "Modo prueba · este tiempo no se guarda".
 
+Con el Modo prueba encendido aparece junto al interruptor el botón **Benchmark**: un almacén de prueba fuera de la
+progresión que reúne todo el juego de estanterías almacenables (ver abajo). El cronómetro corre, pero no guarda nada:
+ni récord, ni desbloqueos, ni "Continuar" (el HUD dice "Benchmark", con un discreto "sin récord"). R lo reinicia,
+RePág / AvPág no hacen nada en él y al terminarlo la tarjeta vuelve al inicio. Esc lo deja en pausa detrás del título
+("Continuar" o el mismo botón lo retoman); apagar el Modo prueba lo descarta.
+
 Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), Start (continuar),
-Back (reiniciar), Y (repetir en la tarjeta final).
+Back (reiniciar), Y (repetir en la tarjeta final), X / B (subir / bajar la horquilla delante de una estantería almacenable).
 
 El mapeo de movimiento se ajusta en `gameConfig.json` → `controls`: `keyboardMapping` (teclado y cruceta) `"vehicle"` (por defecto:
 W/S avanzar/atrás y A/D girar, relativo a la carretilla e independiente de la cámara), `"grid"` (cada tecla recorre un
@@ -55,7 +62,8 @@ src/
   core/        contratos compartidos (tipos, math, store)
   config/      gameConfig.json — todos los parámetros ajustables
   themes/      paletas (Theme). Nuevo tema = nuevo archivo + entrada en THEMES (themes/index.ts)
-  data/        niveles: levels/*.level (texto), asciiLevel.ts (parser), validateLevel.ts, solver y métricas
+  data/        niveles: levels/*.level (texto; levels/especiales/: el Benchmark), asciiLevel.ts (parser), validateLevel.ts,
+               solver y métricas
   logic/       simulación pura (sin three / DOM / audio) + tests
   render/      escena three.js, cámara, mallas, feedback
   audio/       música generativa + SFX procedurales (Web Audio, sin assets)
@@ -81,6 +89,25 @@ acepte la caja; si otra se queda sin sitio, mueve la primera: mientras llevas un
 la aceptan y, si no queda ninguna, respiran muy suave las ocupadas que la aceptarían. Sin teclas nuevas. Encajar por
 color suena a campana, por símbolo a madera y la exacta a las dos. El nivel 23 («La muestra») reúne los tres tipos y
 la trampa clásica. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
+
+## Estanterías almacenables (Benchmark, Modo prueba)
+
+El nuevo sistema de apilado, de momento solo en el nivel **Benchmark** (los niveles 1–24 no cambian). Una estantería
+almacenable es un mueble de metal pizarra con vigas crema (las de madera con cajas kraft siguen siendo solo obstáculos):
+columnas de 1 a 3 **huecos** de alto que se cargan y descargan **solo por el frente**, donde hay una línea pintada en el
+suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y en los paneles laterales
+para las columnas de los extremos, así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
+símbolo en negrita sobre una pegatina neutra, los dos (esa caja exacta) o nada («libre»: guarda cualquier caja y nunca
+cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estantería cuando tapa la carretilla. Las pistas se combinan para que haya **un
+solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: otra que
+encaje en la pista lo deja neutro, nunca en rojo. Mientras llevas una caja respiran los huecos cuya pista encaja.
+
+Delante de una columna, **F / V** (o la rueda, o X / B en el mando) suben y bajan la horquilla un hueco, con un clic
+suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
+horquilla a su altura, Espacio mete la caja (entra recta; se sale marcha atrás) o saca la del hueco. Los huecos se
+llenan en cualquier orden. Si una estantería te da la espalda, rodéala para cargarla (Q / E ayudan a leerla). La pista
+de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías
+añade la fila "F V subir / bajar horquilla · rueda · X B mando". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
 
 ## Ampliar
 
@@ -110,6 +137,8 @@ la trampa clásica. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
   cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
   y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista
   `SHIPPED` de `src/data/levels/levels.test.ts`. Los `.json` antiguos (esquema `LevelData`) siguen cargando.
+  Los niveles especiales (fuera de la progresión, como el Benchmark) viven en `src/data/levels/especiales/`
+  (`SPECIAL_LEVELS`, [docs/LEVELS.md](docs/LEVELS.md)).
 - **Nuevo tema visual:** crear `src/themes/<id>.ts` que exporte un `Theme`, añadirlo al mapa `THEMES` de `themes/index.ts` y poner `"theme": "<id>"` en el nivel. El tema cubre la escena 3D, el fondo y los tokens de la UI; un id sin registrar hace fallar `src/integration/themes.test.ts`.
 - **Nuevo tipo de caja:** añadir el id a `BOX_KINDS` (`core/types.ts`) y su constructor de malla en el registro de cajas de `render/`.
 - **Ranking local:** `ProgressStore.getRanking(levelId)` ya guarda el top‑5 por nivel.

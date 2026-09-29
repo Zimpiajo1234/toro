@@ -90,9 +90,9 @@ export class AudioEngine {
   }
 
   /**
-   * `match`: how the zone of a `boxDropped` / `zoneRestored` event matches its box (core/sorting `matchKind` of its
-   * criteria), which picks the chime's timbre: color = the bell, symbol = a soft wooden marimba, exact = both. Game
-   * passes it (audio never reads the level); omitted = color, the classic bell.
+   * `match`: how the zone (or rack slot cue) of a `boxDropped` / `zoneRestored` event matches its box (core/sorting
+   * `matchKind` of its criteria), which picks the chime's timbre: color = the bell, symbol = a soft wooden marimba,
+   * exact = both. Game passes it (audio never reads the level); omitted = color, the classic bell.
    */
   handleEvent(event: GameEvent, match: MatchKind = 'color'): void {
     if (this.disposed) return;
@@ -101,11 +101,19 @@ export class AudioEngine {
     this.guard('handleEvent', (rt, now) => {
       switch (event.type) {
         case 'boxPicked':
-          rt.sfx.pickup(now, event.level ?? 0);
+          // Out of a rack slot the box eases off a metal beam; anywhere else, the classic knock.
+          if (event.fromSlotId !== undefined) rt.sfx.slotLift(now, event.level ?? 0);
+          else rt.sfx.pickup(now, event.level ?? 0);
           break;
         case 'boxDropped': {
           const chord = this.composer.currentChord() ?? undefined;
           const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
+          if (event.slotId !== undefined) {
+            // Into a rack slot: the metal toc. `correct` = the slot now holds its destined box, the only one that
+            // chimes; a box that merely fits the cue (or any box in a «libre» slot) just settles, never a success sound.
+            rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, match);
+            break;
+          }
           const stack =
             event.correct && event.recipeLength > 1
               ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
@@ -187,6 +195,15 @@ export class AudioEngine {
   /** Soft click for UI buttons. */
   uiClick(): void {
     this.guard('uiClick', (rt, now) => rt.sfx.uiClick(now));
+  }
+
+  /**
+   * Levels with racks: soft detent click for one fork step at a rack column. Game calls it only for a step that took
+   * effect (never at the top / bottom slot, never away from a rack). `level` = the slot selected now, `direction` +1
+   * up / −1 down.
+   */
+  forkClick(level: number, direction: 1 | -1): void {
+    this.guard('forkClick', (rt, now) => rt.sfx.forkClick(now, level, direction));
   }
 
   /** Dev / diagnostics snapshot (chord, scene, live voices). */
