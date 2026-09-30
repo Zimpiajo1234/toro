@@ -980,10 +980,18 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       engine.dispose();
     });
 
-    it('tunes the reverse beep to the tonic of the song', async () => {
+    it('tunes the reverse beep to the key of the song and plays it on the SFX bus, not the quiet motor bus', async () => {
       const { engine } = await live();
-      const internals = engine as unknown as { composer: { keyPc: number }; rt: { motor: { beeper: { tone: FakeOscillator } } } };
-      expect(internals.rt.motor.beeper.tone.frequency.value).toBeCloseTo(beepFrequency(internals.composer.keyPc), 9);
+      const internals = engine as unknown as {
+        composer: { keyPc: number };
+        rt: { graph: AudioGraph; motor: { beeper: { tone: FakeOscillator; env: FakeGain } } };
+      };
+      const { graph, motor } = internals.rt;
+      expect(motor.beeper.tone.frequency.value).toBeCloseTo(beepFrequency(internals.composer.keyPc), 9);
+      expect(motor.beeper.env.outputs).toEqual([graph.sfxIn]);
+      // Still under the master gain (mute) and the wake fade (hidden tab), like every other sound.
+      const sfxVol = (graph.sfxIn as unknown as FakeGain).outputs[0] as FakeGain;
+      expect(sfxVol.outputs).toContain(graph.master);
       engine.dispose();
     });
   });

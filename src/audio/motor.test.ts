@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { GAME_CONFIG } from '../config';
+import type { ForkliftState } from '../core/types';
+import { speed01 } from '../game/motor';
+import type { CollisionWorld } from '../logic/collision';
+import { ForkliftController } from '../logic/forklift';
 import { BEEPER, beepFrequency, ReverseBeeper } from './beeper';
 import { CLUNK, DRIVE, FORK, MotorSound, ROLL } from './motor';
 import { midiToFreq } from './music/harmony';
@@ -23,14 +28,14 @@ interface MotorInternals {
   clunkGain: FakeGain;
   knockGain: FakeGain;
   clunkTone: FakeOscillator;
-  beeper: { env: FakeGain; tone: FakeOscillator };
+  beeper: { env: FakeGain; tone: FakeOscillator; overtone: FakeOscillator };
 }
 
-function setup(beepHz?: number) {
+function setup(beepHz?: number, beepOut?: FakeGain) {
   const ctx = new FakeAudioContext();
   const out = ctx.createGain();
   const noise = ctx.createBuffer(1, 8000, 8000) as unknown as AudioBuffer;
-  const motor = new MotorSound(ctx.asContext(), out as unknown as AudioNode, noise, beepHz);
+  const motor = new MotorSound(ctx.asContext(), out as unknown as AudioNode, noise, beepHz, beepOut as unknown as AudioNode | undefined);
   const parts = motor as unknown as MotorInternals;
   /** Runs `frames` frames of the given input on the fake audio clock. */
   const run = (frames: number, speed: number, fork = 0, height = 0) => {
@@ -201,7 +206,9 @@ describe('ReverseBeeper', () => {
     expect(releases).toHaveLength(times.length);
     for (let i = 0; i < times.length; i++) {
       expect(releases[i]).toBeGreaterThan(times[i]);
+      // About half the period on, half off: the classic back-up alarm duty.
       const heard = releases[i] + 3 * BEEPER.releaseTau - times[i];
+      expect(heard).toBeGreaterThan(BEEPER.periodSec * 0.4);
       expect(heard).toBeLessThan(BEEPER.periodSec * 0.6);
     }
     // Scheduled only a little ahead of the clock.
@@ -240,21 +247,48 @@ describe('ReverseBeeper', () => {
     expect(onsets(parts.beeper.env)).toHaveLength(1);
   });
 
-  it('is a soft, round, filtered tone tuned to the song: the tonic of its key, far under a real alarm', () => {
-    for (const pc of [0, 2, 3, 5, 7]) {
+  it('is a clear ≈ 1 kHz alarm tone with a little odd harmonic, always in key: the tonic or fifth nearest 1.1 kHz', () => {
+    for (let pc = 0; pc < 12; pc++) {
       const hz = beepFrequency(pc);
-      expect(hz).toBeCloseTo(midiToFreq(BEEPER.tonicMidi + pc), 9);
-      expect(hz).toBeGreaterThan(500);
-      expect(hz).toBeLessThan(1000);
+      expect(hz).toBeGreaterThan(900);
+      expect(hz).toBeLessThan(1400);
+      const midi = Math.round(69 + 12 * Math.log2(hz / 440));
+      expect(midiToFreq(midi)).toBeCloseTo(hz, 9); // an exact note of the key…
+      expect([0, 7]).toContain((((midi - pc) % 12) + 12) % 12); // …its tonic or its fifth, consonant over any chord
+    }
+    // The composer's keys (F, E♭, D, G, C) land where a real back-up alarm sounds.
+    for (const pc of [5, 3, 2, 7, 0]) {
+      expect(beepFrequency(pc)).toBeGreaterThan(1000);
+      expect(beepFrequency(pc)).toBeLessThan(1300);
     }
     expect(beepFrequency(14)).toBeCloseTo(beepFrequency(2), 9);
     expect(beepFrequency(Number.NaN)).toBeCloseTo(beepFrequency(0), 9);
     const { parts } = setup(beepFrequency(5));
-    expect(parts.beeper.tone.frequency.value).toBeCloseTo(beepFrequency(5), 9);
-    expect(parts.beeper.tone.type).toBe('sine');
-    expect(BEEPER.lowpassHz).toBeLessThanOrEqual(2000);
-    expect(BEEPER.attackTau).toBeGreaterThanOrEqual(0.005); // never a hard click on
-    expect(BEEPER.level).toBeLessThan(DRIVE.level * 1.5);
+    const { tone, overtone } = parts.beeper;
+    expect(tone.type).toBe('sine');
+    expect(tone.frequency.value).toBeCloseTo(beepFrequency(5), 9);
+    // The third harmonic, phase-locked (both start together): a square-ish hint, never a buzz.
+    expect(overtone.type).toBe('sine');
+    expect(overtone.frequency.value).toBeCloseTo(3 * beepFrequency(5), 9);
+    expect(overtone.startedAt).toBe(tone.startedAt);
+    expect(BEEPER.harmonic).toBeGreaterThan(0);
+    expect(BEEPER.harmonic).toBeLessThanOrEqual(0.25);
+    expect(BEEPER.attackTau).toBeGreaterThanOrEqual(0.005); // never a hard click on…
+    expect(BEEPER.releaseTau).toBeGreaterThanOrEqual(0.01); // …or off
+  });
+
+  it('plays where MotorSound sends it (AudioEngine: the SFX bus), at the level balanced offline', () => {
+    const ctx = new FakeAudioContext();
+    const sfx = ctx.createGain();
+    const routed = setup(undefined, sfx);
+    expect(routed.parts.beeper.env.outputs).toEqual([sfx]);
+    expect(routed.parts.driveGain.outputs).toEqual([routed.out]); // the drive whine stays on the motor bus
+    const plain = setup();
+    expect(plain.parts.beeper.env.outputs).toEqual([plain.out]);
+    // Rendered offline through the whole graph (48 kHz, K-weighted), level 0.1 on the SFX bus measures ≈ −25 LUFS
+    // over 100 ms: ≈ 6 LU over the music's mean (−32), ≈ 4 dB under a pick-up (−22) or a floor drop (−21).
+    expect(BEEPER.level).toBeGreaterThanOrEqual(0.06);
+    expect(BEEPER.level).toBeLessThanOrEqual(0.12);
   });
 
   it('never schedules into the past after a long frame, and does nothing once disposed', () => {
@@ -269,6 +303,75 @@ describe('ReverseBeeper', () => {
     expect(times.filter((t) => t > 0.2 && t < 5)).toHaveLength(0);
     beeper.dispose();
     expect(ctx.ofKind(FakeOscillator).every((o) => o.stoppedAt !== null)).toBe(true);
+  });
+});
+
+describe('ReverseBeeper with the real drive (vehicle controls)', () => {
+  /** Onsets of the beeps scheduled so far. */
+  const onsets = (parts: MotorInternals) =>
+    parts.beeper.env.gain.events.filter((e) => e.kind === 'target' && e.value === BEEPER.level).map((e) => e.time);
+
+  /** The rig on open floor, fed to MotorSound the way Game does: stepDrive, then sign(speed) · speed01 per frame. */
+  function drive() {
+    const m = setup();
+    const cfg = GAME_CONFIG.forklift;
+    const state: ForkliftState = { pos: { x: 0, z: 0 }, heading: 0, speed: 0, forkLift: 0, forkHeight: 0, carrying: null, wheelSpin: 0, steer: 0 };
+    const rig = new ForkliftController(state, { resolve: () => 0 } as unknown as CollisionWorld, cfg);
+    /** Holds `throttle` (W = 1, S = −1, none = 0) for `sec` seconds; returns the audio time it started. */
+    const hold = (sec: number, throttle: number) => {
+      const from = m.ctx.currentTime;
+      for (let i = 0; i < Math.round(sec / FRAME); i++) {
+        m.ctx.currentTime += FRAME;
+        rig.stepDrive(FRAME, throttle, 0);
+        m.motor.set(Math.sign(state.speed) * speed01(state.speed, cfg.maxSpeed), 0, 0);
+      }
+      return from;
+    };
+    return { ...m, state, rig, hold };
+  }
+
+  it('S from rest beeps within 0.2 s; releasing S stops it as the rig comes to rest', () => {
+    const { parts, motor, state, hold } = drive();
+    hold(0.5, 0);
+    const pressed = hold(2, -1);
+    expect(state.speed).toBeLessThan(0);
+    const beeps = onsets(parts);
+    expect(beeps.length).toBeGreaterThanOrEqual(3);
+    expect(beeps[0] - pressed).toBeGreaterThan(0);
+    expect(beeps[0] - pressed).toBeLessThan(0.2);
+    expect(motor.reversing).toBe(true);
+
+    const released = hold(0.7, 0); // coasting back from full reverse speed: at rest well within this
+    expect(motor.reversing).toBe(false);
+    expect(Math.abs(state.speed)).toBeLessThan(0.05);
+    const before = onsets(parts).length;
+    hold(2, 0);
+    expect(onsets(parts)).toHaveLength(before); // parked: silent
+    expect(Math.max(...onsets(parts))).toBeLessThan(released + 0.7);
+  });
+
+  it('switching from S to W stops the beeps as it stops rolling back; W alone never beeps', () => {
+    const { parts, motor, state, hold } = drive();
+    hold(1.5, 1); // W from rest
+    expect(onsets(parts)).toHaveLength(0);
+    hold(1.5, -1); // brakes, then backs up
+    expect(motor.reversing).toBe(true);
+    const switched = hold(0.7, 1);
+    expect(motor.reversing).toBe(false);
+    const last = Math.max(...onsets(parts));
+    expect(last).toBeLessThan(switched + 0.7);
+    hold(2, 1);
+    expect(state.speed).toBeGreaterThan(0);
+    expect(Math.max(...onsets(parts))).toBe(last); // driving forward: never a beep
+  });
+
+  it('backing out of a rack slot (heading locked, carrying a box) beeps like any reverse', () => {
+    const { parts, motor, rig, hold } = drive();
+    rig.attachLoad(GAME_CONFIG.forklift.carriedBoxRadius);
+    rig.setHeadingLock(true);
+    const pressed = hold(1, -1);
+    expect(motor.reversing).toBe(true);
+    expect(onsets(parts)[0] - pressed).toBeLessThan(0.2);
   });
 });
 

@@ -170,7 +170,7 @@ export class AudioEngine {
    * whine and tyre roll follow |speed|, and moving in reverse (negative) sounds the back-up beeper. `forkMotion` = how
    * fast the forks move, signed −1‥1 (+ raising: the pump whir; − lowering: the soft tone and hiss; a 0‥1 value reads
    * as raising). `forkHeight` = their stack / slot height (0 = floor; the pump sits a little higher per level).
-   * Continuous sounds go through the master gain, so mute (M) silences them too.
+   * Continuous sounds go through the master gain, so mute (M) silences them too (the beeper plays on the SFX bus).
    */
   setMotor(speed: number, forkMotion: number, forkHeight = 0): void {
     const rt = this.rt;
@@ -270,8 +270,9 @@ export class AudioEngine {
       const graph = createAudioGraph(ctx, this.config, this.rng, this.muted);
       const music = new MusicPlayer(graph, this.composer, this.rng);
       const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, this.rng);
-      // The reverse beep is tuned to the song's tonic (the key is fixed for the session).
-      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc));
+      // The reverse beep is tuned to the song's key (fixed for the session) and plays on the SFX bus: on the quiet motor
+      // bus it would vanish under the music and the drive whine.
+      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc), graph.sfxIn);
       this.rt = { ctx, graph, music, sfx, motor };
 
       this.composer.setScene(this.scene);

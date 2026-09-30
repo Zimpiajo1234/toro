@@ -11,6 +11,7 @@ import { Composer } from '../src/audio/music/Composer';
 import { MusicPlayer } from '../src/audio/MusicPlayer';
 import { SfxPlayer } from '../src/audio/sfx';
 import { MotorSound } from '../src/audio/motor';
+import { beepFrequency } from '../src/audio/beeper';
 import { mulberry32 } from '../src/audio/random';
 import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing } from '../src/audio/music/harmony';
 import { TONIC_CHORD } from '../src/audio/music/progressions';
@@ -145,7 +146,8 @@ async function analyse(seconds = 40): Promise<void> {
   const composer = new Composer({ rng });
   const music = new MusicPlayer(graph, composer, rng);
   const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, rng);
-  const motor = new MotorSound(ctx, graph.motorIn);
+  // Like AudioEngine: the reverse beep on the SFX bus, tuned to the song's key.
+  const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(composer.keyPc), graph.sfxIn);
   let maxVoices = 0;
 
   // Title 0–8 s, playing 8–32 s with a little level being solved, completion at 30 s (timed like AudioEngine).

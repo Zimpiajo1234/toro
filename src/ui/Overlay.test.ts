@@ -169,14 +169,34 @@ describe('Overlay', () => {
     // Move row first, fork row under it.
     expect(racks.indexOf('recoger / dejar')).toBeLessThan(racks.indexOf('horquilla'));
     expect(racks).toContain('<kbd class="keycap">F</kbd><kbd class="keycap">V</kbd></span>subir / bajar horquilla');
-    expect(racks).toContain('rueda');
-    expect(racks).toContain('<kbd class="keycap">X</kbd><kbd class="keycap">B</kbd></span>mando');
+    // The wheel closes the fork row: two groups, one separator (the gamepad works but is never advertised).
+    const forkRow = racks.slice(racks.lastIndexOf('<p class="hint__row">'));
+    expect(forkRow).toMatch(/<span class="hint__sep" aria-hidden="true">·<\/span><span class="hint__group"><svg[^]*<\/svg>rueda<\/span><\/p>/);
+    expect(forkRow.match(/class="hint__group"/g)).toHaveLength(2);
+    expect(forkRow.match(/class="hint__sep"/g)).toHaveLength(1);
 
     // Only while playing.
     for (const screen of ['title', 'complete'] as const) {
       const html = render({ screen, racks: true });
       expect(html).not.toContain('recoger / dejar');
       expect(html).not.toContain('horquilla');
+    }
+  });
+
+  it('never advertises the gamepad: no pad buttons or "mando" in the hint, on the title or on the card', () => {
+    const screens: Partial<UIState>[] = [
+      { screen: 'title', levels },
+      { screen: 'playing' },
+      { screen: 'playing', racks: true },
+      { screen: 'complete', result: result({}) },
+    ];
+    for (const patch of screens) {
+      const html = render(patch);
+      expect(html).not.toMatch(/\bmando\b/i);
+      // Pad-only buttons (A is also the keyboard's turn-left key, so it is not in the list).
+      for (const pad of ['X', 'B', 'Y', 'LB', 'RB', 'LT', 'RT', 'Start', 'Back']) {
+        expect(html).not.toContain(`<kbd class="keycap">${pad}</kbd>`);
+      }
     }
   });
 

@@ -83,8 +83,8 @@ function MoveRow() {
 }
 
 /**
- * + / − zoom the camera in / out (numpad + / − too; also a trackpad or touch pinch and pad LT / RT, not listed to keep
- * the row short). Last in the move row, so the hint stays one row tall at desktop widths. The mouse wheel is not a zoom
+ * + / − zoom the camera in / out (numpad + / − too; also a trackpad or touch pinch and a gamepad's LT / RT, not listed:
+ * the row stays short, and the hint never advertises the gamepad). Last in the move row, so the hint stays one row tall at desktop widths. The mouse wheel is not a zoom
  * control: it stays with the forks (docs/RACKS.md).
  */
 function ZoomGroup() {
@@ -99,7 +99,10 @@ function ZoomGroup() {
   );
 }
 
-/** F / V (and the mouse wheel, pad X / B) step the forks one slot up / down at a rack column (docs/RACKS.md). */
+/**
+ * F / V and the mouse wheel step the forks one slot up / down at a rack column (docs/RACKS.md). A gamepad's X / B do
+ * too, but the hint only lists the keyboard and the mouse.
+ */
 function ForkRow() {
   return (
     <p className="hint__row">
@@ -114,14 +117,6 @@ function ForkRow() {
       <span className="hint__group">
         <MouseWheelIcon className="hint__icon" />
         rueda
-      </span>
-      <Sep />
-      <span className="hint__group">
-        <span className="hint__keys">
-          <Keycap>X</Keycap>
-          <Keycap>B</Keycap>
-        </span>
-        mando
       </span>
     </p>
   );
