@@ -32,6 +32,8 @@ export class GameRenderer {
   private disposed = false;
   /** False until the container has been laid out with a non-zero size. */
   private sized = false;
+  /** A level was built and not rendered by update() yet: a zoom reset lands at once (nothing to ease from). */
+  private freshLevel = false;
 
   constructor(
     private readonly container: HTMLElement,
@@ -76,6 +78,12 @@ export class GameRenderer {
     this.scene.add(level.root);
     this.level = level;
     this.rig.setFitBoxes(level.fitBoxes);
+    // A new scene is a cut: the zoom (kept across a restart, reset by Game on a level change) lands on its goal and
+    // the zoomed view on the forklift, with no glide over from the previous scene.
+    const forklift = snapshot.forklift.pos;
+    this.rig.setFollow(forklift.x, forklift.z, true);
+    this.rig.settleZoom();
+    this.freshLevel = true;
     this.lighting.aim(level.toSun, level.shadowBounds);
     this.rig.update(0);
     this.renderer.compile(this.scene, this.rig.camera);
@@ -88,6 +96,8 @@ export class GameRenderer {
     if (!this.sized) this.resize();
     const step = Math.max(0, dt);
     this.time += step;
+    this.freshLevel = false;
+    this.rig.setFollow(snapshot.forklift.pos.x, snapshot.forklift.pos.z);
     this.rig.update(step);
     this.lighting.update(step);
     this.level?.update(snapshot, step, this.time, this.rig.yaw, this.lighting.warmAmount);
@@ -111,7 +121,35 @@ export class GameRenderer {
     return this.rig.yaw;
   }
 
-  /** Title-screen mode: very slow orbit of the diorama. Turning it off glides back to a 45° view. */
+  /**
+   * Player zoom by a step of `deltaLog2` stops (+ = closer; 1 = twice as close; a key tap, a wheel notch), within 1
+   * (the full view) … `camera.zoomMax`. The view eases there and, zoomed in, follows the forklift. Ignored during the
+   * title's idle orbit.
+   */
+  zoomBy(deltaLog2: number): void {
+    if (this.disposed) return;
+    this.rig.zoomBy(deltaLog2);
+  }
+
+  /**
+   * Player zoom by `deltaLog2` stops that follow the input as it moves (held keys, triggers, pinches): the view takes
+   * it right away (a brief smoothing, `camera.zoomTrackSec`) and stops when the input does. Same range as zoomBy.
+   */
+  zoomTrack(deltaLog2: number): void {
+    if (this.disposed) return;
+    this.rig.zoomTrack(deltaLog2);
+  }
+
+  /**
+   * Back to the full-warehouse view (zoom 1): eased from what is on screen, or at once for a level just loaded (this
+   * frame, before or after loadLevel).
+   */
+  resetZoom(): void {
+    if (this.disposed) return;
+    this.rig.resetZoom(this.freshLevel);
+  }
+
+  /** Title-screen mode: very slow orbit of the diorama (always unzoomed). Turning it off glides back to a 45° view. */
   setIdleOrbit(enabled: boolean): void {
     this.rig.setIdleOrbit(enabled);
   }

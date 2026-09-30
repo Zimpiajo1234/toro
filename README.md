@@ -34,6 +34,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | Espacio | Recoger / dejar caja |
 | F / V · rueda del ratón | Delante de una estantería almacenable: subir / bajar la horquilla un hueco (un paso de rueda = un hueco; fuera de las estanterías la horquilla es automática) |
 | Q / E | Girar cámara (la conducción W/S/A/D no cambia) |
+| + / − (teclado principal o numérico) · pellizcar | Acercar / alejar la cámara (mantener = zoom continuo, un toque = un paso pequeño; ver **Zoom** abajo) |
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
 | T | Mostrar / ocultar tiempo |
@@ -41,7 +42,21 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
 | U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
-| RePág / AvPág · las dos teclas a la derecha de la P ([ / ] en teclado inglés; también con AltGr) | Solo en Modo prueba: nivel anterior / siguiente (al instante; si ya has movido una caja, mantén pulsada la tecla un momento, como R) |
+| RePág / AvPág · las dos teclas a la derecha de la P ([ / ] en teclado inglés; también con AltGr) | Solo en Modo prueba: nivel anterior / siguiente (al instante; si ya has movido una caja, mantén pulsada la tecla un momento, como R). En teclado español la segunda es la tecla +, que hace zoom: ahí el nivel siguiente es AltGr + esa tecla o AvPág |
+
+**Zoom** (mientras juegas): **+** acerca y **−** aleja la cámara (las teclas que escriben + y − en cualquier
+distribución, y las del teclado numérico), igual que pellizcar en el trackpad o en la pantalla táctil y los gatillos
+del mando (RT acerca, LT aleja; cuanto más aprietas, más rápido). Sube y baja con suavidad, sin tirones ni rebote. Con
+el zoom a 1 se ve el almacén entero, como siempre (nunca se aleja más); acercada (hasta unas 2,5×) la cámara sigue a
+la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E, las bandas del HUD y el
+fundido de lo que tapa la carretilla siguen igual. El zoom se mantiene al reiniciar el nivel y vuelve a 1 al cambiar
+de nivel y en el título (su órbita lenta nunca se acerca). La **rueda del ratón sola no hace zoom**: sigue siendo de
+la horquilla (Ctrl + rueda, lo que manda un pellizco en el trackpad, sí acerca y aleja). La pista de controles lo
+recuerda con "+ − zoom" al final de su primera fila. Al soltar la tecla (o el gatillo, o los dedos) la cámara se para
+enseguida, y un toque en sentido contrario parte de lo que se ve. Si la página se quedó ampliada por un pellizco en el
+título, el primer pellizco en la partida la devuelve a su tamaño; después ya mueve la cámara. Se ajusta en
+`gameConfig.json` → `camera` (`zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`,
+`zoomStep`).
 
 **Modo prueba** (ajuste guardado, apagado por defecto): abre todos los niveles desde el título sin tocar el progreso
 real; al apagarlo vuelven los candados de siempre. Los tiempos se guardan con normalidad en los niveles ya
@@ -69,7 +84,7 @@ movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro,
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
 
-Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), Start (continuar),
+Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), LT / RT (alejar / acercar la cámara), Start (continuar),
 Back (reiniciar), Y (repetir en la tarjeta final), X / B (subir / bajar la horquilla delante de una estantería almacenable).
 
 El mapeo de movimiento se ajusta en `gameConfig.json` → `controls`: `keyboardMapping` (teclado y cruceta) `"vehicle"` (por defecto:

@@ -13,8 +13,8 @@ const VEHICLE_KEYS = GAME_CONFIG.controls.keyboardMapping === 'vehicle';
 
 /**
  * Control hint, bottom center: on screen the whole time a level is played, in every level (it never fades out on its
- * own). The move row and, in levels with storage racks (`racks`), the fork row under it, in one soft panel. It
- * reserves the bottom band up to its top edge: the camera frames the level above it.
+ * own). The move row (drive, pick / drop, zoom) and, in levels with storage racks (`racks`), the fork row under it, in
+ * one soft panel. It reserves the bottom band up to its top edge: the camera frames the level above it.
  */
 export function ControlHint({ store, show }: { store: Store<UIState>; show: boolean }) {
   const racks = useStore(store, (s) => s.racks);
@@ -76,7 +76,26 @@ function MoveRow() {
         <Keycap wide>Espacio</Keycap>
         recoger / dejar
       </span>
+      <Sep />
+      <ZoomGroup />
     </p>
+  );
+}
+
+/**
+ * + / − zoom the camera in / out (numpad + / − too; also a trackpad or touch pinch and pad LT / RT, not listed to keep
+ * the row short). Last in the move row, so the hint stays one row tall at desktop widths. The mouse wheel is not a zoom
+ * control: it stays with the forks (docs/RACKS.md).
+ */
+function ZoomGroup() {
+  return (
+    <span className="hint__group">
+      <span className="hint__keys">
+        <Keycap>+</Keycap>
+        <Keycap>−</Keycap>
+      </span>
+      zoom
+    </span>
   );
 }
 

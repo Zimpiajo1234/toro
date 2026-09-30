@@ -6,7 +6,8 @@ export interface GamepadLike {
   readonly connected: boolean;
   readonly mapping: string;
   readonly axes: readonly number[];
-  readonly buttons: readonly { readonly pressed: boolean }[];
+  /** `value` is the analog pull (0 … 1) of the triggers; digital buttons report 0 / 1, or leave it out. */
+  readonly buttons: readonly { readonly pressed: boolean; readonly value?: number }[];
 }
 
 export type GamepadSource = () => ArrayLike<GamepadLike | null> | null | undefined;
@@ -30,9 +31,16 @@ export interface GamepadFrame {
   retryPressed: boolean;
   /** Edge: X = fork one slot up (+1), B = one slot down (−1), in front of a storage rack (docs/RACKS.md). */
   forkStep: -1 | 0 | 1;
+  /**
+   * Analog camera zoom, −1 … 1 (+ = closer): RT pulls in, LT pulls out, each past TRIGGER_DEADZONE and rescaled so a
+   * light touch starts from 0. A rate, not a step: Input turns it into zoom stops per second.
+   */
+  zoom: number;
 }
 
 export const STICK_DEADZONE = 0.2;
+/** A trigger resting slightly pulled (worn springs, noisy pads) must not creep the camera. */
+export const TRIGGER_DEADZONE = 0.1;
 
 // W3C "standard" mapping indices.
 const BTN_A = 0;
@@ -41,6 +49,8 @@ const BTN_X = 2;
 const BTN_Y = 3;
 const BTN_LB = 4;
 const BTN_RB = 5;
+const BTN_LT = 6;
+const BTN_RT = 7;
 const BTN_BACK = 8;
 const BTN_START = 9;
 const DPAD_UP = 12;
@@ -60,9 +70,18 @@ function isPressed(pad: GamepadLike, index: number): boolean {
   return !!button && button.pressed;
 }
 
+/** Analog pull of a trigger past the dead zone, rescaled to 0 … 1 (a pad without `value` reads its pressed state). */
+function triggerPull(pad: GamepadLike, index: number, deadzone: number): number {
+  const button = pad.buttons[index];
+  if (!button) return 0;
+  const raw = typeof button.value === 'number' && Number.isFinite(button.value) ? button.value : button.pressed ? 1 : 0;
+  const pull = Math.min(1, Math.abs(raw));
+  return pull <= deadzone ? 0 : (pull - deadzone) / (1 - deadzone);
+}
+
 /**
  * Reads standard-mapping gamepads: left stick (radial deadzone) and d-pad reported separately (they may map to
- * the floor differently), A / Y / LB / RB / Back / Start / X / B as edges.
+ * the floor differently), A / Y / LB / RB / Back / Start / X / B as edges, LT / RT as the analog camera zoom.
  */
 export class GamepadReader {
   private readonly source: GamepadSource;
@@ -84,6 +103,7 @@ export class GamepadReader {
     restartHeld: false,
     retryPressed: false,
     forkStep: 0,
+    zoom: 0,
   };
 
   constructor(source: GamepadSource = browserGamepads, deadzone = STICK_DEADZONE) {
@@ -101,6 +121,7 @@ export class GamepadReader {
     f.restartHeld = false;
     f.retryPressed = false;
     f.forkStep = 0;
+    f.zoom = 0;
     this.stick.x = this.stick.y = 0;
     this.dpad.x = this.dpad.y = 0;
 
@@ -123,6 +144,7 @@ export class GamepadReader {
     f.stickY = this.stick.y;
     f.dpadX = this.dpad.x;
     f.dpadY = this.dpad.y;
+    f.zoom = Math.max(-1, Math.min(1, f.zoom));
     return f;
   }
 
@@ -134,6 +156,7 @@ export class GamepadReader {
     this.dpad.x += (isPressed(pad, DPAD_RIGHT) ? 1 : 0) - (isPressed(pad, DPAD_LEFT) ? 1 : 0);
     this.dpad.y += (isPressed(pad, DPAD_UP) ? 1 : 0) - (isPressed(pad, DPAD_DOWN) ? 1 : 0);
     if (isPressed(pad, BTN_BACK)) this.frame.restartHeld = true;
+    this.frame.zoom += triggerPull(pad, BTN_RT, TRIGGER_DEADZONE) - triggerPull(pad, BTN_LT, TRIGGER_DEADZONE);
 
     let prev = this.prev.get(pad.index);
     if (!prev) {

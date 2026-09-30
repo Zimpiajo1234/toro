@@ -74,6 +74,9 @@ describe('Overlay', () => {
     expect(html).toContain('Nivel 1 · Primer pedido');
     expect(html).toContain('Mejor 0:38.9');
     expect(html).toContain('girar cámara');
+    // Zoom sits right after the camera turn in the footer.
+    expect(html).toContain('<span><kbd class="keycap">+</kbd> / <kbd class="keycap">−</kbd> zoom</span>');
+    expect(html.indexOf('girar cámara')).toBeLessThan(html.indexOf('zoom</span>'));
     expect(html).not.toContain('Reiniciar nivel');
   });
 
@@ -174,6 +177,31 @@ describe('Overlay', () => {
       const html = render({ screen, racks: true });
       expect(html).not.toContain('recoger / dejar');
       expect(html).not.toContain('horquilla');
+    }
+  });
+
+  const ZOOM_GROUP =
+    '<span class="hint__group"><span class="hint__keys"><kbd class="keycap">+</kbd><kbd class="keycap">−</kbd></span>' +
+    'zoom</span>';
+
+  it('control hint: + − zoom closes the move row, in every level, without adding a row', () => {
+    const plain = render({ screen: 'playing' });
+    expect(plain).toContain(`<span class="hint__sep" aria-hidden="true">·</span>${ZOOM_GROUP}</p>`);
+    expect(plain.indexOf('recoger / dejar')).toBeLessThan(plain.indexOf(ZOOM_GROUP));
+    expect(plain.match(/class="hint__row"/g)).toHaveLength(1);
+    expect(plain.match(/>zoom</g)).toHaveLength(1);
+
+    // With racks: still in the move row, before the fork row; the wheel stays with the forks (never "zoom").
+    const racks = render({ screen: 'playing', racks: true });
+    expect(racks.match(/class="hint__row"/g)).toHaveLength(2);
+    const forkRowAt = racks.lastIndexOf('<p class="hint__row">');
+    expect(racks.indexOf(ZOOM_GROUP)).toBeGreaterThan(0);
+    expect(racks.indexOf(ZOOM_GROUP)).toBeLessThan(forkRowAt);
+    expect(racks.slice(forkRowAt)).not.toContain('zoom');
+    expect(racks.slice(forkRowAt)).toContain('rueda');
+
+    for (const screen of ['title', 'complete'] as const) {
+      expect(render({ screen, racks: true })).not.toContain(ZOOM_GROUP);
     }
   });
 

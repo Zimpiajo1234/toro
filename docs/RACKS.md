@@ -36,7 +36,8 @@ estanterías» de este documento, tenga o no estanterías. En el código la puer
 6. **Huecos independientes**: se llenan y vacían en cualquier orden (no hay que llenar el de abajo primero).
 7. **Altura por huecos**: delante de una estantería, **F sube / V baja** un hueco, igual que la **rueda del ratón** (un
    paso de rueda = un hueco) y el mando (**X sube / B baja**). Fuera de las estanterías la horquilla es automática, como
-   siempre.
+   siempre. La rueda es solo de la horquilla (acordado 2026-09-30): el zoom de cámara va con **+ / −**, pellizcar y
+   **LT / RT**; solo Ctrl + rueda (lo que manda un pellizco en el trackpad) hace zoom.
 8. **Suelo**: apilar en el suelo sigue permitido **solo como aparcamiento** (`limit:` o una pila inicial); las zonas de
    suelo piden una caja (sin recetas) y también siguen la regla «solo brilla con su caja».
 9. Niveles sin estanterías: exactamente como antes (sin cajas fijas, sin zumbido, el brillo de siempre).
@@ -303,9 +304,9 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
 
 - **Pista de controles** (`ControlHint`): fija en pantalla todo el rato que se juega, en todos los niveles (ya no se va
   tras la primera caja ni tras el primer nivel). En los niveles con estanterías (`UIState.racks`, que `Game` publica al
-  cargar cada nivel) lleva debajo de la fila de mover una segunda fila, en el mismo panel suave: «F V subir / bajar
-  horquilla · rueda · X B mando». Dos filas ordenadas, separadas por una línea fina; en el móvil cada fila puede partirse
-  en dos líneas.
+  cargar cada nivel) lleva debajo de la fila de mover (que acaba en «+ − zoom») una segunda fila, en el mismo panel
+  suave: «F V subir / bajar horquilla · rueda · X B mando». Dos filas ordenadas, separadas por una línea fina; en el
+  móvil cada fila puede partirse en dos líneas.
 - Lo que leen render y audio: `snapshot.slots` (pista `accepts`, destino `destined`, `occupiedBy`, `satisfied`),
   `hint.rack` (hueco elegido, `ready`; `null` también al coger una caja del suelo delante de una columna),
   `hint.dropCell` / `dropLevel` (casilla de la estantería + nivel del hueco), `forklift.forkHeight` (nivel del hueco

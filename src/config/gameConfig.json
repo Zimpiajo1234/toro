@@ -31,7 +31,14 @@
     "pitchDeg": 38,
     "yawDeg": 45,
     "padding": 1.15,
-    "rotateDurationSec": 0.9
+    "rotateDurationSec": 0.9,
+    "zoomMax": 2.5,
+    "zoomEaseSec": 0.7,
+    "zoomTrackSec": 0.15,
+    "zoomResetSec": 1.4,
+    "zoomFollowSec": 1,
+    "zoomRate": 1,
+    "zoomStep": 0.25
   },
   "audio": {
     "master": 0.8,

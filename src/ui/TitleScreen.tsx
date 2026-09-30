@@ -35,6 +35,13 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
           <span className="title__sep" aria-hidden="true">
             ·
           </span>
+          {/* Zoom works while playing (the title's idle orbit stays unzoomed); pinch and pad LT / RT zoom too. */}
+          <span>
+            <Keycap>+</Keycap> / <Keycap>−</Keycap> zoom
+          </span>
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
           <SoundHint store={store} />
           <span className="title__sep" aria-hidden="true">
             ·

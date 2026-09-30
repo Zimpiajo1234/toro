@@ -151,6 +151,8 @@ export class Game implements GameActions {
       onGesture: this.onUserGesture,
       isGameplay: () => this.store.get().screen === 'playing',
       buttonKeysLocked: () => this.confirmGrace.active,
+      // Two fingers on the scene pinch the camera zoom while playing.
+      touchSurface: this.container,
     });
     const rt: Runtime = { renderer, audio, progress, input };
     this.rt = rt;
@@ -223,6 +225,8 @@ export class Game implements GameActions {
     }
     const index = resumeSuspended ? this.levelIndex : resolveStartLevel(levelIndex, this.savedProgress(rt), LEVELS.length);
     rt.renderer.setIdleOrbit(false);
+    // Every level starts at the full view (a restart of the same level, restart(), keeps the zoom).
+    rt.renderer.resetZoom();
     // The level left with Esc picks up exactly where it was; any other level (or a finished one) loads fresh.
     const resume = this.suspended && !this.benchmark && index === this.levelIndex && this.level !== null;
     this.suspended = false;
@@ -293,6 +297,8 @@ export class Game implements GameActions {
     this.jumpHold.cancel();
     this.confirmGrace.cancel();
     this.pendingResult = null;
+    // The title's idle orbit shows the whole warehouse: the zoom goes back to the full view.
+    rt.renderer.resetZoom();
     let index = this.levelIndex;
     let level = this.level;
     if (leavingPlay && level) {
@@ -383,6 +389,7 @@ export class Game implements GameActions {
     const level = resume && this.level ? this.level : getSpecialLevel(BENCHMARK_ID);
     if (!level) return;
     rt.renderer.setIdleOrbit(false);
+    rt.renderer.resetZoom(); // entered from the title: the full view, like any level
     this.suspended = false;
     if (!resume) this.loadBenchmark(rt, level);
     this.elapsedThrottle.markPublished(this.timer.elapsedMs);
@@ -425,7 +432,7 @@ export class Game implements GameActions {
   };
 
   private step(rt: Runtime, dt: number): void {
-    const input = rt.input.poll();
+    const input = rt.input.poll(dt);
     // Off the playing screen the action button (Space / gamepad A) confirms, like a focused primary button.
     // That press is consumed there: it must not also act in the level it just started.
     const wasPlaying = this.store.get().screen === 'playing';
@@ -445,6 +452,10 @@ export class Game implements GameActions {
       inputToDrive(input, CONTROLS, frame.drive);
       frame.actionPressed = input.actionPressed && wasPlaying;
       frame.forkStep = wasPlaying ? input.forkStep : 0;
+      // Camera zoom: + / − taps and Ctrl + wheel notches are steps the renderer eases in; held keys, LT / RT and
+      // pinches follow the input as it moves. The renderer clamps both. The title and the card never zoom.
+      if (wasPlaying && input.zoomStep !== 0) rt.renderer.zoomBy(input.zoomStep);
+      if (wasPlaying && input.zoom !== 0) rt.renderer.zoomTrack(input.zoom);
       const driving = Math.abs(frame.drive.throttle) > MOVE_EPSILON || Math.abs(frame.drive.steer) > MOVE_EPSILON;
       const forking = frame.forkStep !== 0 && this.levelHasRacks;
       if (this.resumeTimerOnInput && (frame.actionPressed || driving || forking || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {

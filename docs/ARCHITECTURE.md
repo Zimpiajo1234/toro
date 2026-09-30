@@ -18,7 +18,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | Path | Owner | Responsibility |
 |---|---|---|
 | `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, cells, fronts, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
-| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
+| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
 | `src/data/asciiLevel.ts`, `src/data/difficulty.ts` | shared | `.level` text format: parser (→ validateLevel) and canonical renderer; `dificultad:` targets |
@@ -252,13 +252,30 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 
 - Orthographic camera, pitch `camera.pitchDeg` (38°), yaw 45°, auto-fit so the whole warehouse (incl. walls)
   is visible with `camera.padding`, on any aspect. Q/E rotate yaw by 90° with a slow ease-in-out
-  (`rotateDurationSec`). Idle orbit on title: extremely slow yaw drift. Never shake, never snap. The camera
+  (`rotateDurationSec`). Idle orbit on title: extremely slow yaw drift. Never shake, never snap. The auto-fit
   never zooms in during a Q/E turn or the idle orbit: the frame stays at least as wide as the blend of the two
-  diagonal (45° + k·90°) framings around the current yaw.
+  diagonal (45° + k·90°) framings around the current yaw (the player's zoom, below, is a separate factor on top).
   The fit frames the canvas minus the bands the DOM overlay keeps over the scene while playing (HUD pills at the
   top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts`, measured by a ResizeObserver on
   change → `GameActions.setViewInsets` → `GameRenderer.setViewInsets` → `CameraRig.setInsets`, eased on a
   critically damped spring, ≤ half the canvas): held while the completion card is up, none on the title.
+- Player zoom (user request 2026-09-30): `GameRenderer.zoomBy(deltaLog2)` (a step; + = closer, in log2 "stops", +1 =
+  twice as close), `zoomTrack(deltaLog2)` (zoom that follows the input as it moves) and `resetZoom()` → `CameraRig`,
+  fed by Game while playing from `InputSample.zoomStep` (a + / − tap's small step on the press, a Ctrl + mouse wheel
+  notch) and `InputSample.zoom` (held + / − and pad RT / LT give a rate × `dt`; a pinch — trackpad Ctrl + wheel, two
+  fingers on the scene, Safari's gesture events — the log-ratio of that frame). Zoom 1 = the full-warehouse auto-fit
+  above and is the floor (never further out); the ceiling is `camera.zoomMax` (2.5×). A step eases in on a critically
+  damped spring (`zoomEaseSec`: calm, no overshoot; the way back to the full view is slower, `zoomResetSec`); a step
+  against one still easing in starts from what is on screen (a − tap never ends closer than the view was). Tracked zoom
+  moves the view and that goal together over `zoomTrackSec` (0.15 s, first order), so a held key stops ≈ 0.05 stops
+  after the release instead of gliding on to a goal that ran ahead of the view (it used to overrun ≈ 0.3 stops). While
+  the page itself is still pinch-zoomed (`visualViewport.scale` > 1.01, e.g. after a pinch over the title) pinches stay
+  the browser's even while playing, so the player can pinch it back to 1. As the zoom grows the framing target blends from the level centre to the
+  forklift (followed with `zoomFollowSec`), clamped so the visible free area stays over the (padded) level; zooming
+  fully out returns to the centred full view. Q/E turns pivot around that target; the reserved bands (`setInsets`),
+  occlusion ghosting and the truck wall easing all compose with it. Reset to 1 on a level change and on the title (the
+  idle orbit stays unzoomed); kept across a restart of the same level. `zoomRate` (stops / s held) and `zoomStep`
+  (stops per tap) tune the keys. The plain mouse wheel never zooms: it stays with the forks (docs/RACKS.md).
 - `WebGLRenderer({ antialias: true, alpha: true })`, transparent clear (CSS gradient shows through),
   `outputColorSpace = SRGB`, `toneMapping = NeutralToneMapping`, pixel ratio ≤ 2. Soft shadows from one
   warm directional "window" light (PCFSoft, map 2048, tight shadow camera fitted to the level) + hemisphere.
@@ -396,20 +413,22 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners reserve the top
   band (the camera frames the level below them); under 480 px wide the end corner stacks the counter under the time.
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
-  bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar" — and, in levels with storage racks
+  bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar · + − zoom" (zoom last, so the row stays
+  one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage racks
   (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
   horquilla · rueda · X B mando". Trucks add nothing to it (their forks are automatic, no new keys).
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
-  read "Nivel N · por descubrir"), small footer "Q / E girar cámara · M silencio (M activar sonido when muted)
-  · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
+  muted) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
-  on a US layout; matched by `e.code`, with or without AltGr, so Spanish / ISO layouts work too) load the previous /
-  next level fresh: at once while no box has been picked, else held like R (`flow.restartHoldSec`, same ↺ fill).
+  on a US layout; matched by `e.code`, with or without AltGr, so Spanish / ISO layouts work too, except that a key
+  typing "+" zooms instead: on Spanish / German / Italian layouts the next level is AltGr + that key) load the previous
+  / next level fresh: at once while no box has been picked, else held like R (`flow.restartHoldSec`, same ↺ fill).
   Unlock progress is never modified: a level open only because of test mode records no time (a ranking would
   unlock its successor), does not unlock anything and never becomes the "Continuar" target; its card shows only
   "Tiempo" plus the quiet line "Modo prueba · este tiempo no se guarda" (`LevelResult.practice`). Genuinely
@@ -479,11 +498,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, M mute, T timer, N move counter (title and playing; no pad button, like the timer), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,
-  d-pad drives like W/S/A/D (`controls.keyboardMapping`; non-zero drive wins over the stick), A pick / drop and confirm, LB/RB camera, Start confirm, Back/View = restart (same hold rule),
+  d-pad drives like W/S/A/D (`controls.keyboardMapping`; non-zero drive wins over the stick), A pick / drop and confirm, LB/RB camera, LT / RT zoom out / in (analog), Start confirm, Back/View = restart (same hold rule),
   Y = "Repetir" on the card only.
 - Push `elapsedMs` to the store at ≤ 10 Hz. Pass the signed speed (`sign(speed) · |speed| / maxSpeed`: negative =
   reverse, which beeps), the signed fork motion (the faster of the carry lift and the stack / slot climb normalised by

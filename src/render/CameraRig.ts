@@ -47,6 +47,19 @@ class Spring {
     this.value = target;
     this.velocity = 0;
   }
+
+  /** Move the value by `delta` along with its target: the offset and velocity between them stay as they were. */
+  shift(delta: number): void {
+    this.value += delta;
+  }
+
+  /**
+   * Land exactly on `target` once within `epsilon` of it and moving less than that in a tenth of a second (an exact
+   * rest, not an endless tail).
+   */
+  settle(target: number, epsilon: number): void {
+    if (Math.abs(this.value - target) < epsilon && Math.abs(this.velocity) * 0.1 < epsilon) this.snap(target);
+  }
 }
 
 const newFit = (): Fit => ({ halfW: 0, halfH: 0, centerX: 0, centerY: 0 });
@@ -71,12 +84,58 @@ const INSET_OMEGA = 5;
 const MAX_RESERVED = 0.5;
 const band = (px: number): number => (Number.isFinite(px) && px > 0 ? px : 0);
 
+/** A critically damped spring gets ≈ 95 % of the way through a step in ω·t ≈ 4.74 ((1 + ωt)·e^(−ωt) = 0.05). */
+const SETTLE_95 = 4.74;
+const omegaFor = (sec: number): number => SETTLE_95 / Math.max(0.05, Number.isFinite(sec) ? sec : 1);
+/**
+ * The eased zoom (log2) lands exactly on its goal within this (0.007 %, far below a pixel): zooming fully out is exactly
+ * the full view again.
+ */
+const ZOOM_REST = 1e-4;
+/**
+ * Tracked zoom pours in on a first-order ease, ≈ 95 % of it within `camera.zoomTrackSec` (e^−3 ≈ 5 %): a held rate
+ * then trails by rate × zoomTrackSec / 3 (≈ 0.05 stops at the default 1 stop / s and 0.15 s), which is all the view
+ * moves on once the input stops.
+ */
+const trackTauFor = (sec: number): number => Math.max(0.01, Number.isFinite(sec) ? sec : 0.15) / 3;
+/** Height of the followed point: the forklift's body, not the floor under its wheels. */
+export const FOLLOW_HEIGHT = 0.5;
+/**
+ * The zoomed framing glides to a stop at the level's edge over this last share of the visible half extent (a smooth
+ * brake, C¹, never past the edge) instead of stopping dead there.
+ */
+const EDGE_SOFTNESS = 0.2;
+
+/**
+ * `offset` limited to ±`bound`: unchanged up to `soft` short of it, then easing in exponentially (slope 1 at the knee,
+ * so no kink) and never reaching past it.
+ */
+function softClamp(offset: number, bound: number, soft: number): number {
+  if (!(bound > 0)) return 0;
+  const k = Math.min(bound, soft);
+  const knee = bound - k;
+  const a = Math.abs(offset);
+  if (a <= knee) return offset;
+  const out = k > 0 ? bound - k * Math.exp((knee - a) / k) : bound;
+  return offset < 0 ? -out : out;
+}
+
 /**
  * Orthographic diorama camera. Yaw ψ follows docs/ARCHITECTURE.md: the camera sits in horizontal
  * direction (sin ψ, cos ψ) from its target. Pitch is fixed. Every frame the frustum is fitted to the
  * FitBoxes for the current yaw and aspect, so the whole warehouse stays visible at any angle, without
  * breathing in and out while it turns (see place()). The fit uses the canvas minus the overlay bands (setInsets):
  * the frustum still covers the whole canvas, off-center so the level sits in the free area.
+ *
+ * Player zoom (zoomBy / zoomTrack / resetZoom) is a factor on top of that fit: 1 = the full view (exactly the fit
+ * above, and the floor: never further out), up to `camera.zoomMax`. A step (zoomBy: a key tap, a wheel notch) eases on
+ * a critically damped spring (`zoomEaseSec`; a return to the full view on the slower `zoomResetSec`), so it never
+ * overshoots a goal; a step against one still easing in starts from what is on screen. Zoom that follows the input as
+ * it moves (zoomTrack: held keys, triggers, pinches) moves the view and that goal together over `zoomTrackSec`, so the
+ * view stops when the input does instead of catching up with a goal that ran ahead. As it grows, the framing target blends
+ * from the level's center to the followed point (the forklift, eased by `zoomFollowSec`), clamped so the visible free
+ * area stays over the (padded) level at rest, and inside what the full view shows mid-turn. Q/E turns pivot around that
+ * target; the idle orbit is always unzoomed.
  */
 export class CameraRig {
   readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, DISTANCE * 2.5);
@@ -110,11 +169,32 @@ export class CameraRig {
   private readonly insetBottom = new Spring();
   private readonly insetLeft = new Spring();
 
+  /** Player zoom, in log2 "stops" (0 = the full view): the goal asked for and the eased value shown. */
+  private readonly zoomMax: number;
+  private readonly zoomMaxLog: number;
+  private readonly zoomOmega: number;
+  /** Slower ease of a return to the full view (a reset, the title), so a long way out stays as calm as a tap. */
+  private readonly zoomResetOmega: number;
+  private zoomResetting = false;
+  private zoomGoal = 0;
+  private readonly zoomLog = new Spring();
+  /** Tracked zoom (zoomTrack) not in the view yet, in stops, and the time constant it pours in with (s). */
+  private zoomPending = 0;
+  private readonly zoomTrackTau: number;
+  /** The followed point on the floor (world x, z): asked for, and eased. */
+  private readonly followOmega: number;
+  private followGoalX = 0;
+  private followGoalZ = 0;
+  private hasFollow = false;
+  private readonly followX = new Spring();
+  private readonly followZ = new Spring();
+
   private readonly right = new Vector3();
   private readonly up = new Vector3();
   private readonly back = new Vector3();
   private readonly corner = new Vector3();
   private readonly target = new Vector3();
+  private readonly followPoint = new Vector3();
   /** Scratch fits (no per-frame allocations): live yaw, minimum framing, its two anchors. */
   private readonly liveFit: Fit = newFit();
   private readonly floorFit: Fit = newFit();
@@ -128,12 +208,86 @@ export class CameraRig {
     this.rotateDuration = Math.max(0.05, cameraConfig.rotateDurationSec);
     this.canonicalYaw = degToRad(cameraConfig.yawDeg);
     this.base = this.canonicalYaw;
+    this.zoomMax = Number.isFinite(cameraConfig.zoomMax) ? Math.max(1, cameraConfig.zoomMax) : 1;
+    this.zoomMaxLog = Math.log2(this.zoomMax);
+    this.zoomOmega = omegaFor(cameraConfig.zoomEaseSec);
+    this.zoomResetOmega = omegaFor(cameraConfig.zoomResetSec);
+    this.zoomTrackTau = trackTauFor(cameraConfig.zoomTrackSec);
+    this.followOmega = omegaFor(cameraConfig.zoomFollowSec);
     this.place();
   }
 
   /** Current animated yaw (radians). */
   get yaw(): number {
     return this.base + this.orbitOffset;
+  }
+
+  /** Current (eased) player zoom: 1 = the full view, up to `camera.zoomMax`. */
+  get zoom(): number {
+    return Math.pow(2, clamp(this.zoomLog.value, 0, this.zoomMaxLog));
+  }
+
+  /** The zoom the eased one is heading to (tracked zoom not poured in yet included). */
+  get zoomTarget(): number {
+    return Math.pow(2, clamp(this.zoomGoal + this.zoomPending, 0, this.zoomMaxLog));
+  }
+
+  /**
+   * Zoom by a step of `deltaLog2` stops (+ = closer, 1 = twice as close; a key tap, a wheel notch), kept within
+   * 1 … `camera.zoomMax`. The view eases there. A step against an ease still under way (a − tap while a + one is
+   * easing in) starts from what is on screen, so it never ends up the other way. Ignored during the idle orbit (the
+   * title stays unzoomed).
+   */
+  zoomBy(deltaLog2: number): void {
+    if (this.orbitEnabled || !Number.isFinite(deltaLog2) || deltaLog2 === 0) return;
+    // Against the ease under way (its goal on the other side of what is on screen): drop the rest of it.
+    const shown = this.zoomLog.value;
+    if ((this.zoomGoal - shown) * deltaLog2 < 0) this.zoomGoal = clamp(shown, 0, this.zoomMaxLog);
+    this.zoomGoal = clamp(this.zoomGoal + deltaLog2, 0, this.zoomMaxLog);
+    this.zoomResetting = false;
+  }
+
+  /**
+   * Zoom by `deltaLog2` stops that follow the input as it moves (held + / −, the triggers' rate × dt, a pinch): the view
+   * and its goal take it together over `camera.zoomTrackSec`, so the view stops (≈ 0.05 stops after a held key) when
+   * the input does. Same range and idle-orbit rule as zoomBy.
+   */
+  zoomTrack(deltaLog2: number): void {
+    if (this.orbitEnabled || !Number.isFinite(deltaLog2) || deltaLog2 === 0) return;
+    this.zoomPending = clamp(this.zoomPending + deltaLog2, -this.zoomMaxLog, this.zoomMaxLog);
+  }
+
+  /**
+   * Back to the full view: eased (on the slower `camera.zoomResetSec`), or at once with `immediate` (nothing zoomed on
+   * screen to ease from).
+   */
+  resetZoom(immediate = false): void {
+    this.zoomGoal = 0;
+    this.zoomPending = 0;
+    this.zoomResetting = true;
+    if (immediate) this.zoomLog.snap(0);
+  }
+
+  /** Land the eased zoom on its goal at once (a cut, such as a freshly built level): no ease left to play. */
+  settleZoom(): void {
+    this.zoomGoal = clamp(this.zoomGoal + this.zoomPending, 0, this.zoomMaxLog);
+    this.zoomPending = 0;
+    this.zoomLog.snap(this.zoomGoal);
+  }
+
+  /**
+   * The point on the floor (world x, z) a zoomed-in view follows: the forklift. Call every frame; the view glides after
+   * it (`camera.zoomFollowSec`), or jumps right there with `immediate` (and on the first call).
+   */
+  setFollow(x: number, z: number, immediate = false): void {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    this.followGoalX = x;
+    this.followGoalZ = z;
+    if (immediate || !this.hasFollow) {
+      this.followX.snap(x);
+      this.followZ.snap(z);
+    }
+    this.hasFollow = true;
   }
 
   /** Canvas size in CSS px. */
@@ -170,7 +324,10 @@ export class CameraRig {
   setIdleOrbit(enabled: boolean): void {
     if (enabled === this.orbitEnabled) return;
     this.orbitEnabled = enabled;
-    if (enabled) return;
+    if (enabled) {
+      this.resetZoom(); // the title's orbit is always the whole diorama: ease back out
+      return;
+    }
     // Fold the drift into the tweened yaw and glide to the nearest canonical angle, keeping velocity.
     const current = this.yaw;
     const velocity = this.baseVelocity() + this.orbitVelocity;
@@ -192,7 +349,32 @@ export class CameraRig {
     }
     if (Math.abs(this.orbitOffset) > TAU * 4) this.orbitOffset %= TAU;
     this.stepInsets(dt, false);
+    this.pourZoom(dt);
+    this.zoomLog.step(this.zoomGoal, this.zoomResetting ? this.zoomResetOmega : this.zoomOmega, dt);
+    this.zoomLog.settle(this.zoomGoal, ZOOM_REST);
+    this.followX.step(this.followGoalX, this.followOmega, dt);
+    this.followZ.step(this.followGoalZ, this.followOmega, dt);
     this.place();
+  }
+
+  /**
+   * Pour this frame's share of the tracked zoom into the view and its goal together: a step still easing in keeps its
+   * offset, and ends where it would have plus what was poured (the shown zoom stays clamped to the range meanwhile).
+   * What a limit stops is dropped, so holding on at zoomMax (or 1) stores nothing for later.
+   */
+  private pourZoom(dt: number): void {
+    const pending = this.zoomPending;
+    if (pending === 0 || !(dt > 0)) return;
+    const pour = Math.abs(pending) < ZOOM_REST ? pending : -pending * Math.expm1(-dt / this.zoomTrackTau);
+    this.zoomPending -= pour;
+    const asked = this.zoomGoal + pour;
+    const goal = clamp(asked, 0, this.zoomMaxLog);
+    if (goal !== asked) this.zoomPending = 0;
+    const moved = goal - this.zoomGoal;
+    if (moved === 0) return;
+    this.zoomGoal = goal;
+    this.zoomLog.shift(moved);
+    this.zoomResetting = false;
   }
 
   /** Ease each overlay band's share of the canvas toward the one asked for (or `snap` there). Allocation-free. */
@@ -247,7 +429,8 @@ export class CameraRig {
    * blend of the framings at the two anchor yaws around the current one (the tween's ends, or the
    * canonical diagonals while orbiting / at rest), while the live fit still guarantees containment.
    * All of it frames the free area (the canvas minus the overlay bands): the frustum then widens to the whole canvas,
-   * off-center, so the level's center lands on the free area's center.
+   * off-center, so the level's center lands on the free area's center. The player zoom then narrows that free area and
+   * moves its center toward the followed point (see the class comment); at zoom 1 none of that runs.
    */
   private place(): void {
     const yaw = this.yaw;
@@ -268,17 +451,37 @@ export class CameraRig {
     const freeW = 1 - l - r;
     const freeH = 1 - t - b;
     const aspect = (this.aspect * freeW) / freeH;
-    let halfW = Math.max(live.halfW, floor.halfW) * this.padding;
-    let halfH = Math.max(live.halfH, floor.halfH) * this.padding;
+    const levelW = Math.max(live.halfW, floor.halfW) * this.padding;
+    const levelH = Math.max(live.halfH, floor.halfH) * this.padding;
+    let halfW = levelW;
+    let halfH = levelH;
     if (halfW / halfH > aspect) halfH = halfW / aspect;
     else halfW = halfH * aspect;
+
+    this.orient(yaw);
+    let centerX = live.centerX;
+    let centerY = live.centerY;
+    const zoom = this.zoom;
+    if (zoom > 1) {
+      // The free area shrinks by the zoom; its center blends toward the followed point, kept where the free area
+      // stays over the padded level (on an axis where the level is the smaller, it stays centred). The level's extent
+      // is the one framed at zoom 1: the live one at rest; mid-turn the smooth anchor blend, never narrower, so the
+      // view does not sway as the live extent pinches at the square-on yaw (it never shows more than zoom 1 would).
+      halfW /= zoom;
+      halfH /= zoom;
+      const blend = this.followBlend(zoom);
+      const p = this.followPoint.set(this.followX.value, FOLLOW_HEIGHT, this.followZ.value);
+      const dx = blend * (p.dot(this.right) - centerX);
+      const dy = blend * (p.dot(this.up) - centerY);
+      centerX += softClamp(dx, levelW - halfW, halfW * EDGE_SOFTNESS);
+      centerY += softClamp(dy, levelH - halfH, halfH * EDGE_SOFTNESS);
+    }
     // Half extents of the whole canvas at that scale.
     halfW /= freeW;
     halfH /= freeH;
 
-    this.orient(yaw);
     const cam = this.camera;
-    this.target.copy(this.right).multiplyScalar(live.centerX).addScaledVector(this.up, live.centerY);
+    this.target.copy(this.right).multiplyScalar(centerX).addScaledVector(this.up, centerY);
     cam.position.copy(this.target).addScaledVector(this.back, DISTANCE);
     cam.up.set(0, 1, 0);
     cam.lookAt(this.target);
@@ -288,6 +491,16 @@ export class CameraRig {
     cam.bottom = -halfH * (1 - t + b);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
+  }
+
+  /**
+   * How far the framing target has moved from the level's center to the followed point at `zoom`: 0 at the full
+   * view, 1 at zoomMax, smoothstepped over the share of the view already zoomed away (1 − 1/zoom).
+   */
+  private followBlend(zoom: number): number {
+    if (!(this.zoomMax > 1)) return 0;
+    const u = clamp((1 - 1 / zoom) / (1 - 1 / this.zoomMax), 0, 1);
+    return u * u * (3 - 2 * u);
   }
 
   /** Framing a view at rest (or orbiting) would use at `yaw`: never tighter than its diagonal blend. */

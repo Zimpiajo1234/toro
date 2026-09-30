@@ -17,7 +17,10 @@ export type CommandBinding =
   | 'testMode'
   /** In front of a storage rack: fork one slot up (F) / down (V) (docs/RACKS.md). */
   | 'forkUp'
-  | 'forkDown';
+  | 'forkDown'
+  /** Camera zoom: closer (+, = on US keyboards, numpad +) / further (−, numpad −). Held = continuous, a tap = one step. */
+  | 'zoomIn'
+  | 'zoomOut';
 /** Logical game keys produced by the keyboard. */
 export type KeyBinding = MoveBinding | CommandBinding;
 
@@ -48,6 +51,11 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['KeyU', 'testMode'],
   ['KeyF', 'forkUp'],
   ['KeyV', 'forkDown'],
+  // The keys right of 0 (US "- / =", "+" with Shift) and the numpad's.
+  ['Equal', 'zoomIn'],
+  ['NumpadAdd', 'zoomIn'],
+  ['Minus', 'zoomOut'],
+  ['NumpadSubtract', 'zoomOut'],
 ]);
 
 /** Fallback on the produced character (lower-cased KeyboardEvent.key) when the code is empty or unbound. */
@@ -80,8 +88,20 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['v', 'forkDown'],
 ]);
 
+/**
+ * Characters that name their binding whatever physical key types them, ahead of the code: "+" and "-" mean zoom on
+ * any layout. On Spanish, German or Italian keyboards "+" sits on BracketRight ("]" there needs AltGr, so the level
+ * jump keeps it) and "-" on Slash; on AZERTY "-" is the 6 key.
+ */
+const BY_CHARACTER = new Map<string, KeyBinding>([
+  ['+', 'zoomIn'],
+  ['-', 'zoomOut'],
+]);
+
 /** Resolve a key event to a game binding. Tolerates missing fields (autofill fires bare `keydown` Events). */
 export function resolveKey(code: string | undefined, key: string | undefined): KeyBinding | null {
+  const byCharacter = key ? BY_CHARACTER.get(key) : undefined;
+  if (byCharacter) return byCharacter;
   const byCode = code ? BY_CODE.get(code) : undefined;
   if (byCode) return byCode;
   return (key ? BY_KEY.get(key.toLowerCase()) : undefined) ?? null;
