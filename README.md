@@ -134,8 +134,8 @@ color suena a campana, por símbolo a madera y la exacta a las dos. Reglas compl
 El nuevo sistema de apilado, de momento solo en el nivel **Benchmark** (los niveles 1–3 no lo usan). Una estantería
 almacenable es un mueble de metal pizarra con vigas crema (las de madera con cajas kraft siguen siendo solo obstáculos):
 columnas de 1 a 3 **huecos** de alto que se cargan y descargan **solo por el frente**, donde hay una línea pintada en el
-suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y en los paneles laterales
-para las columnas de los extremos, así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
+suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y, en las columnas de los
+extremos, en la placa casi transparente de cada lado, que deja ver las cajas; así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
 símbolo en negrita sobre una pegatina neutra, los dos (esa caja exacta) o nada («libre»: guarda cualquier caja y nunca
 cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estantería cuando tapa la carretilla. Las pistas se combinan para que haya **un
 solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: al dejarla,

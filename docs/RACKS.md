@@ -321,7 +321,7 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
 - **Pista de controles** (`ControlHint`): fija en pantalla todo el rato que se juega, en todos los niveles (ya no se va
   tras la primera caja ni tras el primer nivel). En los niveles con estanterías (`UIState.racks`, que `Game` publica al
   cargar cada nivel) lleva debajo de la fila de mover (que acaba en «+ − zoom») una segunda fila, en el mismo panel
-  suave: «F V subir / bajar horquilla · rueda · X B mando». Dos filas ordenadas, separadas por una línea fina; en el
+  suave: «F V subir / bajar horquilla · rueda». Dos filas ordenadas, separadas por una línea fina; en el
   móvil cada fila puede partirse en dos líneas.
 - Lo que leen render y audio: `snapshot.slots` (pista `accepts`, destino `destined`, `occupiedBy`, `satisfied`),
   `hint.rack` (hueco elegido, `ready`; `null` también al coger una caja del suelo delante de una columna),

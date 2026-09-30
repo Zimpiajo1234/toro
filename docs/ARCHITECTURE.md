@@ -333,10 +333,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
 - Storage racks (docs/RACKS.md, «Render»): their own furniture (`builders/rack.ts`, `views/RackView.ts`): plain
-  low-poly slate metal (no diagonal braces), cream beams, open slots, solid end panels, a back panel per slot, and a
+  low-poly slate metal (no diagonal braces), cream beams, open slots, a faint see-through plate at each end (no solid side wall: `END_PLATE`, opacity 0.2, no depth write, so the end column's boxes show through), a back panel per slot, and a
   loading line painted on the floor in front (`Theme.rack`). The cue is an unlit, opaque sticker (`createCueMaterial`)
   in the exact box colour (or the neutral cue fill) with a bold `rack.cueInk` glyph, on both faces of the back panel
-  and on the outer face of the end panel for the end columns, so a rack reads from all four camera angles. Slot n's
+  and on the outer face of the end plate for the end columns, so a rack reads from all four camera angles. Slot n's
   floor is at `rackSlotY(n)` (`dims.ts` `RACK`, taller than a stack level). A slot (panel emissive + cue brightening)
   glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried (≈ ⅓ swap hint on an occupied,
   unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35 over the forklift or
@@ -449,13 +449,13 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar · + − zoom" (zoom last, so the row stays
   one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage racks
   (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
-  horquilla · rueda · X B mando". Trucks add nothing to it (their forks are automatic, no new keys).
+  horquilla · rueda" (the pad's X / B also step the forks but are not listed). Trucks add nothing to it (their forks are automatic, no new keys).
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
-  muted) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  muted) · B pitido (B activar pitido when off) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -497,7 +497,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
   additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
   highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
-  `showMoves` additive default true, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
+  `showMoves` additive default true, `reverseBeep` additive default true, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
