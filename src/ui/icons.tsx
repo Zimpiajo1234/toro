@@ -62,6 +62,17 @@ export function BellIcon({ className, off = false }: IconProps & { off?: boolean
   );
 }
 
+/** Small light bulb (the optional target hints, «pistas»), crossed out when `off` (the hints turned off). */
+export function BulbIcon({ className, off = false }: IconProps & { off?: boolean }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...LINE}>
+      <path d="M9.6 16.6v-1.2c0-.9-.6-1.6-1.3-2.4A5.2 5.2 0 1 1 15.7 13c-.7.8-1.3 1.5-1.3 2.4v1.2z" />
+      <path d="M10 19.6h4" />
+      {off && <path d="M5 5l14 14" />}
+    </svg>
+  );
+}
+
 /** Mouse seen from above, its wheel marked: "rueda" in the fork hint. */
 export function MouseWheelIcon({ className }: IconProps) {
   return (

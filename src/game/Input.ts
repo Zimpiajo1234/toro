@@ -33,6 +33,8 @@ export interface InputSample {
   movesPressed: boolean;
   /** Edge-triggered: B (turn the reverse beeper on / off). */
   beepPressed: boolean;
+  /** Edge-triggered: P (turn the optional target hints on / off). */
+  hintsPressed: boolean;
   /** Edge-triggered: Enter, gamepad Start (continue on completion card). */
   confirmPressed: boolean;
   /** Edge-triggered: Escape (back to the title). */
@@ -184,6 +186,7 @@ export class Input {
   private timerEdge = false;
   private movesEdge = false;
   private beepEdge = false;
+  private hintsEdge = false;
   private confirmEdge = false;
   private backEdge = false;
   private levelStepEdge: -1 | 0 | 1 = 0;
@@ -226,6 +229,7 @@ export class Input {
     timerPressed: false,
     movesPressed: false,
     beepPressed: false,
+    hintsPressed: false,
     confirmPressed: false,
     backPressed: false,
     levelStep: 0,
@@ -267,7 +271,7 @@ export class Input {
       s.keyX = s.keyY = s.stickX = s.stickY = s.zoom = s.zoomStep = 0;
       s.actionPressed = s.restartPressed = s.restartHeld = s.retryPressed = false;
       s.mutePressed = s.timerPressed = s.movesPressed = s.confirmPressed = s.backPressed = s.any = false;
-      s.beepPressed = s.testModePressed = false;
+      s.beepPressed = s.hintsPressed = s.testModePressed = false;
       s.rotateCamera = 0;
       s.levelStep = s.levelStepHeld = 0;
       s.forkStep = 0;
@@ -299,6 +303,7 @@ export class Input {
     s.timerPressed = this.timerEdge;
     s.movesPressed = this.movesEdge;
     s.beepPressed = this.beepEdge;
+    s.hintsPressed = this.hintsEdge;
     s.confirmPressed = this.confirmEdge || pad.confirmPressed;
     s.backPressed = this.backEdge;
     s.levelStep = this.levelStepEdge;
@@ -331,6 +336,7 @@ export class Input {
       s.timerPressed ||
       s.movesPressed ||
       s.beepPressed ||
+      s.hintsPressed ||
       s.confirmPressed ||
       s.backPressed ||
       s.levelStep !== 0 ||
@@ -426,6 +432,9 @@ export class Input {
         break;
       case 'beep':
         this.beepEdge = true;
+        break;
+      case 'hints':
+        this.hintsEdge = true;
         break;
       case 'confirm':
         this.confirmEdge = true;
@@ -658,6 +667,7 @@ export class Input {
     this.timerEdge = false;
     this.movesEdge = false;
     this.beepEdge = false;
+    this.hintsEdge = false;
     this.confirmEdge = false;
     this.backEdge = false;
     this.levelStepEdge = 0;

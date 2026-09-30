@@ -139,6 +139,36 @@ describe('Input keyboard', () => {
     expect(input.poll().beepPressed).toBe(false);
   });
 
+  it('reports P (the optional target hints on / off) as its own edge, once per press, never from a text field', () => {
+    const { input, down, up } = setup();
+    down({ code: 'KeyP', key: 'p' });
+    const s = input.poll();
+    expect([s.hintsPressed, s.beepPressed, s.mutePressed, s.movesPressed, s.timerPressed, s.levelStep, s.any]).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+      0,
+      true,
+    ]);
+    expect(input.poll().hintsPressed).toBe(false);
+    down({ code: 'KeyP', key: 'p', repeat: true }); // held: never a second toggle
+    expect(input.poll().hintsPressed).toBe(false);
+    up({ code: 'KeyP', key: 'p' });
+    down({ code: '', key: 'P' }); // no code (autofill-style events): the character still works
+    expect(input.poll().hintsPressed).toBe(true);
+    down({ code: 'KeyP', key: 'p', ctrlKey: true }); // Ctrl+P (print) is the browser's
+    expect(input.poll().hintsPressed).toBe(false);
+    const typed = down({ code: 'KeyP', key: 'p', target: { tagName: 'INPUT', type: 'text', getAttribute: () => null } });
+    expect(input.poll().hintsPressed).toBe(false); // typing a "p" is never a game key
+    expect(typed.defaultPrevented).toBe(false);
+    // The keys right of P stay the level jump.
+    down({ code: 'BracketRight', key: ']' });
+    const jump = input.poll();
+    expect([jump.levelStep, jump.hintsPressed]).toEqual([1, false]);
+  });
+
   it('tracks R as held until released (hold-to-restart), re-synced by repeats', () => {
     const { input, down, up, win } = setup();
     down({ code: 'KeyR', key: 'r' });

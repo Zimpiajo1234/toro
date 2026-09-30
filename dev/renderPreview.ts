@@ -1,8 +1,9 @@
 /**
  * Dev-only render preview: `npx vite` → /dev/render-preview.html (not part of the production build).
  * Keys: 1–9 niveles · B nivel grande · Q/E girar · O órbita · P recoger/dejar · Z resolver una zona ·
- *       C completar · I acción vacía · Espacio conducir/parar
+ *       C completar · I acción vacía · H pistas sí/no · Espacio conducir/parar
  * `window.preview` exposes the same actions (plus freeze/step) for scripted screenshots.
+ * The optional target hints (the game's P, off there by default) start on here, so every visual can be previewed.
  */
 import { LEVELS } from '../src/data/levels';
 import type { GameEvent, LevelData } from '../src/core/types';
@@ -18,6 +19,8 @@ const levels: LevelData[] = [...LEVELS, BIG_LEVEL];
 let sim = new PreviewSim(levels[0]);
 let orbit = false;
 let frozen = false;
+let targetHints = true;
+renderer.setTargetHints(targetHints);
 
 function load(index: number): void {
   const level = levels[Math.max(0, Math.min(levels.length - 1, index))];
@@ -63,6 +66,11 @@ const actions = {
   drive: (on: boolean) => {
     sim.driving = on;
   },
+  /** The optional target hints (the game's P): the destinations of the carried box light up. */
+  hints: (on: boolean) => {
+    targetHints = on;
+    renderer.setTargetHints(on);
+  },
   setPose: (x: number, z: number, headingDeg: number) => sim.setPose(x, z, headingDeg),
   /** Stop real-time ticking (for exact, scripted frames). */
   freeze: (on: boolean) => {
@@ -92,6 +100,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'z') actions.solveZone();
   else if (k === 'c') actions.complete();
   else if (k === 'i') actions.idle();
+  else if (k === 'h') actions.hints(!targetHints);
   else if (k === ' ') actions.drive(!sim.driving);
 });
 
@@ -115,7 +124,7 @@ function tick(now: number): void {
     `${sim.level.name} · ${sim.level.size.width}×${sim.level.size.depth}`,
     `draw calls ${s.drawCalls} · triángulos ${s.triangles} · geometrías ${s.geometries}`,
     `${Math.round(frames / hudTimer)} fps · yaw ${yaw}°`,
-    '1–9/B nivel · Q/E girar · O órbita · P recoger/dejar · Z zona · C completar · I vacío · Espacio conducir',
+    `1–9/B nivel · Q/E girar · O órbita · P recoger/dejar · Z zona · C completar · I vacío · H pistas ${targetHints ? 'sí' : 'no'} · Espacio conducir`,
   ].join('\n');
   hudTimer = 0;
   frames = 0;

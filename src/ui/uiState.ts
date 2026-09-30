@@ -64,6 +64,11 @@ export interface UIState {
   /** The reverse beeper ("tin… tin…" while backing up) is on (persisted; B toggles it, on the title and in a level). */
   reverseBeep: boolean;
   /**
+   * The optional target hints are on (persisted, off by default; P toggles them, on the title and in a level): while a
+   * box is carried, the destinations that would take it light up.
+   */
+  targetHints: boolean;
+  /**
    * 0 … 1 while R / pad Back (or, in "Modo prueba", a level-jump key) is held with work at stake (drawn as a fill
    * on the ↺ pill).
    */
@@ -106,6 +111,8 @@ export interface GameActions {
   toggleMute(): void;
   /** Turn the reverse beeper on / off (persisted; independent of mute). */
   toggleReverseBeep(): void;
+  /** Turn the optional target hints on / off (persisted; off by default). */
+  toggleHints(): void;
   toggleTimer(): void;
   /** Show / hide the optional move counter (persisted, like the timer). */
   toggleMoves(): void;
@@ -139,6 +146,7 @@ export const initialUIState: UIState = {
   result: null,
   muted: false,
   reverseBeep: true,
+  targetHints: false,
   restartHold: 0,
   levels: [],
   canContinue: false,

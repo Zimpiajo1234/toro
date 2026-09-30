@@ -242,6 +242,7 @@ describe('destined box on a floor zone (rack level)', () => {
   it('pulses a free zone clearly for a box it would take (much more than in levels without racks)', () => {
     const peakOf = (lvl: LevelData, color: string) => {
       const { snap, view } = setup(lvl);
+      view.setTargetHints(true); // the optional target hints (P)
       const zone = snap.zones.find((z) => z.accepts.symbol === 'triangle' && z.accepts.color === undefined)!;
       carry(snap, boxOf(snap, color));
       let peak = 0;

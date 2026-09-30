@@ -38,6 +38,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
 | B | Pitido de marcha atrás: sí / no (se guarda) |
+| P | Pistas: sí / no (se guarda; apagadas por defecto): mientras llevas una caja se iluminan los destinos que la aceptarían (ver **Pistas** abajo) |
 | T | Mostrar / ocultar tiempo |
 | N | Mostrar / ocultar movimientos |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
@@ -89,6 +90,16 @@ movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro,
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
 
+**Pistas** (ajuste guardado, **apagadas por defecto**; **P** las enciende y las apaga, en el título y en la partida):
+una ayuda para quien la quiera. Encendidas, mientras llevas una caja se iluminan los destinos que la aceptarían: las
+zonas que la toman, el escalón de la receta que llenaría, los huecos y niveles del camión cuya pista encaja y, si
+ninguno libre la toma, muy suave los ocupados que la aceptarían (en cada apartado de abajo). Apagadas, al coger una caja
+no se ilumina nada: se deduce. Si las cambias con una caja en la horquilla, la luz entra o se va con suavidad. Lo demás
+no cambia: el destello y el brillo suave al dejar una caja en su sitio, el tono más hondo de una caja fija, el zumbido
+de una caja equivocada, el tono de la vista previa y el marco del hueco elegido. El pie del título dice "P activar
+pistas" (con una bombilla tachada) o "P pistas"; en la partida lo confirma un aviso breve ("Pistas: sí / no"). Un
+progreso guardado antes de este ajuste carga con las pistas apagadas.
+
 También se puede jugar con mando, aunque la pantalla solo indica teclado y ratón.
 
 El mapeo de movimiento se ajusta en `gameConfig.json` → `controls`: `keyboardMapping` (teclado y cruceta) `"vehicle"` (por defecto:
@@ -129,9 +140,10 @@ Hoy solo el Benchmark lo usa (los niveles 19–24 se retiraron para rehacerlos);
 
 Cada caja lleva un color y un símbolo (● ▲ ■ ◆ ✚) en la tapa. Cada zona pide un color (almohadilla de ese color),
 un símbolo (grabado grande sobre una almohadilla neutra) o los dos (esa caja exacta). Cuenta cualquier zona que
-acepte la caja; si otra se queda sin sitio, mueve la primera: mientras llevas una caja respiran las zonas libres que
-la aceptan y, si no queda ninguna, respiran muy suave las ocupadas que la aceptarían. Sin teclas nuevas. Encajar por
-color suena a campana, por símbolo a madera y la exacta a las dos. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
+acepte la caja; si otra se queda sin sitio, mueve la primera. Con las **pistas** encendidas (P; apagadas por defecto),
+mientras llevas una caja respiran las zonas libres que la aceptan y, si no queda ninguna, respiran muy suave las
+ocupadas que la aceptarían. Sin teclas nuevas. Encajar por color suena a campana, por símbolo a madera y la exacta a
+las dos. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
 
 ## Estanterías almacenables (Benchmark, Modo prueba)
 
@@ -145,8 +157,9 @@ cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estanterí
 solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: al dejarla,
 el brillo destella, se asienta suave y la caja toma un tono más hondo de su color y queda **fija** (ya no se coge ni
 admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido suave y se puede volver a coger; nunca
-hay rojo (los huecos «libres» y el suelo no dicen nada). Mientras llevas una caja brillan con claridad los huecos y
-zonas cuya pista encaja. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
+hay rojo (los huecos «libres» y el suelo no dicen nada). Con las **pistas** encendidas (P; apagadas por defecto),
+mientras llevas una caja brillan con claridad los huecos y zonas cuya pista encaja; apagadas, solo te guían las pistas
+de los huecos. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
 
 Delante de una columna, **F / V** (o la rueda) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
@@ -168,7 +181,8 @@ puerta) y por nivel (abajo, el de la plataforma), con la pegatina de las estante
 atenúa ni sale en espejo. Los niveles del camión cuentan en el reparto único, igual que zonas y huecos: un nivel brilla
 y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar el siguiente nivel
 encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
-marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+marcha atrás. Con las **pistas** encendidas (P; apagadas por defecto), mientras llevas una caja late el siguiente
+nivel de cada columna cuya pista encaja. Sin teclas nuevas.
 Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla

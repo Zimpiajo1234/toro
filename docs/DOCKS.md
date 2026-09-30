@@ -54,9 +54,10 @@ Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se qued
    de docs/RACKS.md (regla 12) y sigue cogible: la que no es su destino (también la «trampa» que encaja en la pista) y
    la destinada puesta encima de un nivel sin cumplir (decisión: la columna está mal desde abajo; es la misma regla que
    en zonas y huecos, «el objetivo no quedó cumplido»). Nada visual: ni rojo ni texto.
-8. **Latido**: mientras llevas una caja laten, en el tono de la caja y con la fuerza de los huecos (`INVITE_*` de
-   docs/RACKS.md), los niveles **`loadable`** (el siguiente de su columna, con todo lo de debajo cumplido) cuya pista
-   encaja (`cueFits`: pista, no solución).
+8. **Latido** (pista opcional: solo con las **pistas** encendidas, P, apagadas por defecto; docs/RACKS.md): mientras
+   llevas una caja laten, en el tono de la caja y con la fuerza de los huecos (`INVITE_*` de docs/RACKS.md), los niveles
+   **`loadable`** (el siguiente de su columna, con todo lo de debajo cumplido) cuya pista encaja (`cueFits`: pista, no
+   solución). Apagadas, el cartel no se ilumina al coger una caja; el destello y el brillo de un nivel cumplido, sí.
 9. **Acierto**: como en un hueco (docs/RACKS.md, regla 10): destello del objetivo, pequeño efecto de acierto, la campana
    según la pista, brillo suave en reposo y la caja pasa despacio a su **tono hondo**.
 10. **Niveles con camiones** siguen todas las reglas de «niveles con estanterías» de docs/RACKS.md (zonas de una sola

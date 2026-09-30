@@ -670,6 +670,7 @@ describe('truck levels light like rack slots, on the sign', () => {
 
   it('while carrying, only the next level of a column whose cue fits pulses clearly, in the tone of the box', () => {
     const { snap, view } = setup();
+    view.setTargetHints(true); // the optional target hints (P)
     const blue = boxOf(snap, 'blue', 'triangle');
     carry(snap, blue);
     step(view, snap, 1);
@@ -736,6 +737,7 @@ a = caja azul ▲        b = caja azul ■
 T = camión muelle norte: azul
 `);
     const { snap, view } = setup(TRAP);
+    view.setTargetHints(true); // the optional target hints (P): the level pulses too
     const slot = slotOf(snap, 't1:0:0');
     const trap = boxOf(snap, 'blue', 'square');
     expect(cueFits(slot, trap)).toBe(true);

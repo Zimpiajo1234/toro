@@ -10,6 +10,12 @@ Decisiones (2026-09-30), **solo en niveles con estanterías**: la caja destinada
 10–11), una caja en un objetivo que no es su destino da un **zumbido suave** (regla 12) y, mientras llevas una caja, los
 objetivos cuya pista encaja **brillan mucho más** que antes (regla 5). Los niveles sin estanterías no cambian.
 
+Decisión (2026-09-30, «los hint cuando coges una caja, hagamos que sea desactivable, que se use como pista si el user
+quiere»): el latido de los objetivos mientras llevas una caja (regla 5) es una **pista opcional**: solo con las
+**pistas** encendidas (**P**, ajuste guardado, **apagadas por defecto**). Apagadas, al coger una caja no se ilumina
+nada y el reparto se deduce de las pistas de los huecos. El destello, el brillo suave, la caja fija, el zumbido, el tono
+de la vista previa y el marco del hueco elegido no cambian.
+
 Decisión (2026-09-30, muelles de carga, docs/DOCKS.md): un nivel con **camiones** sigue todas las reglas de «niveles con
 estanterías» de este documento, tenga o no estanterías. En el código la puerta es `usesTargetRules(level)`
 (`core/docks.ts`: estanterías o camiones); donde aquí se dice «con estanterías», léase «con estanterías o camiones».
@@ -36,9 +42,10 @@ color entero, nunca atenuadas ni en espejo, en los dos extremos (ver «Render»)
    combinan para que exista exactamente un reparto completo (cajas idénticas son intercambiables). Lo comprueba
    `validateLevel`.
 5. **Solo brilla con su caja**: un objetivo solo se cumple (brilla) con su caja destinada; otra caja que encaje en la
-   pista lo deja neutro (nunca rojo ni texto; solo el zumbido de la regla 12). Al llevar una caja **laten con claridad
-   los objetivos cuya pista encaja** (pista, no solución: `cueFits` frente a `isDestined`), huecos y zonas, en el tono de
-   la caja: un pulso unas 4 veces más fuerte que la respiración suave de antes, al mismo ritmo tranquilo.
+   pista lo deja neutro (nunca rojo ni texto; solo el zumbido de la regla 12). Con las **pistas** encendidas (P;
+   apagadas por defecto), al llevar una caja **laten con claridad los objetivos cuya pista encaja** (pista, no
+   solución: `cueFits` frente a `isDestined`), huecos y zonas, en el tono de la caja: un pulso unas 4 veces más fuerte
+   que la respiración suave de antes, al mismo ritmo tranquilo.
 6. **Huecos independientes**: se llenan y vacían en cualquier orden (no hay que llenar el de abajo primero).
 7. **Altura por huecos**: delante de una estantería, **F sube / V baja** un hueco, igual que la **rueda del ratón** (un
    paso de rueda = un hueco) y el mando (**X sube / B baja**). Fuera de las estanterías la horquilla es automática, como
@@ -242,7 +249,8 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
   una pista ni el paso de la carga). Brillo **solo** con `slot.satisfied`: el destello y el reposo de
   `views/success.ts` (abajo). El panel brilla con su emisivo y la pegatina aclara su propio color (× 1 + 1,2 · brillo,
   nunca por debajo de × 1 ni por encima del tope `CUE_GLOW_CAP` 0,45: siempre un pastel de su color, nunca blanco).
-  Mientras llevas una caja **laten** los huecos vacíos cuya pista encaja (`cueFits`): brillo `INVITE_BASE` 0,4 ±
+  Con las pistas encendidas (`LevelView.setTargetHints`; apagadas, nada de lo que sigue en este párrafo se enciende),
+  mientras llevas una caja **laten** los huecos vacíos cuya pista encaja (`cueFits`): brillo `INVITE_BASE` 0,4 ±
   `INVITE_PULSE` 0,16 (0,24–0,56; antes 0,03–0,17) a `INVITE_RATE` 2,3, y la banda a 0,6 ± 0,25 de opacidad, todo en
   el tono de la caja llevada (`SlotTone`: banda = color de la caja, panel = brillo de zona de ese color), así una pista
   solo de símbolo no queda crema sobre crema. Si ningún objetivo libre la acepta, los ocupados que encajan y no brillan
@@ -263,9 +271,10 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
   nivelada. **Cajas** (`BoxView`): en reposo a `rackSlotY(level)`; al cogerlas de un hueco, salto y elevación de
   objetivo más pequeños (no tocan la viga de encima); la caída dura `DROP_GLIDE_SEC` (= `box.dropLandSec`, lo que
   espera el audio). Dejar en un hueco no hunde nada debajo (cada hueco tiene su viga).
-- **Zonas con estanterías** (`ZoneView`, `rack`): la almohadilla y su halo laten como los huecos (`INVITE_*`, halo hasta
-  0,85) en el tono de la caja llevada (una zona «cualquier ▲» se enciende del color de la caja, no crema sobre crema) y,
-  cumplida, brillan en el tono de su caja destinada. Sin estanterías, la respiración suave de siempre (0,1 ± 0,07).
+- **Zonas con estanterías** (`ZoneView`, `rack`): con las pistas, la almohadilla y su halo laten como los huecos
+  (`INVITE_*`, halo hasta 0,85) en el tono de la caja llevada (una zona «cualquier ▲» se enciende del color de la caja,
+  no crema sobre crema) y, cumplida, brillan en el tono de su caja destinada. Sin estanterías, la respiración suave de
+  siempre (0,1 ± 0,07), también solo con las pistas.
 - **Acierto y caja fija** (`views/success.ts`, solo con estanterías; `LevelView` lo dispara cuando una zona o un hueco
   pasa a `satisfied`, nunca al cargar). Desde que la caja aterriza (`DROP_GLIDE_SEC`):
   1. el objetivo **destella** a `FLASH_PEAK` 0,8 (subida rápida, `FLASH_RISE_SHARE` 14 %) y baja con calma al reposo

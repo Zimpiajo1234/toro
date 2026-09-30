@@ -33,10 +33,11 @@ disposiciones escritas en el propio test: «La muestra» (el antiguo 23) y el an
 - Las cajas muestran su símbolo (`BoxState.symbol`, nunca derivado del color en el render) más grande (0,6 de la
   tapa frente a 0,4) y en tinta más honda del color (`BoxPalette.ink`) cuando el nivel usa símbolos. Sobre una zona
   que la acepta, la caja gira hasta alinear su símbolo, como antes.
-- Mientras llevas una caja, **respiran** las zonas libres que la aceptan (y el contorno de suelta toma el tono de
-  la caja cuando caería en una de ellas); si no queda ninguna libre, respiran muy suave (≈ ⅓) las ocupadas que la
-  aceptarían (pista de «intercambia»), nunca en rojo. La pista solo existe en niveles con símbolos: los clásicos se
-  ven exactamente como antes.
+- Mientras llevas una caja, con las **pistas** encendidas (P; apagadas por defecto), **respiran** las zonas libres que
+  la aceptan; si no queda ninguna libre, respiran muy suave (≈ ⅓) las ocupadas que la aceptarían (pista de
+  «intercambia»), nunca en rojo. La pista de «intercambia» solo existe en niveles con símbolos: los clásicos se ven
+  exactamente como antes. El contorno de suelta toma siempre (con pistas o sin ellas) el tono de la caja cuando caería
+  en una zona que la acepta.
 - Una caja apoyada sobre una zona tapa su grabado (el fondo de color sigue asomando alrededor): por eso ningún nivel
   empieza con una caja sobre una zona de símbolo que no la acepte.
 
@@ -72,8 +73,8 @@ de ≥ 2 casillas donde se gira con carga, nada tapado por estanterías.
 - Único reparto completo: azul ■ → exacta · azul ● → «cualquier azul» · azul ▲ y menta ▲ → las dos «▲».
 - Trampa amable, a la vista: la carretilla empieza frente al azul ▲ y «cualquier azul» está recto detrás de él (basta
   con mantener W). Si lo dejas ahí, suena y brilla como cualquier acierto; al llevar el azul ● no respira ninguna zona
-  libre y solo «cualquier azul» respira muy suave → lo mueves al ▲ libre y listo. (Dejar el azul ■ en «cualquier azul»
-  es la misma trampa, con la misma salida.)
+  libre y (con las pistas) solo «cualquier azul» respira muy suave → lo mueves al ▲ libre y listo. (Dejar el azul ■ en
+  «cualquier azul» es la misma trampa, con la misma salida.)
 
 ## Técnica
 - `core/types`: `SYMBOL_IDS` / `SymbolId` (= los glifos) + `DEFAULT_SYMBOL` (color → símbolo); `LevelBox.symbol?`;

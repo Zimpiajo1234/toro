@@ -220,6 +220,11 @@ export class LevelView {
   private readonly boxHeight: number;
   private readonly glassMaterial: MeshBasicMaterial;
   private readonly preview: DropPreview;
+  /**
+   * The optional target hints (setTargetHints; off by default): only with them on do the destinations light up for the
+   * carried box (see update()).
+   */
+  private targetHints = false;
 
   constructor(snapshot: GameSnapshot, theme: Theme, config: GameConfig, cameraYaw: number) {
     const level = snapshot.level;
@@ -304,6 +309,17 @@ export class LevelView {
     this.update(snapshot, 0, 0, cameraYaw, 0);
   }
 
+  /**
+   * The optional target hints (Settings.targetHints, P): on, the destinations that would take the carried box light up
+   * (zones that take it, the recipe step it would fill, fitting empty rack slots, loadable truck levels whose cue fits,
+   * and the faint swap hint); off, nothing lights up for it (pure deduction). Toggled while a box is carried, that light
+   * eases in or out with the views' own smoothing. Nothing else depends on it: the success flash and soft glow, the
+   * locked box tone, the drop preview's tone and the slot marker stay as they are.
+   */
+  setTargetHints(on: boolean): void {
+    this.targetHints = on;
+  }
+
   update(snapshot: GameSnapshot, dt: number, time: number, cameraYaw: number, warmth: number): void {
     const f = snapshot.forklift;
     const hint = snapshot.hint;
@@ -321,19 +337,21 @@ export class LevelView {
       view.sync(box, this.forklift.anchor, box.id === target, dt);
     }
 
-    // Teach the goal without words: the zones that would take the carried box breathe, and so do the empty rack slots
-    // whose cue fits it (the cue, never the solution: only the destined box lights them). In a sorting level or one
-    // with racks, when no free target takes it, the occupied ones that accept it breathe very faintly instead: the box
-    // resting there could move on (a swap hint; with racks never on a target that already glows).
-    // A truck level invites only as the next level of its column with everything below it right (`loadable`, docs/DOCKS.md).
+    // Teach the goal without words (the optional target hints, P): the zones that would take the carried box breathe,
+    // and so do the empty rack slots whose cue fits it (the cue, never the solution: only the destined box lights them).
+    // In a sorting level or one with racks, when no free target takes it, the occupied ones that accept it breathe very
+    // faintly instead: the box resting there could move on (a swap hint; with racks never on a target that already
+    // glows). A truck level invites only as the next level of its column with everything below it right (`loadable`,
+    // docs/DOCKS.md). With the hints off nothing invites (`hinted` null): each light eases out on its own.
     const zones = snapshot.zones;
     const slots = snapshot.slots;
     const truckSlots = snapshot.truckSlots;
+    const hinted = this.targetHints ? carried : null;
     let anyTakes = false;
-    if (carried) {
-      for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], carried);
-      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], carried);
-      if (truckSlots) for (let i = 0; i < truckSlots.length && !anyTakes; i++) anyTakes = truckSlots[i].loadable && cueFits(truckSlots[i], carried);
+    if (hinted) {
+      for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], hinted);
+      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], hinted);
+      if (truckSlots) for (let i = 0; i < truckSlots.length && !anyTakes; i++) anyTakes = truckSlots[i].loadable && cueFits(truckSlots[i], hinted);
     }
     const swapHint = (this.sorting || this.targetRules) && !anyTakes;
     // With racks or trucks the invitation is a strong pulse (views/success); the swap hint keeps its quiet strength.
@@ -342,9 +360,9 @@ export class LevelView {
     const slotTone = carried ? (this.slotTones.get(carried.color) ?? null) : null;
     for (let i = 0; i < zones.length; i++) {
       const zone = zones[i];
-      const takes = carried !== null && takesNext(zone, carried);
+      const takes = hinted !== null && takesNext(zone, hinted);
       const swap =
-        carried !== null && swapHint && zone.stack.length > 0 && !(this.targetRules && zone.satisfied) && accepts(zone, carried);
+        hinted !== null && swapHint && zone.stack.length > 0 && !(this.targetRules && zone.satisfied) && accepts(zone, hinted);
       this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? swapInvite : 0, takes, time, dt, glowTint);
       if (this.targetRules) {
         if (zone.satisfied && this.zoneWasSatisfied[i] === false) this.playBurstOnZone(zone);
@@ -359,7 +377,7 @@ export class LevelView {
 
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
-      const fits = carried !== null && cueFits(slot, carried);
+      const fits = hinted !== null && cueFits(slot, hinted);
       const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? swapInvite : 0;
       this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, slotTone, time, dt);
       if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstInSlot(slot, cameraYaw);
@@ -368,7 +386,7 @@ export class LevelView {
     if (truckSlots) {
       for (let i = 0; i < truckSlots.length; i++) {
         const ts = truckSlots[i];
-        const fits = carried !== null && cueFits(ts, carried);
+        const fits = hinted !== null && cueFits(ts, hinted);
         const invite = !fits ? 0 : ts.loadable ? 1 : swapHint && ts.occupiedBy !== null && !ts.satisfied ? swapInvite : 0;
         this.truckOfSlot.get(ts.id)?.syncLevel(ts.id, ts.satisfied, invite, slotTone, time, dt);
         if (ts.satisfied && this.truckWasSatisfied[i] === false) this.playBurstOnTruck(ts, cameraYaw);

@@ -184,8 +184,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
   `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
   occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
-  next level of its column with everything below satisfied (the only one that pulses). A box on a satisfied level is
-  locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
+  next level of its column with everything below satisfied (the only one that pulses, with the target hints on). A box
+  on a satisfied level is locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
   (`wrongTarget`) and stays pickable. A full column faced up close drops nothing (`actionIdle`, never the floor beside
   it). Optional fields only in truck levels: `BoxState.truckSlotId`, `hint.dropTruckSlotId`,
   `boxPicked.fromTruckSlotId`, `boxDropped.truckSlotId` (`zoneId: null`, `recipeLength` 1), `zoneReleased.truckSlotId`
@@ -318,11 +318,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   to a clean ghost (~0.35 opacity, depth prepass) whenever it stands in front of the forklift, a box or a zone.
 - Zones: rounded-square pad slightly raised (≈0.02), `fill` color, inset border in `border` color like floor
   tape, tone-on-tone glyph (`theme.glyphs`; the diamond is a rhombus, never a rotated square). Satisfied → emissive `glow` eases up (≈0.35) then settles (≈0.15),
-  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones that would take it
-  (`takesNext`; classic: free zones of that color) breathe gently (slow sine on emissive), teaching the goal without
-  text. Sorting levels (`usesSymbols`): pad colour = colour criterion (`theme.neutralZone` cream when none), the
-  symbol criterion is engraved large in the middle (a real recess, floor in `ZonePalette.engrave`), no glyph otherwise;
-  when no free zone takes the carried box, the occupied zones that accept it breathe at ≈ ⅓ (a swap hint).
+  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, with the target hints on (below), zones
+  that would take it (`takesNext`; classic: free zones of that color) breathe gently (slow sine on emissive), teaching
+  the goal without text. Sorting levels (`usesSymbols`): pad colour = colour criterion (`theme.neutralZone` cream when
+  none), the symbol criterion is engraved large in the middle (a real recess, floor in `ZonePalette.engrave`), no glyph
+  otherwise; when no free zone takes the carried box, the occupied zones that accept it breathe at ≈ ⅓ (a swap hint;
+  target hints on).
 - Boxes: low-poly beveled cube (`box.size`), `base` color, tape strip across the lid in `tape`, the box's own
   symbol on the lid (small tone-on-tone glyph; in sorting levels printed 1.5× larger in `BoxPalette.ink`). Pick →
   small hop then ride on forks (visual position damped, never teleports). Drop → eased glide to
@@ -342,8 +343,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   a box height, no squash, no seam). The carriage adds `forkHeight · boxHeight` (eased in the view) and an inner
   mast stage appears only while raised. A stack zone draws its recipe as a mini stack of colored steps with cream
   spacers on a cream plinth, at two opposite pad corners (one glow-material mesh per step); the step the carried
-  box would fill breathes with the zone. The drop outline floats on the stack top. A completed stack glows box by
-  box bottom → top (stacked boxes glow without the bob). A zone un-completed by a box stacked on top keeps its glow
+  box would fill breathes with the zone (target hints on). The drop outline floats on the stack top. A completed stack
+  glows box by box bottom → top (stacked boxes glow without the bob). A zone un-completed by a box stacked on top keeps its glow
   until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
@@ -353,9 +354,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   in the exact box colour (or the neutral cue fill) with a bold `rack.cueInk` glyph, on both faces of the back panel
   and on the outer face of the end plate for the end columns, so a rack reads from all four camera angles. Slot n's
   floor is at `rackSlotY(n)` (`dims.ts` `RACK`, taller than a stack level). A slot (panel emissive + cue brightening)
-  glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried (≈ ⅓ swap hint on an occupied,
-  unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35 over the forklift or
-  its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
+  glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried, with the target hints on (≈ ⅓ swap
+  hint on an occupied, unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35
+  over the forklift or its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
   in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
   brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
   slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
@@ -379,9 +380,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   softly while its wall is sunk; its stickers never fade. What a standing dock wall hides (a box on the bed, the part of
   a load through the door) never ghosts a shelf, a rack or a stacked box (`LevelView.clipToRoom`). A truck level lights
   exactly like a rack slot (`SlotLight` on its sign cell: flash, soft glow, glow band round its sticker, `SIGN_GLOW`),
-  with the success burst and the locked box tone on its box on the bed; while carrying, only a `loadable` level whose
-  cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there. Levels with trucks and
-  no racks switch on the same target feedback (`usesTargetRules`); without trucks nothing changes.
+  with the success burst and the locked box tone on its box on the bed; while carrying (target hints on), only a
+  `loadable` level whose cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there
+  (hints or not). Levels with trucks and no racks switch on the same target feedback (`usesTargetRules`); without
+  trucks nothing changes.
+- Target hints (`Settings.targetHints`, persisted, additive, default off; P on the title and while playing,
+  `Game.toggleHints` → `GameRenderer.setTargetHints` → `LevelView.setTargetHints`, set at mount and on every toggle,
+  handed to each level built afterwards): the one switch for the light that answers a carried box. On, the zones that
+  would take it breathe (the strong pulse and halo in levels with racks or trucks), the recipe step it would fill
+  breathes, the empty rack slots and the `loadable` truck levels whose cue fits pulse (band and cue with them), and the
+  faint swap hint shows (`LevelView.update`: `hinted` = the carried box only with the hints on). Off, nothing lights up
+  on a pick-up: pure deduction from the cues. Toggled mid-carry, the light eases in or out with the views' own
+  smoothing (λ 3, as on a pick-up or a drop; never a pop). Never gated: the success flash, burst and soft glow, the
+  locked box tone, the wrong-box buzz (audio), the pick target's lift, the drop preview's tone and the slot marker
+  (`LevelView.hints.test.ts`).
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 
@@ -470,7 +482,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
-  muted) · B pitido (B activar pitido when off) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  muted) · B pitido (B activar pitido when off) · P activar pistas (the default, with a crossed bulb like the other
+  "activar" wordings; P pistas when on) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -489,7 +502,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Benchmark", "Tiempo" only, the line "Modo prueba · sin récord", primary "Volver al inicio", quiet "Repetir". Behind
   the title (left with Esc) the caption reads "Benchmark · sin récord" and no level dot is marked current. The app
   shell takes the theme from the Benchmark while it is on screen.
-- Mute toggles are confirmed by a polite live region and, in a level, a brief top-center pill (~1.6 s).
+- Mute, reverse-beep and target-hints toggles (M, B, P) are confirmed by a polite live region and, in a level, a brief
+  top-center pill (~1.6 s; `ui/SoundNotice.tsx`): "Sonido activado / desactivado", "Pitido de marcha atrás: sí / no",
+  "Pistas: sí / no", with a speaker, a bell or a bulb, crossed out when that setting is now off.
 - Completion card: compact (≤ 420 px) and anchored at the bottom center so the tidied warehouse stays in view;
   rises in, settles down on exit. Positive `result.message` as heading, one row of at most two tiles, one per
   metric, each with the level's record on a small soft line under its value: "Tiempo 0:42.3" over "mejor 0:38.9"
@@ -512,7 +527,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
   additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
   highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
-  `showMoves` additive default true, `reverseBeep` additive default true, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
+  `showMoves` additive default true, `reverseBeep` additive default true, `targetHints` additive default false,
+  `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
@@ -546,7 +562,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

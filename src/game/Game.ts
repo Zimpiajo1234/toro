@@ -126,6 +126,7 @@ export class Game implements GameActions {
     this.toTitle = this.toTitle.bind(this);
     this.toggleMute = this.toggleMute.bind(this);
     this.toggleReverseBeep = this.toggleReverseBeep.bind(this);
+    this.toggleHints = this.toggleHints.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleMoves = this.toggleMoves.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
@@ -162,6 +163,7 @@ export class Game implements GameActions {
     const settings = progress.getSettings();
     audio.setMuted(settings.muted);
     audio.setReverseBeep(settings.reverseBeep);
+    renderer.setTargetHints(settings.targetHints);
     const index = resolveStartLevel(undefined, this.savedProgress(rt), LEVELS.length);
     const level = this.loadLevel(rt, index);
     renderer.setIdleOrbit(true);
@@ -179,6 +181,7 @@ export class Game implements GameActions {
       showMoves: settings.showMoves,
       muted: settings.muted,
       reverseBeep: settings.reverseBeep,
+      targetHints: settings.targetHints,
       testMode: settings.testMode,
       benchmark: false,
       ...this.progressSummary(rt, settings.testMode),
@@ -357,6 +360,21 @@ export class Game implements GameActions {
     rt.audio.setReverseBeep(reverseBeep);
     rt.progress.setSettings({ reverseBeep });
     this.store.set({ reverseBeep });
+  }
+
+  /**
+   * The optional target hints (P), persisted like the timer, off by default: on, the destinations that would take the
+   * carried box light up (the renderer eases them in / out, even mid-carry). The overlay confirms it (a brief pill in a
+   * level, the footer wording on the title).
+   */
+  toggleHints(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const targetHints = !this.store.get().targetHints;
+    rt.renderer.setTargetHints(targetHints);
+    rt.progress.setSettings({ targetHints });
+    this.store.set({ targetHints });
   }
 
   toggleTimer(): void {
@@ -539,6 +557,7 @@ export class Game implements GameActions {
   private handleCommands(rt: Runtime, input: InputSample, confirm: boolean, dt: number): void {
     if (input.mutePressed) this.toggleMute();
     if (input.beepPressed) this.toggleReverseBeep();
+    if (input.hintsPressed) this.toggleHints();
     if (input.timerPressed) this.toggleTimer();
     if (input.movesPressed) this.toggleMoves();
     const testMode = this.store.get().testMode;

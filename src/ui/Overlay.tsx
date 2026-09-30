@@ -21,7 +21,7 @@ function reserveMode(screen: Screen): ReserveMode {
 
 /**
  * Root of the DOM overlay drawn above the canvas: title, HUD (level · time · restart), completion card,
- * plus the always-mounted sound notice (live region + a brief pill when M or B is pressed in a level).
+ * plus the always-mounted sound notice (live region + a brief pill when M, B or P is pressed in a level).
  * The root is pointer-transparent; only buttons take pointer input, so the canvas stays usable.
  * Each part subscribes to just the fields it shows, so the 10 Hz timer only re-renders the clock.
  */
