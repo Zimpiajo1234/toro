@@ -33,7 +33,7 @@ import {
   type Sortable,
 } from '../core/sorting';
 import { frontCellOf, rackCellOf } from '../core/racks';
-import { truckCellOf, truckFrontOf } from '../core/docks';
+import { dockRailsOf, truckCellOf, truckFrontOf } from '../core/docks';
 import { GAME_CONFIG } from '../config';
 
 /**
@@ -244,6 +244,20 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
         fail(`racks[${i}] column ${j} has no room in front: cell ${front.x},${front.z} is a wall, a shelf, a plant or another rack`);
     });
   });
+  // Every dock door has a guard rail at each end of its run (core/docks dockRailsOf, never written in a .level), and
+  // the cell just past that end along the wall, behind the rail, holds a static obstacle (a plant, a shelf or a rack);
+  // a run reaching a corner of the room has no rail there. A rack in that cell never faces a door cell: the rail would
+  // stand right across its front.
+  for (const rail of dockRailsOf({ trucks, size: { width, depth } })) {
+    const k = cellKey(rail.side);
+    const other = doorCells.get(k);
+    if (other)
+      fail(`trucks[${rail.truckIndex}] needs a static obstacle beside its dock door at ${k} for its guard rail, but that is the dock door of trucks[${other[0]}]: leave a cell with an obstacle between two dock doors`);
+    if (!blocked.has(k)) fail(`trucks[${rail.truckIndex}] needs a static obstacle beside its dock door at ${k} (a plant, a shelf or a rack): its guard rail stands there`);
+    const rack = rackCells.get(k);
+    const faced = rack ? doorCells.get(cellKey(frontCellOf(racks[rack[0]], rack[1]))) : undefined;
+    if (rack && faced) fail(`racks[${rack[0]}] column ${rack[1]} is loaded from the dock door of trucks[${faced[0]}], across its guard rail`);
+  }
   /** The dock door a cell is in front of, as messages name it, or null. */
   const doorAt = (k: string): string | null => {
     const at = doorCells.get(k);

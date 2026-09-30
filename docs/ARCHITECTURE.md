@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, the doors' guard rails `dockRailsOf`, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -180,7 +180,15 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (the body in line with that door cell; `TRUCK_FACING`: south for a north dock, east for a west one; ≤ 30°, held to
   45°) with the fork point at least `TRUCK_REACH` (0.3) past the wall line; forks automatic, F / V do nothing; while
   the load is in the door the heading is locked (straight in, straight out, like a rack slot) and nothing drops short
-  of the bed (`RackAim.doorway`).
+  of the bed (`RackAim.doorway`). Each door has a low guard rail at each end of its run, placed by itself
+  (`core/docks` `dockRailsOf`, never in the `.level`): on the door's jamb line (`DOOR_JAMB`, flush with the opening, one
+  straight chute), from the wall's inner face one cell in (never into the row behind), `DOCK_RAIL.thickness` thick
+  outward, a static obstacle for the body, the load and the fork point (`CollisionWorld` statics, `railRect`; none
+  without trucks, so those levels are unchanged). The map cell behind each rail along the wall (its side cell) must hold
+  a static obstacle, usually a potted plant (validateLevel; not at a room corner, never another door, a rack there never
+  faces the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°,
+  past the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design
+  decision; `GameState.docksDriving.test.ts` measures it).
   Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
   `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
   occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
@@ -243,7 +251,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   be free floor (validateLevel checks the front cell; the solvability tests catch the rest). Trucks (docs/DOCKS.md) too:
   their door cells start empty (validateLevel) and the cell behind each must stay free floor, so keep zones off the door
   row and the row behind it (a box locked there would close that column: a «callejón»). A dock door never shares a
-  wall cell with a window.
+  wall cell with a window, and the cell beside each end of its run (behind its guard rail) is a plant or another static
+  obstacle: two doors are never side by side.
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (a level whose boxes start on wrong zones needs spare space to
   reorganize).
@@ -380,9 +389,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the wall's outer face (`TRUCK`, `buildTruckBody`): a low open flatbed level with the floor (`DOCK.bedTop`: boxes rest
   at floor stack heights), low drop sides only at the ends of the door run and a headboard by the cab (nothing over or
   between the bed columns: no posts, rails or dividers), the cab facing away, wheels and a driveway a step down; a flat
-  dock plate fills the door (`DOCK_PLATE`, `buildDockPlate`, under the drop preview). It is static: low enough never to
-  hide the warehouse, it never sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state
-  positions) and it is always framed (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
+  dock plate fills the door (`DOCK_PLATE`, `buildDockPlate`, under the drop preview); its guard rails (`RAIL`,
+  `buildDockRails`, `Theme.truck.rail` a soft orange and `railCap` cream: two posts and two bars each, 0.53 high, within
+  the footprint `dockRailsOf` gives the logic) are static props in the room, one mesh per truck in its group, casting
+  and taking shadows, never sinking or ghosting. The truck is static: low enough never to hide the warehouse, it never
+  sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state positions) and it is always framed
+  (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
   on the wall's inner face above the door (`DOCK_SIGN`, `buildSignFrame`, `buildSignPanel`, `buildSignCue`,
   `SIGN_CUE`): one cell per bed column, right above its door cell, and per level, bottom row = level 0 (the upper cell
   of a shorter column is a plain panel; with 2 levels the sign rises ≈ 0.3 over the wall cap), each with its unlit rack

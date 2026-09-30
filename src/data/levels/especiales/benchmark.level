@@ -2,7 +2,7 @@
 id: benchmark
 limit: 2
 ventanas: norte 8-9, oeste 2-4
-dificultad: movimientos=14, extra>=2, bloqueos>=4, trampas>=12, repartos=1, huecos=12, camion=3, libre<=80
+dificultad: movimientos=14, extra>=2, bloqueos>=4, trampas>=12, repartos=1, huecos=12, camion=3, libre<=78
 nota: Modo prueba, fuera de la progresión: todo el juego de estanterías y del muelle de carga en un almacén pequeño.
 nota: Único reparto, por deducción: 1) las pistas exactas: azul ■ a su zona, lavanda ✚ arriba en S y amarillo ✚ al camión.
 nota: 2) El «■» del camión ya solo puede ser del amarillo ■, y el azul ✚ solo cabe en el «azul» del camión.
@@ -11,7 +11,7 @@ nota: 4) El hueco «●» ya solo puede ser del coral ●, así que la zona cora
 nota: 5) El hueco «◆» se queda el menta ◆, el hueco «menta» el menta ▲ y la zona ▲ el azul ▲.
 nota: Trampa: el menta ◆ empieza en el hueco «menta»: encaja en la pista pero no brilla (el suyo es el «◆» de encima).
 nota: Hueco equivocado: el menta ▲ empieza en el «◆»; se cambian los dos aparcando uno en el hueco libre de arriba.
-nota: Muelle: el camión T espera fuera, pegado a la puerta norte (a la izquierda de R). Se carga desde las casillas de la puerta, mirando al muro, como una pila y hasta 2 de alto: columna 1 «azul» y encima «■», columna 2 «amarillo ✚».
+nota: Muelle: el camión T espera fuera, pegado a la puerta norte (a la izquierda de R). A cada lado de la puerta, una barandilla naranja baja (sale sola) con una planta detrás, en (0,0) y (3,0): al camión se llega de frente, desde la fila de detrás. Se carga desde las casillas de la puerta, mirando al muro, como una pila y hasta 2 de alto: columna 1 «azul» y encima «■», columna 2 «amarillo ✚».
 nota: Sus pistas van en el cartel enmarcado sobre la puerta: una casilla por columna y por nivel (abajo, el de la plataforma).
 nota: Carga equivocada: el amarillo ■ empieza abajo en la columna 1; se aparca, entra el azul ✚ (queda fijo) y el amarillo ■ va encima de él.
 nota: Trampas del camión: el azul ▲ y el azul ■ encajan en «azul» (y el azul ■ en «■»), pero no brillan: zumban y se pueden sacar.
@@ -22,7 +22,7 @@ nota: Poco suelo: entre R y S solo hay las filas para cargarlas (su frente y la 
 nota: La zona ▲ queda fuera de las filas de carga del camión (la de la puerta y la de detrás): su caja fija no le cierra el paso.
 
   01234567890
-0 .TT.RR.#..p
+0 pTTpRR.#..p
 1 ......f....
 2 .........2.
 3 ..1a....b..

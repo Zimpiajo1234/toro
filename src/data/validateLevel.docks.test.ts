@@ -6,14 +6,25 @@ import { validateLevel } from './validateLevel';
 /*
  * validateLevel with loading docks (docs/DOCKS.md «Validación»): a truck parked outside a north / west dock door, its
  * door cells a run along that wall inside the map (row 0 / column 0), 1 to 3 columns of 1 to 2 levels; the door cells
- * are floor free of furniture and other doors, and nothing starts on them; boxes loaded at the start rest on their bed
- * cell, just outside the map; heights within the stack limit, the unique assignment including the truck levels, never
- * starting solved. Raw objects (as a JSON level would give), and the Spanish placement of a few through parseLevel.
+ * are floor free of furniture and other doors, and nothing starts on them; beside each end of the run (its side cell,
+ * behind the door's guard rail) a static obstacle, unless the run reaches a corner of the room; boxes loaded at the
+ * start rest on their bed cell, just outside the map; heights within the stack limit, the unique assignment including
+ * the truck levels, never starting solved. Raw objects (as a JSON level would give), and the Spanish placement of a few
+ * through parseLevel.
  */
 
 type Raw = Record<string, unknown>;
 
-/** A 7×4 warehouse: a two-column truck at a north dock door (door cells x = 2, 3), three boxes for its three levels. */
+/** The plants beside the base door, behind its guard rails: its side cells (1,0) and (4,0). */
+const SIDES = [
+  { x: 1, z: 0 },
+  { x: 4, z: 0 },
+];
+
+/**
+ * A 7×4 warehouse: a two-column truck at a north dock door (door cells x = 2, 3) with a plant beside each end, three
+ * boxes for its three levels.
+ */
 function base(): Raw {
   return {
     id: 'muelle',
@@ -29,13 +40,17 @@ function base(): Raw {
     zones: [],
     shelves: [],
     trucks: [{ wall: 'north', x: 2, z: 0, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] }],
-    decor: { plants: [], windows: [] },
+    decor: { plants: SIDES, windows: [] },
     stackLimit: 2,
   };
 }
 
 const truck = (raw: Raw) => (raw.trucks as Raw[])[0];
 const boxes = (raw: Raw) => raw.boxes as Raw[];
+/** Replace the level's plants (its windows kept). */
+const plants = (raw: Raw, cells: readonly { x: number; z: number }[]) => {
+  raw.decor = { ...(raw.decor as Raw), plants: cells };
+};
 const fails = (raw: Raw) => {
   try {
     validateLevel(raw, 'x');
@@ -92,6 +107,7 @@ describe('validateLevel: trucks', () => {
     const three = base();
     truck(three).columns = [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }], [{ color: 'lavender' }]];
     boxes(three).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    plants(three, [SIDES[0], { x: 5, z: 0 }]);
     expect(fails(three)).toBeNull();
     const wide = base();
     truck(wide).columns = [...(truck(three).columns as unknown[]), [{ color: 'yellow' }]];
@@ -100,15 +116,17 @@ describe('validateLevel: trucks', () => {
     const single = base();
     Object.assign(truck(single), { columns: [[{ color: 'blue' }, { symbol: 'triangle' }]] });
     boxes(single).splice(1, 1);
+    plants(single, [SIDES[0], { x: 3, z: 0 }]);
     expect(fails(single)).toBeNull();
   });
 
-  it('its door cells are floor, free of furniture and other doors; corners, doors side by side and what stands behind are fine', () => {
+  it('its door cells are floor, free of furniture and other doors; corners and what stands behind are fine', () => {
     const plant = base();
-    plant.decor = { plants: [{ x: 3, z: 0 }], windows: [] };
+    plants(plant, [...SIDES, { x: 3, z: 0 }]);
     expect(fails(plant)).toBe('trucks[0] overlaps another obstacle at 3,0');
     const shelf = base();
     shelf.shelves = [{ x: 0, z: 0, w: 3, d: 1 }];
+    plants(shelf, [SIDES[1]]);
     expect(fails(shelf)).toBe('trucks[0] overlaps another obstacle at 2,0');
     const rack = base();
     rack.racks = [{ x: 3, z: 0, facing: 'south', columns: [[{ color: 'lavender' }]] }];
@@ -118,45 +136,104 @@ describe('validateLevel: trucks', () => {
     twice.trucks = [truck(twice), { wall: 'north', x: 3, z: 0, columns: [[{ color: 'lavender' }]] }];
     boxes(twice).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
     expect(fails(twice)).toBe('trucks[1] overlaps another obstacle at 3,0');
-    // In a corner, two doors side by side, a north and a west door sharing the corner: all fine now (no side cells).
+    // In a corner the run has no side cell at that end (the wall there guides the forklift): only the other end has.
     const corner = base();
     truck(corner).x = 0;
+    plants(corner, [{ x: 2, z: 0 }]);
     expect(fails(corner)).toBeNull();
     const east = base();
     truck(east).x = 5;
+    plants(east, [SIDES[1]]);
     expect(fails(east)).toBeNull();
+    // Two doors on one wall with an obstacle between them; a north and a west door by the same corner.
     const pair = base();
-    pair.trucks = [truck(pair), { wall: 'north', x: 4, z: 0, columns: [[{ color: 'lavender' }]] }];
+    pair.trucks = [truck(pair), { wall: 'north', x: 5, z: 0, columns: [[{ color: 'lavender' }]] }];
     boxes(pair).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    plants(pair, [...SIDES, { x: 6, z: 0 }]);
     expect(fails(pair)).toBeNull();
     const both = base();
     both.trucks = [
       { ...truck(both), x: 0 },
-      { wall: 'west', x: 0, z: 1, columns: [[{ color: 'lavender' }]] },
+      { wall: 'west', x: 0, z: 2, columns: [[{ color: 'lavender' }]] },
     ];
     boxes(both).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    plants(both, [
+      { x: 2, z: 0 },
+      { x: 0, z: 1 },
+      { x: 0, z: 3 },
+    ]);
     expect(fails(both)).toBeNull();
     // Whatever stands behind a door cell is the level's business (it may close the column: the solver says so).
     const behind = base();
-    behind.decor = { plants: [{ x: 3, z: 1 }], windows: [] };
+    plants(behind, [...SIDES, { x: 3, z: 1 }]);
     expect(fails(behind)).toBeNull();
-    // A rack loaded from a door cell (its front cell) is fine too: a door cell is floor.
+    // A rack loaded from a door cell (its front cell) from behind it is fine too: a door cell is floor.
     const front = base();
-    front.racks = [{ x: 4, z: 0, facing: 'west', columns: [[{ color: 'lavender' }]] }];
+    front.racks = [{ x: 3, z: 1, facing: 'north', columns: [[{ color: 'lavender' }]] }];
     boxes(front).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
     expect(fails(front)).toBeNull();
   });
 
+  it('beside each end of the door run, behind its guard rail: a static obstacle (a plant, a shelf, a rack that never faces the door)', () => {
+    // Floor, a box, a zone or the forklift there is not enough.
+    const bare = base();
+    plants(bare, [SIDES[0]]);
+    expect(fails(bare)).toBe('trucks[0] needs a static obstacle beside its dock door at 4,0 (a plant, a shelf or a rack): its guard rail stands there');
+    const boxed = base();
+    plants(boxed, [SIDES[1]]);
+    boxes(boxed)[0] = { id: 'b1', color: 'blue', symbol: 'triangle', x: 1, z: 0 };
+    expect(fails(boxed)).toBe('trucks[0] needs a static obstacle beside its dock door at 1,0 (a plant, a shelf or a rack): its guard rail stands there');
+    // A shelf or a rack does as well as a plant; a rack there never faces the door (the rail stands across its front).
+    const shelf = base();
+    plants(shelf, [SIDES[1]]);
+    shelf.shelves = [{ x: 0, z: 0, w: 2, d: 1 }];
+    expect(fails(shelf)).toBeNull();
+    const rack = base();
+    plants(rack, [SIDES[0]]);
+    rack.racks = [{ x: 4, z: 0, facing: 'south', columns: [[{ color: 'lavender' }]] }];
+    boxes(rack).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    expect(fails(rack)).toBeNull();
+    const facing = base();
+    plants(facing, [SIDES[0]]);
+    facing.racks = [{ x: 4, z: 0, facing: 'west', columns: [[{ color: 'lavender' }]] }];
+    boxes(facing).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    expect(fails(facing)).toBe('racks[0] column 0 is loaded from the dock door of trucks[0], across its guard rail');
+    // Two doors side by side: the cell beside one is the other's door.
+    const pair = base();
+    pair.trucks = [truck(pair), { wall: 'north', x: 4, z: 0, columns: [[{ color: 'lavender' }]] }];
+    boxes(pair).push({ id: 'b4', color: 'lavender', x: 6, z: 3 });
+    plants(pair, [SIDES[0], { x: 5, z: 0 }]);
+    expect(fails(pair)).toBe(
+      'trucks[0] needs a static obstacle beside its dock door at 4,0 for its guard rail, but that is the dock door of trucks[1]: leave a cell with an obstacle between two dock doors',
+    );
+    // A west door: its side cells are on column 0, north and south of its run.
+    const west = base();
+    Object.assign(truck(west), { wall: 'west', x: 0, z: 1 });
+    plants(west, [{ x: 0, z: 0 }]);
+    expect(fails(west)).toBe('trucks[0] needs a static obstacle beside its dock door at 0,3 (a plant, a shelf or a rack): its guard rail stands there');
+    plants(west, [
+      { x: 0, z: 0 },
+      { x: 0, z: 3 },
+    ]);
+    expect(fails(west)).toBeNull();
+  });
+
   it('no window on the door (the same span on the other wall, or next to it, is fine)', () => {
     const window = base();
-    window.decor = { plants: [], windows: [{ wall: 'north', at: 3, width: 2 }] };
+    window.decor = { plants: SIDES, windows: [{ wall: 'north', at: 3, width: 2 }] };
     expect(fails(window)).toBe('decor.windows[0] overlaps the dock door of trucks[0]');
     const beside = base();
-    beside.decor = { plants: [], windows: [{ wall: 'north', at: 4, width: 2 }, { wall: 'west', at: 2, width: 1 }] };
+    beside.decor = { plants: SIDES, windows: [{ wall: 'north', at: 4, width: 2 }, { wall: 'west', at: 2, width: 1 }] };
     expect(fails(beside)).toBeNull();
     const westDoor = base();
     Object.assign(truck(westDoor), { wall: 'west', x: 0, z: 1 });
-    westDoor.decor = { plants: [], windows: [{ wall: 'west', at: 2, width: 1 }] };
+    westDoor.decor = {
+      plants: [
+        { x: 0, z: 0 },
+        { x: 0, z: 3 },
+      ],
+      windows: [{ wall: 'west', at: 2, width: 1 }],
+    };
     expect(fails(westDoor)).toBe('decor.windows[0] overlaps the dock door of trucks[0]');
   });
 
@@ -210,6 +287,10 @@ describe('validateLevel: trucks', () => {
     // A west dock: its bed cells at x = -1.
     const west = base();
     Object.assign(truck(west), { wall: 'west', x: 0, z: 1 });
+    plants(west, [
+      { x: 0, z: 0 },
+      { x: 0, z: 3 },
+    ]);
     boxes(west)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: -1, z: 2, level: 0 };
     expect(validateLevel(west, 'x').boxes[2]).toMatchObject({ x: -1, z: 2, level: 0 });
   });
@@ -278,7 +359,7 @@ describe('parseLevel: truck validation errors in Spanish, where to fix them', ()
     'ventanas: norte 5-6', //                                4
     '', //                                                   5
     '  0123456', //                                          6
-    '0 ..TT...', //                                          7
+    '0 .pTTp..', //                                          7
     '1 .......', //                                          8
     '2 .a...b.', //                                          9
     '3 ...^.c.', //                                          10
@@ -306,8 +387,23 @@ describe('parseLevel: truck validation errors in Spanish, where to fix them', ()
       column: 8,
       reason: expect.stringMatching(/^el camión «T» tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas/),
     });
-    expect(parseLevel(text(replace(7, '0 TT.....')), 'x.level').level.trucks![0]).toMatchObject({ x: 0, z: 0, w: 2 });
-    const right = replace(7, '0 .....TT').map((l, i) => (i === 3 ? 'ventanas: oeste 1-2' : l));
+    expect(parseLevel(text(replace(7, '0 TTp....')), 'x.level').level.trucks![0]).toMatchObject({ x: 0, z: 0, w: 2 });
+    const right = replace(7, '0 ....pTT').map((l, i) => (i === 3 ? 'ventanas: oeste 1-2' : l));
     expect(parseLevel(text(right), 'x.level').level.trucks![0]).toMatchObject({ x: 5, z: 0, w: 2 });
+  });
+
+  it('beside the door: a missing obstacle, two doors side by side and a rack facing the door point at the cell to fix', () => {
+    expect(errorOf(replace(7, '0 .pTT...'))).toMatchObject({
+      line: 7,
+      column: 7,
+      reason: expect.stringMatching(/^junto a la puerta del camión «T» va una barandilla naranja .*tiene que ser un obstáculo fijo: pon una planta «p» \(o una estantería\)$/),
+    });
+    /** LINES with row 0 and a lavender box `d` at (0,1), plus one more legend line. */
+    const withRow0 = (row0: string, legend: string) =>
+      LINES.map((l, i) => (i === 6 ? row0 : i === 7 ? '1 d......' : i === 11 ? 'a = caja azul ▲     b = caja coral ◆    c = caja menta ▲    d = caja lavanda' : l)).concat(legend);
+    const pair = withRow0('0 .pTTUp.', 'U = camión muelle norte: lavanda');
+    expect(errorOf(pair)).toMatchObject({ line: 7, column: 7, reason: expect.stringMatching(/^dos puertas de muelle no van pegadas: .*camión «T», está la del camión «U»: deja entre las dos una casilla con una planta «p»$/) });
+    const rack = withRow0('0 .pTTR..', 'R = estantería frente oeste: lavanda');
+    expect(errorOf(rack)).toMatchObject({ line: 7, column: 7, reason: expect.stringMatching(/^la estantería «R» se cargaría desde la puerta del camión «T», pero entre las dos va la barandilla naranja/) });
   });
 });

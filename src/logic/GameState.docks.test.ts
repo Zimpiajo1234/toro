@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { angleDelta } from '../core/math';
+import { angleDelta, degToRad, wrapAngle } from '../core/math';
 import { cueFits, isDestined } from '../core/sorting';
 import type { GameEvent, InputFrame } from '../core/types';
 import { GAME_CONFIG } from '../config';
 import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
 import { GameState, TRUCK_FACE_ANGLE, TRUCK_REACH } from './GameState';
-import { DOOR_JAMB, pointRectDistance } from './collision';
+import { DOOR_JAMB, PLANT_SIZE, pointRectDistance } from './collision';
 import { DT, IDLE, forkPoint, press, run, runUntil } from './testUtils';
 
 /*
@@ -27,6 +27,19 @@ const forward = (state: GameState, seconds = 2.5, dt = DT) => run(state, seconds
 function backTo(state: GameState, z: number, dt = DT): GameEvent[] {
   const events = runUntil(state, () => state.getSnapshot().forklift.pos.z >= z, input(-1), 6, dt);
   return [...events, ...run(state, 0.6, IDLE, dt)];
+}
+
+/**
+ * Put the forklift on `cell`'s centre facing `headingDeg` (0 = +z, 90 = east, 270 = west), then let it settle: a pose
+ * between the guard rails on a door cell, which a door closed at its sides only lets it reach by backing in.
+ */
+function put(state: GameState, cell: { x: number; z: number }, headingDeg: number, dt = DT): void {
+  const snap = state.getSnapshot();
+  const { width, depth } = snap.level.size;
+  snap.forklift.pos.x = cell.x + 0.5 - width / 2;
+  snap.forklift.pos.z = cell.z + 0.5 - depth / 2;
+  snap.forklift.heading = wrapAngle(degToRad(headingDeg));
+  run(state, 0.5, IDLE, dt);
 }
 
 /** Turn in place (world-space move, as the stick does) until the forklift faces (dx, dz). */
@@ -59,7 +72,7 @@ id: muelle
 limit: 2
 
   012345
-0 .TT...
+0 pTTp..
 1 ......
 2 .a....
 3 .^b...
@@ -76,7 +89,7 @@ id: trampa-camion
 limit: 2
 
   012345
-0 .TT...
+0 pTTp..
 1 ......
 2 .a....
 3 .^b...
@@ -93,7 +106,7 @@ id: base-equivocada
 limit: 2
 
   012345
-0 .TT...
+0 pTTp..
 1 ......
 2 .a....
 3 .^b...
@@ -129,7 +142,7 @@ id: ya-cargado
 limit: 2
 
   0123
-0 .T..
+0 pTp.
 1 ....
 2 .a..
 3 .^..
@@ -138,14 +151,17 @@ a = caja menta ▲
 T = camión muelle norte: azul + caja azul ● / ▲
 `);
 
-/** Carrying along the wall across the door cells: the bed is never offered. */
+/**
+ * A door closed at its sides: carrying along the wall toward it, the plant beside it (behind its guard rail) stops the
+ * rig and the bed is never offered.
+ */
 const SIDE = level(`
 # 6 · De lado
 id: de-lado
 limit: 1
 
   0123456
-0 .TT..a<
+0 pTTp.a<
 1 .......
 2 ...b...
 
@@ -160,7 +176,7 @@ id: zona-camion
 limit: 1
 
   01234
-0 .T...
+0 pTp..
 1 .....
 2 .>a1.
 3 ....b
@@ -177,10 +193,10 @@ id: muelle-oeste
 limit: 1
 
   01234
-0 .....
+0 p....
 1 T.a<.
 2 T....
-3 ..b.1
+3 p.b.1
 
 1 = zona ▲
 a = caja azul ●     b = caja coral ◆
@@ -197,7 +213,7 @@ id: puerta-de-tres
 limit: 1
 
   0123456
-0 v.TTT..
+0 vpTTTp.
 1 a.p....
 2 .......
 3 ....b.c
@@ -374,7 +390,7 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
     expect(snap.forklift.forkHeight).toBe(0);
   });
 
-  it('never from the side: carrying along the wall across the door cells, the bed is never the drop', () => {
+  it('never from the side: the plant beside the door, behind its guard rail, stops a load carried along the wall', () => {
     const state = new GameState(SIDE);
     const snap = state.getSnapshot();
     press(state);
@@ -384,12 +400,14 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
       state.update(DT, input(0.6));
       seen.push(snap.hint.dropTruckSlotId);
     }
-    // Along row 0, past both door cells, up to the west wall: plain floor all the way.
-    expect(forkPoint(state).x).toBeLessThan(1 - SIDE.size.width / 2);
+    // Along row 0 up to the plant at (3,0): the load stops against it, never over a door cell, never the bed.
+    const plantEast = 3 + 0.5 + PLANT_SIZE / 2 - SIDE.size.width / 2;
+    expect(snap.boxes[0].pos.x - carriedBoxRadius).toBeGreaterThan(plantEast - SQUEEZE);
+    expect(snap.boxes[0].pos.x - carriedBoxRadius).toBeLessThan(plantEast + 0.05);
     expect(seen.every((id) => id === null)).toBe(true);
     const drop = dropped(press(state))!;
     expect(drop).not.toHaveProperty('truckSlotId');
-    expect(drop.cell.z).toBe(0);
+    expect(drop.cell.x).toBeGreaterThanOrEqual(4);
   });
 
   it('turning on a door cell with a load: the door stays shut like the wall until the rig faces the column in front of it', () => {
@@ -397,9 +415,8 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
     const snap = state.getSnapshot();
     press(state);
     run(state, 0.3);
-    // West along row 0 until the body stands on the door cell (2,0), the load over (1,0).
-    runUntil(state, () => snap.forklift.pos.x <= 2.5 - SIDE.size.width / 2, input(0.4), 6);
-    run(state, 1, IDLE);
+    // Between the rails on the door cell (2,0), facing west along the wall with the load over the other one, (1,0).
+    put(state, { x: 2, z: 0 }, 270);
     const west = snap.forklift.heading;
     const north = Math.PI;
     const load = snap.boxes[0].pos;
@@ -415,10 +432,19 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
     run(state, 0.5, IDLE);
     expect(Math.abs(angleDelta(west, snap.forklift.heading))).toBeGreaterThan(Math.PI / 3);
     expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(TRUCK_FACE_ANGLE);
-    // It went in facing the truck, through the door of (2,0) only: never through the wall beside it.
+    // It went in facing the truck, through the door of (2,0) only: never into the shut span of (1,0) beside it.
     expect(past()).toBeGreaterThan(0.05);
-    expect(load.x - carriedBoxRadius).toBeGreaterThanOrEqual(2 - SIDE.size.width / 2 - 1e-4);
-    // On it goes into the column of the door cell the body stands on, (2,0): never the one it swung over.
+    const shut = { x0: 1 - SIDE.size.width / 2, z0: wallZ(SIDE.size.depth) - 1 };
+    expect(pointRectDistance(load.x, load.z, shut.x0, shut.z0, shut.x0 + 1, shut.z0 + 1)).toBeGreaterThanOrEqual(carriedBoxRadius - SQUEEZE);
+    // Swung in that crooked (the heading holds with the load in the door) it rubs the shut span beside it while the
+    // guard rail holds the body: W may take it no further (docs/DOCKS.md «Barandillas», pending: a door that
+    // straightens the rig), never into another column. S always backs it out; lined up with its door cell again, it
+    // goes straight in, into the column of the door cell the body stands on, (2,0): never the one it swung over.
+    forward(state, 1.5);
+    expect([null, 't1:1:0']).toContain(snap.hint.dropTruckSlotId);
+    backTo(state, rowZ(1, SIDE.size.depth) + 0.2);
+    expect(past()).toBeLessThan(-0.05);
+    put(state, { x: 2, z: 1 }, 180);
     forward(state, 3);
     expect(Math.floor(snap.forklift.pos.x + SIDE.size.width / 2)).toBe(2);
     expect(snap.hint.dropTruckSlotId).toBe('t1:1:0');
@@ -460,10 +486,8 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
     press(state, dt);
     hold(IDLE, 0.3);
     expect(snap.forklift.carrying).toBe('b1');
-    // Along row 0 facing east onto the first door cell (2,0), the load over the middle one.
-    turnTo(1, 0);
-    runUntil(state, () => cellX(snap.forklift.pos.x - 0.5) >= 2, input(0.4), 6, dt);
-    hold(IDLE, 0.8);
+    // Between the rails on the first door cell (2,0), facing east along the wall with the load over the middle one.
+    put(state, { x: 2, z: 0 }, 90, dt);
     expect(cellX(snap.forklift.pos.x)).toBe(2);
     // Turning left toward the truck there: the load meets the shut door like the wall and the rig eases back, but the
     // plant behind (2,1) stops it: the turn is refused, column 0 never opens (no straight way in, as the solver says).
@@ -490,7 +514,7 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
   });
 
   it('facing a full column carrying: the load stops at its box in the doorway, and nothing can be dropped', () => {
-    const state = new GameState(FULL('.TT..', '.....', '..^..'));
+    const state = new GameState(FULL('pTTp.', '.....', '..^..'));
     const snap = state.getSnapshot();
     press(state);
     forward(state);
@@ -505,11 +529,12 @@ describe('loading docks: the door, the wall and the automatic fork height', () =
 
   it('a wrong box on the truck is lifted from its door cell only, with the forks through the door', () => {
     // Beside the full column, on the next door cell facing along the wall: not a target.
-    const side = new GameState(FULL('.TT<.', '.....', '.....'));
+    const side = new GameState(FULL('pTTp.', '.....', '..^..'));
+    put(side, { x: 1, z: 0 }, 90);
     expect(side.getSnapshot().hint.targetBoxId).toBeNull();
     expect(press(side)).toEqual([{ type: 'firstInput' }, { type: 'actionIdle', carrying: false }]);
     // Facing the wall from behind its door cell: the forks are not through yet.
-    const front = new GameState(FULL('.TT..', '..^..', '.....'));
+    const front = new GameState(FULL('pTTp.', '..^..', '.....'));
     const snap = front.getSnapshot();
     expect(snap.hint.targetBoxId).toBeNull();
     // Up to the wall on the door cell: its top box is the target.

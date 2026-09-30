@@ -119,7 +119,7 @@ id: pistas-muelle
 limit: 2
 
   012345
-0 ...T..
+0 ..pTp.
 1 ......
 2 .a.cb.
 3 ..^..1

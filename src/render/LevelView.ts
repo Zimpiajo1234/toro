@@ -1,6 +1,6 @@
 import { Box3, Color, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
-import { hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
+import { dockRailsOf, hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
 import { degToRad } from '../core/math';
 import { hasRacks } from '../core/racks';
 import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
@@ -42,6 +42,7 @@ import { addShelf } from './builders/shelf';
 import {
   TRUCK_BURST,
   buildDockPlate,
+  buildDockRails,
   buildSignCue,
   buildSignFrame,
   buildSignGlowGeometry,
@@ -945,6 +946,7 @@ export class LevelView {
     const panelByCell = new Map<string, BufferGeometry>();
     const cueByLook = new Map<string, BufferGeometry>();
     const origin = new Vector3();
+    const rails = dockRailsOf(level);
     trucksOf(level).forEach((truck, index) => {
       const wall = this.wallBySide.get(truck.wall);
       if (!wall) return;
@@ -965,6 +967,13 @@ export class LevelView {
         holds,
         DROP_GLIDE_SEC,
       );
+      // The guard rails beside its door (core/docks dockRailsOf): low static props in the room, like the plants.
+      const own = rails.filter((r) => r.truckIndex === index);
+      if (own.length > 0) {
+        const mesh = this.mesh(buildDockRails(own, level, theme), mats.painted, true);
+        mesh.userData.dockRails = truck.id;
+        view.group.add(mesh);
+      }
       // Sign cells face the warehouse: their local +z is their wall's inward side (dock-local +z).
       const yaw = dockPlacement(truck.wall, level).ry ?? 0;
       truck.columns.forEach((cues, column) => {

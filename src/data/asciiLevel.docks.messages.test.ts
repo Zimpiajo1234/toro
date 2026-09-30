@@ -66,6 +66,19 @@ describe('validateLevel truck messages, in Spanish at the place to fix', () => {
     });
   });
 
+  it('no static obstacle beside the door (its guard rail stands there), or another door there: points at that cell', () => {
+    expect(explained('trucks[0] needs a static obstacle beside its dock door at 1,0 (a plant, a shelf or a rack): its guard rail stands there')).toEqual({
+      line: 7,
+      column: 4,
+      reason: expect.stringMatching(
+        /^junto a la puerta del camión «T» va una barandilla naranja \(sale sola, no se escribe\) y esta casilla, detrás de ella a lo largo del muro, tiene que ser un obstáculo fijo: pon una planta «p» \(o una estantería\)$/,
+      ),
+    });
+    expect(
+      explained('trucks[0] needs a static obstacle beside its dock door at 4,0 for its guard rail, but that is the dock door of trucks[1]: leave a cell with an obstacle between two dock doors'),
+    ).toEqual({ line: 7, column: 7, reason: expect.stringMatching(/^dos puertas de muelle no van pegadas: .*deja entre las dos una casilla con una planta «p»$/) });
+  });
+
   it('a truck box with nothing below it: points at the box', () => {
     expect(explained('box "b3" is on trucks[0] column 1 at level 1 with no box below it')).toEqual({
       line: 7,

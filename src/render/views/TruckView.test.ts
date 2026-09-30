@@ -14,16 +14,17 @@ import {
 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
+import { DOCK_RAIL, dockRailsOf } from '../../core/docks';
 import { cueFits, isDestined } from '../../core/sorting';
 import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type TruckSlotState, type WallSide } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../../data/levels';
 import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
-import { DOCK_PLATE, DOCK_SIGN, SIGN_CUE, TRUCK, dockColumnX, signBottom, signMidZ, signRowY, signRows, signTop } from '../builders/truck';
+import { DOCK_PLATE, DOCK_SIGN, RAIL, SIGN_CUE, TRUCK, dockColumnX, signBottom, signMidZ, signRowY, signRows, signTop } from '../builders/truck';
 import { DOOR, buildWallGeometry, dockSpan, wallLayouts } from '../builders/walls';
 import { CameraRig } from '../CameraRig';
-import { DIORAMA, DOCK, ZONE, boxDims } from '../dims';
+import { DIORAMA, DOCK, FORK, ZONE, boxDims } from '../dims';
 import { LevelView } from '../LevelView';
 import { LOCK_DELAY } from './BoxView';
 import { FLASH_PEAK, LOCK_SEC, TARGET_REST } from './success';
@@ -52,7 +53,7 @@ limit: 2
 ventanas: oeste 2-3
 
   01234567
-0 ..TT....
+0 .pTTp...
 1 ........
 2 .....1..
 3 .a..b...
@@ -70,7 +71,7 @@ id: muelle-norte-uno
 limit: 2
 
   012345
-0 ...T..
+0 ..pTp.
 1 ......
 2 .a.cb.
 3 ..^..1
@@ -87,7 +88,7 @@ id: muelle-norte-triple
 limit: 2
 
   0123456
-0 .TTT...
+0 pTTTp..
 1 .......
 2 .a.b.c.
 3 ...^.d.
@@ -105,9 +106,9 @@ ventanas: norte 4-5
 
   01234567
 0 ........
-1 ........
+1 p.......
 2 T....1..
-3 ..a..b..
+3 p.a..b..
 4 ....^...
 
 1 = zona amarillo
@@ -122,10 +123,10 @@ id: muelle-oeste-doble
 limit: 2
 
   01234567
-0 ........
+0 p.......
 1 T.......
 2 T....1..
-3 .a..b...
+3 pa..b...
 4 ....^.c.
 
 1 = zona ■
@@ -140,11 +141,11 @@ id: muelle-oeste-triple
 limit: 2
 
   0123456
-0 .......
+0 p......
 1 T......
 2 T..a.b.
 3 T..c...
-4 ...^.d.
+4 p..^.d.
 
 a = caja azul ●        b = caja coral ◆       c = caja menta ■       d = caja lavanda ✚
 T = camión muelle oeste: azul | menta / coral | lavanda
@@ -177,6 +178,7 @@ const child = <M extends Mesh>(view: LevelView, tag: string, id: string) =>
 const body = (view: LevelView, id = 't1') => child<Lit>(view, 'truckBody', id)!;
 const plate = (view: LevelView, id = 't1') => child<Lit>(view, 'truckPlate', id)!;
 const signFrame = (view: LevelView, id = 't1') => truckGroup(view, id).children.find((c) => c.userData.sign) as Lit;
+const rails = (view: LevelView, id = 't1') => truckGroup(view, id).children.find((c) => c.userData.dockRails === id) as Lit | undefined;
 const cueMesh = (view: LevelView, id: string) => child<Unlit>(view, 'truckCue', id);
 const band = (view: LevelView, id: string) => child<Unlit>(view, 'truckGlow', id);
 const panel = (view: LevelView, id: string) => child<Lit>(view, 'signPanel', id);
@@ -362,7 +364,7 @@ a = caja azul
     step(view, snap, 0.5);
     let tagged = 0;
     view.root.traverse((o) => {
-      if (o.userData.truckId || o.userData.truckBody || o.userData.truckPlate || o.userData.sign || o.userData.truckCue) tagged++;
+      if (o.userData.truckId || o.userData.truckBody || o.userData.truckPlate || o.userData.sign || o.userData.truckCue || o.userData.dockRails) tagged++;
     });
     expect(tagged).toBe(0);
     view.dispose();
@@ -457,6 +459,93 @@ describe('truck', () => {
     expect(boxGroup(view, mint.id).position.x).toBeCloseTo(p.x, 3);
     expect(boxGroup(view, mint.id).position.z).toBeCloseTo(p.z, 3);
     view.dispose();
+  });
+});
+
+describe('guard rails', () => {
+  /** A north door in the corner (no rail at its west end) and a west door (rails north and south of its run). */
+  const CORNER = level(`
+# 9 · Puerta en el rincón
+id: puerta-rincon
+limit: 1
+
+  012345
+0 TTp...
+1 ......
+2 .a.b..
+3 ...^..
+
+a = caja azul ●        b = caja coral ◆
+T = camión muelle norte: azul | coral
+`);
+
+  it('stands at each end of the door run within the footprint the logic gives it: from the door frame one cell in', () => {
+    for (const lvl of [...ALL, CORNER]) {
+      const truck = lvl.trucks![0];
+      const own = dockRailsOf(lvl);
+      expect(own.length, lvl.id).toBe(lvl === CORNER ? 1 : 2);
+      const { view } = setup(lvl);
+      const mesh = rails(view)!;
+      expect(mesh, lvl.id).toBeDefined();
+      // Each rail: two posts with a cream cap, two bars (every part a box of 36 vertices).
+      expect(painted(mesh.geometry, defaultTheme.truck.railCap)).toBe(own.length * 2 * 36);
+      expect(painted(mesh.geometry, defaultTheme.truck.rail)).toBe(own.length * 4 * 36);
+      // Along the wall (dock-local x) a west door's rails run the other way: local x = depth − z.
+      const along = (u: number) => (truck.wall === 'north' ? u : lvl.size.depth - u);
+      const spans = own.map((r) => [Math.min(along(r.line), along(r.outer)), Math.max(along(r.line), along(r.outer))]);
+      for (const p of vertices(mesh).map((q) => toDock(lvl, truck.wall, q))) {
+        // Off the door frame (proud of the wall), never into the row behind the door cells.
+        expect(p.z).toBeGreaterThanOrEqual(DOOR.proud - 1e-5);
+        expect(p.z).toBeLessThanOrEqual(1 + 1e-5);
+        expect(p.y).toBeGreaterThanOrEqual(-1e-5);
+        expect(p.y).toBeLessThanOrEqual(RAIL.top + RAIL.cap + 1e-5);
+        // Inside one rail's footprint along the wall (its cap a hair over it).
+        expect(spans.some(([a, b]) => p.x >= a - RAIL.capOver - 1e-5 && p.x <= b + RAIL.capOver + 1e-5)).toBe(true);
+      }
+      // The orange posts reach the jamb line exactly (the opening's side, one straight chute) and are DOCK_RAIL thick.
+      const orange = triangles(mesh, defaultTheme.truck.rail).map((b) => new Box3().setFromPoints([toDock(lvl, truck.wall, b.min), toDock(lvl, truck.wall, b.max)]));
+      for (const [a, b] of spans) {
+        const posts = orange.filter((t) => t.min.x >= a - 1e-5 && t.max.x <= b + 1e-5);
+        expect(Math.min(...posts.map((t) => t.min.x))).toBeCloseTo(a, 5);
+        expect(Math.max(...posts.map((t) => t.max.x))).toBeCloseTo(b, 5);
+        expect(b - a).toBeCloseTo(DOCK_RAIL.thickness, 9);
+      }
+      view.dispose();
+    }
+  });
+
+  it('is low and soft orange: well under a carried box, never a box colour, never red; it casts and takes shadows', () => {
+    const { view } = setup();
+    const mesh = rails(view)!;
+    expect(mesh.castShadow).toBe(true);
+    expect(mesh.receiveShadow).toBe(true);
+    // Under the carried box by far (forks up: its bottom at FORK.upY, its top a box height higher).
+    expect(RAIL.top + RAIL.cap).toBeLessThan(FORK.upY + height - 0.4);
+    const hsl = { h: 0, s: 0, l: 0 };
+    new Color(defaultTheme.truck.rail).getHSL(hsl, SRGBColorSpace);
+    expect(hsl.h * 360).toBeGreaterThan(25);
+    expect(hsl.h * 360).toBeLessThan(35);
+    expect(hsl.s).toBeGreaterThan(0.5);
+    const orange = new Color(defaultTheme.truck.rail);
+    for (const b of Object.values(defaultTheme.boxes).flatMap((p) => [p.base, p.tape, p.glyph, p.ink, p.locked]).map((h) => new Color(h)))
+      expect(Math.hypot(orange.r - b.r, orange.g - b.g, orange.b - b.b)).toBeGreaterThan(0.1);
+    view.dispose();
+  });
+
+  it('never sinks, never fades: static and whole from every camera quarter, its dock wall up or down', () => {
+    for (const lvl of [NORTH, WEST2]) {
+      const { snap, view } = setup(lvl);
+      const mesh = rails(view)!;
+      const at = new Box3().setFromPoints(vertices(mesh));
+      for (let k = 0; k < 4; k++) {
+        step(view, snap, 1.5, YAW + (k * Math.PI) / 2);
+        expect(mesh.visible).toBe(true);
+        expect(mesh.material.transparent).toBe(false);
+        expect(mesh.material.opacity).toBe(1);
+        expect(new Box3().setFromPoints(vertices(mesh)).equals(at)).toBe(true);
+      }
+      view.dispose();
+    }
   });
 });
 
@@ -727,7 +816,7 @@ id: trampa-camion
 limit: 2
 
   012345
-0 ..T...
+0 .pTp..
 1 ......
 2 .a..b.
 3 ...^.1
@@ -830,28 +919,35 @@ describe('dock and camera', () => {
   });
 
   it('never ghosts a stacked box for a lid the standing dock wall already hides', () => {
-    // A two-box floor stack right beside the door: from the default camera the coral ◆ on the bed of (2,0) is «behind»
-    // its top box, but behind the wall first.
+    // A two-box floor stack parked on the door cell (2,0), right beside the bed column of (1,0): from the default
+    // camera the coral ◆ on that bed is «behind» its top box, but behind the wall first. (The stack starts elsewhere:
+    // door cells start empty; it is set on the door cell as the player would leave it.)
     const STACK = level(`
 # 8 · Pila junto a la puerta
 id: pila-junto-puerta
 limit: 2
 
   012345
-0 .TTc..
+0 pTTp..
 1 ......
 2 1....2
-3 .d...^
+3 .d.c.^
 
 1 = zona azul          2 = zona menta
 c = pila azul ●,menta ▲
 d = caja lavanda ■
-T = camión muelle norte: lavanda | coral + caja coral ◆
+T = camión muelle norte: coral + caja coral ◆ | lavanda
 `);
-    const { snap, view } = setup(STACK);
+    const snap = new GameState(STACK).getSnapshot();
+    const door = { x: 2, z: 0 };
+    ['blue', 'mint'].forEach((color, level) => {
+      const box = snap.boxes.find((b) => b.color === color)!;
+      Object.assign(box, { cell: { ...door }, pos: cellToWorld(door, STACK.size), level });
+    });
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
     const top = boxOf(snap, 'mint', 'triangle');
-    expect(top).toMatchObject({ cell: { x: 3, z: 0 }, level: 1 });
-    expect(boxOf(snap, 'coral', 'diamond')).toMatchObject({ cell: { x: 2, z: -1 }, truckSlotId: 't1:1:0' });
+    expect(top).toMatchObject({ cell: door, level: 1 });
+    expect(boxOf(snap, 'coral', 'diamond')).toMatchObject({ cell: { x: 1, z: -1 }, truckSlotId: 't1:0:0' });
     for (let i = 0; i < 120; i++) {
       view.update(snap, 1 / 60, i / 60, YAW, 0);
       expect(boxMesh(view, top.id).material.opacity).toBe(1);

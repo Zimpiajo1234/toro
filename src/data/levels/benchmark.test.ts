@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runsAlongX, frontCellOf, rackCellOf, slotsOf, FACING_X, FACING_Z } from '../../core/racks';
-import { truckColumnsOf, truckSlotsOf } from '../../core/docks';
+import { dockRailsOf, truckColumnsOf, truckSlotsOf } from '../../core/docks';
 import { assignmentsOf, criteriaOf, cueOf, levelDestinies, matchKind, meets, sameKind, sortableOf, targetsOf, type Sortable } from '../../core/sorting';
 import { MAX_TRUCK_COLUMNS, MAX_TRUCK_LEVELS, type LevelData } from '../../core/types';
 import { parseLevel, renderLevel } from '../asciiLevel';
@@ -140,6 +140,12 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     // The box loaded at the start rests on its bed cell, outside the map.
     const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
     expect(loaded.map((b) => [b.x, b.z, b.level])).toEqual([[1, -1, 0]]);
+    // A guard rail at each end of the door run, a plant behind each (docs/DOCKS.md): reached only from the row behind.
+    expect(dockRailsOf(level).map((r) => r.side)).toEqual([
+      { x: 0, z: 0 },
+      { x: 3, z: 0 },
+    ]);
+    for (const { side } of dockRailsOf(level)) expect(level.decor.plants.some((pl) => pl.x === side.x && pl.z === side.z), `${side.x},${side.z}`).toBe(true);
   });
 
   it('every column can be loaded: its front (door) cell and the cell behind it are floor, and no zone stands there', () => {

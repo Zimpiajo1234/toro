@@ -1,11 +1,67 @@
 /**
  * Loading dock geometry (docs/DOCKS.md), shared by validation, logic, the level solver and render: the door cells of
- * each truck (floor, inside the map), the bed column beyond each one (outside the map, past the wall), truck slot ids
- * and the flattened slot / column lists. A truck reads like a storage rack loaded from TRUCK_FACING[wall] whose cells
- * lie one step beyond the wall (its front cells are the door cells), so the core/racks helpers do the geometry. Pure.
+ * each truck (floor, inside the map), the bed column beyond each one (outside the map, past the wall), the guard rails
+ * beside each door, truck slot ids and the flattened slot / column lists. A truck reads like a storage rack loaded
+ * from TRUCK_FACING[wall] whose cells lie one step beyond the wall (its front cells are the door cells), so the
+ * core/racks helpers do the geometry. Pure.
  */
-import { TRUCK_FACING, type CellPos, type Facing, type LevelData, type LevelTruck, type TruckCue } from './types';
+import { TRUCK_FACING, type CellPos, type Facing, type LevelData, type LevelTruck, type TruckCue, type WallSide } from './types';
 import { FACING_X, FACING_Z, hasRacks, inwardHeading, rackCellOf } from './racks';
+
+/**
+ * The jambs of a dock door (u): the opening the carried load passes is this much narrower than its run of door cells
+ * at each end, like the side uprights of a rack slot (logic/collision RACK_WALL), so the load (radius 0.46) goes
+ * through a 1-cell door with a few cm of play. The door's guard rails run on this line (dockRailsOf).
+ */
+export const DOOR_JAMB = 0.02;
+
+/** Guard rails of a dock door (docs/DOCKS.md): how thick one is (u), from the jamb line outward into its side cell. */
+export const DOCK_RAIL = { thickness: 0.06 } as const;
+
+/**
+ * One guard rail of a dock door (docs/DOCKS.md): every door gets one at each end of its run of door cells, by itself
+ * (never written in a `.level`): low, straight into the room from the wall's inner face, one cell long, on the door's
+ * jamb line (its inner face flush with the side of the opening, so the rails and the opening make one straight chute)
+ * and as thick as DOCK_RAIL outward, into the run's `side` cell, which holds a static obstacle (validateLevel). A run
+ * that reaches a corner of the room has no side cell and no rail at that end: the wall there already guides. Map
+ * units: cell edges at whole numbers, the wall's inner face at 0.
+ */
+export interface DockRail {
+  truckIndex: number;
+  wall: WallSide;
+  /** Which end of the door run: 0 = its first door cell's (west of a north dock, north of a west one), 1 = its last. */
+  end: 0 | 1;
+  /** The map cell just past that end along the wall, behind the rail: it holds a static obstacle. */
+  side: CellPos;
+  /**
+   * Along the wall (x of a north dock, z of a west one): the rail's inner face, on the jamb line (the end of the run,
+   * DOOR_JAMB into the door), and its outer face, DOCK_RAIL.thickness further out.
+   */
+  line: number;
+  outer: number;
+  /**
+   * Into the room (z of a north dock, x of a west one): from the wall's inner face to one cell in, the end of the door
+   * cells (it never reaches the row behind them, where the forklift lines up).
+   */
+  from: number;
+  to: number;
+}
+
+/** The guard rails of every dock door of a level: truck by truck, each door's first end, then its last one. */
+export function dockRailsOf(level: Pick<LevelData, 'trucks' | 'size'>): DockRail[] {
+  const out: DockRail[] = [];
+  trucksOf(level).forEach((truck, truckIndex) => {
+    const north = truck.wall === 'north';
+    const first = north ? truck.x : truck.z;
+    const last = first + truck.w;
+    const cell = (along: number): CellPos => (north ? { x: along, z: truck.z } : { x: truck.x, z: along });
+    const rail = (end: 0 | 1, side: number, line: number, outward: number) =>
+      out.push({ truckIndex, wall: truck.wall, end, side: cell(side), line, outer: line + outward * DOCK_RAIL.thickness, from: 0, to: 1 });
+    if (first > 0) rail(0, first - 1, first + DOOR_JAMB, -1);
+    if (last < (north ? level.size.width : level.size.depth)) rail(1, last, last - DOOR_JAMB, 1);
+  });
+  return out;
+}
 
 /** A level's trucks (none → an empty list). */
 export function trucksOf(level: Pick<LevelData, 'trucks'>): readonly LevelTruck[] {

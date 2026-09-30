@@ -23,6 +23,16 @@ Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se qued
 - **E. Reglas de objetivo** como hasta ahora: caja fija, zumbido de objetivo equivocado, reparto único (una caja fija
   del camión todavía recibe el nivel de encima).
 
+Decisiones (2026-09-30, la caja «se encasquilla» al meterla en el camión; diseño del usuario, dibujado; «lo podemos
+bloquear con assets, las flores con maceta que tienes»):
+- **F. Barandillas**: cada puerta lleva, sola (no se escribe en el `.level`), una **barandilla naranja** baja a cada lado:
+  sale de la cara de dentro del muro y entra recta en el almacén **una casilla**, sobre la **línea de la jamba** (su cara
+  de dentro enrasada con el lado del hueco: barandillas y hueco forman un solo pasillo recto); 2 postes y 2 barras. Para
+  obligar a entrar más recto.
+- **G. Casilla lateral ocupada**: la casilla de al lado de cada extremo de la puerta, detrás de su barandilla, lleva un
+  obstáculo fijo del mapa, una planta con maceta `p` (u otro obstáculo fijo). Sin trampilla en el suelo. Una puerta que
+  llega a un rincón no tiene barandilla ni casilla lateral en ese lado: ya guía el otro muro.
+
 ## Reglas
 1. **Muelle** = puerta en el muro **norte** u **oeste** con un camión aparcado **fuera**. La puerta es una **tirada
    recta de casillas de puerta** pegada al muro, dentro del mapa: en el muelle norte, casillas de la fila `z = 0`; en el
@@ -30,7 +40,7 @@ Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se qued
    cada una justo detrás del muro, **fuera del mapa** (`z = -1` en el norte, `x = -1` en el oeste; `truckCellOf`). La
    puerta no se declara aparte (no puede descuadrarse del camión). Las casillas de puerta son **suelo**: sin muebles
    (estantería, planta, estantería almacenable, otra puerta) y, al empezar, sin zona, caja ni carretilla. Una puerta en
-   un rincón o dos puertas pegadas valen.
+   un rincón vale; dos puertas pegadas, no (entre ellas van sus barandillas y un obstáculo: regla 12).
 2. **Se carga por la puerta**: desde la casilla de puerta de cada columna, mirando al muro (`TRUCK_FACING`: el camión se
    carga desde el sur en el muro norte y desde el este en el oeste). El cuerpo de la carretilla nunca pasa la línea del
    muro; la horquilla y la carga, solo por la puerta y **rectas** (con la carga en la puerta el rumbo no cambia, como en
@@ -67,12 +77,21 @@ Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se qued
     encima de la puerta, con una casilla por columna (justo encima de su casilla de puerta) y por nivel (abajo, el nivel
     0). Cada casilla lleva la pegatina de su nivel en las dos caras, a pleno color, nunca atenuada ni en espejo,
     legible desde dentro del almacén con la cámara por defecto y girándola. Nunca sobre la carga ni entre las columnas.
+12. **Barandillas** (decisiones F y G; `core/docks` `dockRailsOf`): a cada extremo de la tirada de la puerta, una
+    barandilla fija sobre la línea de su jamba, desde la cara de dentro del muro hasta el final de las casillas de puerta
+    (una casilla; nunca en la fila de detrás, donde se alinea la carretilla), gruesa hacia fuera, hacia la **casilla
+    lateral**: la del mapa justo pasado ese extremo, a lo largo del muro, que lleva un **obstáculo fijo** (planta,
+    estantería de madera o estantería almacenable que no dé a la puerta). Una puerta que llega a un rincón no la tiene en
+    ese lado. Así la puerta solo se alcanza de frente, desde la fila de detrás; entre las columnas de una misma puerta no
+    hay barandilla.
 
 ## En el archivo `.level`
 
 Un camión es un carácter de la leyenda. En el mapa marca las **casillas de su puerta**: una **tirada recta pegada a su
 muro** (en el muelle norte, casillas seguidas de la fila 0; en el oeste, de la columna 0). Cada grupo conectado de ese
-carácter es un camión. La caja del camión no sale en el mapa: está fuera, detrás del muro.
+carácter es un camión. La caja del camión no sale en el mapa: está fuera, detrás del muro. Las barandillas tampoco:
+salen solas; lo que sí va en el mapa es el **obstáculo de cada casilla lateral** (normalmente una planta `p`), justo al
+lado de cada extremo de la tirada, salvo en un rincón.
 
 ```
 camión   = cabeza muro [id] ":" columna { "|" columna }                 (1 a 3 columnas)
@@ -104,7 +123,7 @@ limit: 2
 ventanas: oeste 2-3
 
   01234567
-0 ..TT....
+0 .pTTp...
 1 ........
 2 .....1..
 3 .a..b...
@@ -116,7 +135,8 @@ T = camión muelle norte: azul / ▲ | coral ◆ + caja menta ▲
 ```
 
 Un camión fuera de la puerta norte (casillas de puerta 2–3 de la fila 0; su caja, en (2,-1) y (3,-1)), de 2 columnas
-que se cargan desde esas casillas mirando al norte. Columna 1: abajo «azul», encima «cualquier ▲». Columna 2: «coral
+que se cargan desde esas casillas mirando al norte, con una barandilla a cada lado de la puerta y una planta detrás de
+cada una, en (1,0) y (4,0). Columna 1: abajo «azul», encima «cualquier ▲». Columna 2: «coral
 ◆» exacto, con la menta ▲ cargada por error. Único reparto: la única azul (la azul ▲) abajo en la columna 1, así que el
 «▲» de encima es de la menta ▲; el coral ◆ a su nivel y el amarillo ■ a la zona. La azul ▲ encaja en el «▲» pero no
 es su destino (una «trampa» amable), y la menta ▲ hay que descargarla antes de poner el coral ◆.
@@ -126,7 +146,11 @@ repetidos, más de 2 niveles, nivel vacío, «libre», pista desconocida, caja m
 debajo, `/ | :` fuera de una estantería o un camión, camión que no es recto, que no está pegado a su muro o cuyas
 columnas no cuadran con sus casillas, id propio en un carácter usado por varios camiones, id repetido con una
 estantería. Los de `validateLevel` (abajo) se señalan en la columna o la caja que hay que arreglar: entre ellos, más de
-3 columnas (en la primera que sobra: «tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas…»).
+3 columnas (en la primera que sobra: «tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas…») y la
+casilla lateral sin obstáculo, en esa casilla («junto a la puerta del camión «T» va una barandilla naranja (sale sola, no
+se escribe) y esta casilla, detrás de ella a lo largo del muro, tiene que ser un obstáculo fijo: pon una planta «p» (o
+una estantería)»; dos puertas pegadas: «dos puertas de muelle no van pegadas…»; una estantería que da a la puerta desde
+su lado, en su columna).
 
 `parseLevelDraft(texto)` da el objeto crudo que `parseLevel` pasa a `validateLevel` (mapa y leyenda comprobados, sin
 valores por defecto): los tests de la gramática lo usan para no depender de la validación.
@@ -176,6 +200,14 @@ Hecho (2026-09-30; lo comprueba `core/docks.test.ts`):
   `truckSlotsOf(level): TruckSlotRef[]` (`{ id, truck, truckIndex, column, level, cell, front, cue }`, el orden de
   `snapshot.truckSlots`) y `usesTargetRules(level)` = `hasRacks(level) || hasTrucks(level)`: la puerta de todas las
   reglas de la regla 10.
+- Barandillas (regla 12): `DOOR_JAMB` (0,02: las jambas de la puerta, como los montantes de un hueco; `logic/collision`
+  lo reexporta), `DOCK_RAIL.thickness` (0,06) y `dockRailsOf(level): DockRail[]` (camión a camión, primero el extremo
+  del principio de la tirada y luego el del final; ninguno sin camiones ni en un rincón). `DockRail { truckIndex, wall,
+  end, side, line, outer, from, to }`, en unidades del mapa (bordes de casilla en números enteros, la cara de dentro del
+  muro en 0): `side` = la casilla lateral; `line` = su cara de dentro, a lo largo del muro (x del muelle norte, z del
+  oeste), en la línea de la jamba (el extremo de la tirada ± `DOOR_JAMB`); `outer` = su cara de fuera, `DOCK_RAIL`
+  más allá; `from` 0 / `to` 1 = de la cara de dentro del muro al final de las casillas de puerta. La misma fuente para
+  la validación, la colisión y el dibujo.
 - `targetsOf`: zonas, luego huecos con pista, luego **niveles de camión** (orden de `truckSlotsOf`), con
   `kind: 'truck'`. `levelDestinies(level)` deja de ser `null` con camiones y trae `trucks: Sortable[]` (uno por nivel
   de camión, orden de `truckSlotsOf`; `[]` sin camiones). `usesSymbols` y `zoneMatchKinds` (timbre de la campana, por
@@ -193,9 +225,15 @@ resto cae en «nivel no válido: …»). Lo comprueba `validateLevel.docks.test.
   north wall: its door cells run along row z = 0`, u oeste / `x = 0`). Casillas de puerta dentro del mapa
   (`trucks[i] leaves the warehouse at x,z`).
 - **Casillas de puerta = suelo**: sin estantería, planta, estantería almacenable ni la puerta de otro camión
-  (`trucks[i] overlaps another obstacle at x,z`); nada más alrededor (una puerta en un rincón, dos pegadas o una planta
-  justo detrás valen: si cierra la columna, lo dice el solver). El frente de una estantería sí puede ser una casilla de
-  puerta.
+  (`trucks[i] overlaps another obstacle at x,z`); detrás, lo que sea (una planta justo detrás vale: si cierra la columna,
+  lo dice el solver). El frente de una estantería sí puede ser una casilla de puerta (si la carga desde detrás de ella).
+- **Casillas laterales** (regla 12, `dockRailsOf`): la de cada extremo de la tirada, un obstáculo fijo del mapa
+  (estantería, planta o estantería almacenable): `trucks[i] needs a static obstacle beside its dock door at x,z (a
+  plant, a shelf or a rack): its guard rail stands there`; si es la puerta de otro camión (dos puertas pegadas):
+  `trucks[i] needs a static obstacle beside its dock door at x,z for its guard rail, but that is the dock door of
+  trucks[j]: leave a cell with an obstacle between two dock doors`; una estantería ahí que se cargaría desde la casilla
+  de puerta (la barandilla queda en medio): `racks[i] column j is loaded from the dock door of trucks[k], across its
+  guard rail`. En un rincón no hay casilla lateral.
 - **Nada empieza en la puerta**: `zone "…" is on the dock door of trucks[i] (column j): the truck is loaded from there`
   (su caja fija cerraría esa columna para siempre), `forklift starts on the dock door of trucks[i] (column j): door
   cells start empty`, `box "…" starts on the dock door of trucks[i] (column j): door cells start empty (a box loaded on
@@ -241,6 +279,12 @@ Hecho (2026-09-30; `GameState.docks.test.ts`, `collision.test.ts`):
   desde su casilla de puerta, mirando al muro). La horquilla vacía pasa cualquier puerta. `clearance` mide contra esas losas
   (siempre mide para la horquilla o la carga; para la carga, también contra los tramos cerrados). Sin camiones,
   `loadWalls` no existe y todo es idéntico a antes (test).
+- **Barandillas** (regla 12; `dockRailsOf`, `collision.railRect`): estáticos más, como una planta (`statics`): el cuerpo,
+  la carga y el punto de la horquilla (`clearance`, también con la horquilla vacía) chocan con ellas. Su cara de dentro
+  es la línea de la jamba (un solo pasillo recto con el hueco: la carga, con 0,02 de juego, no toca ni la una ni la
+  otra; el cuerpo, con 0,06), de la cara de dentro del muro al final de las casillas de puerta: una carretilla en la fila
+  de detrás solo puede rozar su extremo. Sin camiones no hay ninguna y el mundo es idéntico al de antes (test, niveles
+  1–3).
 - **Encarar** (`GameState.refreshTruckAim`, compartido con `Interaction` en `RackAim.truck`): el cuerpo **en línea con
   su casilla de puerta** (en ella o justo detrás: la misma columna `x` del mapa en el muelle norte, la misma fila `z` en
   el oeste), rumbo a ≤ 30° de «hacia el camión» (`TRUCK_FACE_ANGLE`), punto de horquilla a ≤ 0,5 del eje de la columna
@@ -257,7 +301,9 @@ Hecho (2026-09-30; `GameState.docks.test.ts`, `collision.test.ts`):
   horquilla vacía no lo fija (no choca con nada). Girando en una casilla de puerta con carga, la puerta cerrada la para
   como el muro y la carretilla se aparta al girar (con una planta detrás, el giro no cabe); solo entra al quedar
   encarada (≤ 30°), en la columna de la casilla de puerta del cuerpo, y desde entonces el rumbo no cambia (tests, a 60
-  y 20 fps, también en una puerta de 3).
+  y 20 fps, también en una puerta de 3). Con las barandillas, girar en una casilla de puerta solo cabe dentro de una
+  puerta de 2 o 3 (entrando de espaldas); si entra así de torcida puede atascarse (abajo, «Barandillas»): S la saca y,
+  alineada, entra recta.
 - **En la puerta** (`RackAim.doorway`): llevando una caja con la carga en la puerta pero sin llegar a `TRUCK_REACH`, no
   se deja nada (`actionIdle`), tampoco en el suelo de al lado (sería teletransportarla).
 - **Dejar** (`Interaction.findDrop`): encarando una columna con la horquilla dentro, encima de su pila mientras quepa
@@ -277,6 +323,42 @@ Hecho (2026-09-30; `GameState.docks.test.ts`, `collision.test.ts`):
   y si no `wrongTarget: true` (regla 7). `zoneReleased.truckSlotId` está escrito por simetría pero no puede ocurrir.
 - La puerta de «reglas de objetivos» (zonas con destino, zumbido en una zona) es `usesTargetRules`: un nivel solo con
   camión las sigue igual que uno con estanterías.
+
+## Barandillas: conducir como un jugador (`logic/GameState.docksDriving.test.ts`)
+
+El piloto automático entra siempre recto por el eje de la columna, y por eso no se vio el atasco. El test entra en cada
+columna del Benchmark como lo haría un jugador: desde dos filas por detrás de la puerta (la carga justo antes de la
+boca de las barandillas), desviada 0, ±0,05, ±0,1, ±0,2 o ±0,3 del eje y torcida 0°, ±5°, ±10°, ±15° o ±25°, solo con W
+(el asistente de rumbo endereza por sí solo lo que está a menos de 8°), a 60 y 20 fps: con carga, con la horquilla
+vacía (cogiendo la caja de la plataforma) y saliendo marcha atrás con S. Siempre: nada entra en (ni sale de) otra
+columna que la de la casilla de puerta del cuerpo, y S siempre saca la carretilla. Alineada a ≤ 5°, sea cual sea el
+desvío, entra recta en su columna, normalmente en 1,33–1,5 s (como mucho 2,9 s, rozando el extremo de una barandilla).
+
+Medido (2026-09-30; por modo y fps, las dos columnas: 54 aproximaciones a ≤ 5° y 108 a ≥ 10°):
+
+| | ≤ 5° (entra recta) | ≥ 10°: entra | a la otra columna | se para antes | se atasca dentro |
+|---|---|---|---|---|---|
+| con carga, sin barandillas (antes) | 54 · 1,33–1,70 s | 24, torcida | 32 | 46–48 | 4–6 |
+| con carga, con barandillas | 54 · 1,33–2,9 s | 26, torcida | 34 | 32–34 | 14–16 |
+| horquilla vacía, sin barandillas | 54 · 1,33–1,35 s | 10–12 | 13–14 | 83–84 | — |
+| horquilla vacía, con barandillas | 54 · 1,33–1,6 s | 32–34 | 22–23 | 52–53 | — |
+
+(«A la otra columna»: torcida, la carretilla deriva hasta la casilla de puerta de al lado y deja o coge allí, como
+dice la regla; nunca en una columna que no sea la de su cuerpo.)
+
+**Pendiente (decisión de diseño, sin hacer)**: con una barandilla de una casilla, su boca solo frena el cuerpo cuando la
+carga ya ha cruzado la línea del muro (con el cuerpo a un lado, su costado toca el extremo de la barandilla después), y
+con la carga en la puerta el rumbo queda fijo. Torcida 10° o más (lo que el asistente de rumbo ya no endereza) hacia la
+columna vecina (o hacia la otra barandilla, en una puerta de 1), la barandilla sujeta el cuerpo y el tramo cerrado de
+al lado (o la jamba) la carga: W ya no la mete y la puerta, que parece abierta, no dice por qué (S sí la saca). Pasa
+también al girar dentro de una puerta de 2 o 3. Arreglos posibles:
+- **Que la puerta enderece**: con la carga en la puerta, el rumbo, en vez de quedarse fijo, vuelve poco a poco a «hacia
+  el camión» al avanzar o retroceder (nunca se gira a mano). Probado con un prototipo (no incluido) en la misma
+  rejilla: con carga, atascos 14–16 → 2 y ninguna entrada torcida; las entradas lentas siguen.
+- **Boca en embudo**: los extremos de las barandillas abiertos hacia fuera, para que una carga descentrada resbale
+  hacia dentro en vez de frenarse de frente contra el extremo (las entradas lentas).
+- **Encarar más estricto**: abrir el tramo solo a ≤ 6° (lo que cabe entre barandillas); nunca entraría torcida, pero
+  habría que enderezar a mano antes de la puerta.
 
 ## Solver, métricas y piloto automático (`src/data/levels`, `src/integration`)
 
@@ -299,6 +381,10 @@ Hecho (2026-09-30; `levels/docks.test.ts`, `integration/docksPlayable.test.ts`):
 - **Callejones**: dejar la caja destinada en su nivel (fija) no se deshace, así que pasa la comprobación completa. Una
   zona o una caja fija justo detrás de una casilla de puerta cerraría esa columna (una planta ahí la deja sin acceso:
   «Sin acceso» en el test).
+- **Barandillas**: nada que cambiar en el modelo. Las casillas laterales ya son sólidas (su obstáculo) y cada barandilla
+  va en el borde entre una casilla de puerta y una sólida: no corta ningún paso entre casillas libres. El giro en la fila
+  de detrás que barrería una casilla lateral ya lo prohíbe su obstáculo (un giro de 90° pide libre la diagonal); el que
+  barre una casilla de puerta pasa a 0,37 de la barandilla con la carga.
 - **Métricas**: `repartos` y `trampas` como con estanterías (las pistas del camión cuentan: `trampas` por tipo de
   pista, `ambiguas` por pista y nivel), `bloqueos` (la caja equivocada de un camión tapa su nivel; un camión se alcanza
   desde su casilla de puerta), `libre` (las casillas de puerta son suelo) y **`camion`** = niveles de camión (alias
@@ -323,6 +409,12 @@ Diseño (2026-09-30, plan del render; medidas y constructores en `builders/truck
   **Estático**: no se hunde con su muro (sus cajas son `BoxView` en `pos`: flotarían), siempre en el encuadre.
 - **Umbral** (`DOCK_PLATE`, `buildDockPlate`): chapa plana de la puerta, a la altura del suelo, por debajo de la vista
   previa.
+- **Barandillas** (`RAIL`, `buildDockRails`; `Theme.truck.rail` naranja suave, `railCap` crema): a cada extremo de la
+  puerta, dentro de la huella que le da la lógica (`dockRailsOf`): un poste contra el marco de la puerta (que sobresale
+  `DOOR.proud` del muro) y otro al final de las casillas de puerta, cada uno con su tapa crema, y dos barras entre ellos.
+  Bajas (0,53, muy por debajo de la carga, ≈ 0,98) y abiertas: no tapan cajas, zonas ni el cartel. Estáticas: ni se
+  hunden con el muro ni se vuelven fantasma; dan y reciben sombra. Una malla por camión, en su grupo
+  (`LevelView.buildTrucks`, `userData.dockRails`).
 - **Cartel** (`DOCK_SIGN`, `SIGN_CUE`, `SIGN_GLOW`; `buildSignFrame`, `buildSignPanel`, `buildSignCue`): en la cara de
   dentro del muro, sobre la puerta; una casilla por columna (justo encima de su casilla de puerta) y por nivel (abajo,
   el nivel 0); con 2 niveles asoma ≈ 0,3 sobre el remate. Pegatina de estantería (`buildCueFace` + `createCueMaterial`)
@@ -360,16 +452,18 @@ Hecho (2026-09-30; `audio.test.ts`):
 
 - `src/data/levels/especiales/benchmark.level` (11×9, `limit: 2`, ventanas norte 8-9 y oeste 2-4): el camión **T**
   espera fuera de la puerta norte, con las casillas de puerta (1,0) y (2,0) (su caja, en (1,-1) y (2,-1)), a la
-  izquierda de R. Se carga desde esas casillas mirando al norte; la fila 1 (detrás de la puerta) queda libre. Columna 1:
+  izquierda de R, y una barandilla a cada lado de la puerta con una planta detrás, en (0,0) y (3,0). Se carga desde esas
+  casillas mirando al norte; la fila 1 (detrás de la puerta) queda libre. Columna 1:
   «azul» abajo y «■» encima; columna 2: «amarillo ✚» (color, símbolo y exacta). La zona ▲ en (2,3), fuera de las filas
   de carga (la de la puerta y la de detrás). El cartel va sobre la puerta.
 - Cajas del muelle: azul ✚ (6,1), amarillo ✚ (6,7) y el amarillo ■ cargado **abajo** en la columna 1 (su destino es el
   nivel de encima: se aparca, entra el azul ✚, queda fijo, y el amarillo ■ va encima de él). 12 cajas, 12 objetivos (3
   zonas + 6 huecos con pista + 3 niveles de camión), un solo reparto; cadena de deducción en sus `nota:`.
-- Medido (`npm run levels -- benchmark`, 2026-09-30, camión fuera): movimientos 14 (exacto), extra 2 (el cambio de las
-  mentas y la carga equivocada), bloqueos 4, trampas 12, repartos 1, huecos 12, camion 3, estrechas 8, libre 80 % (las
-  casillas de puerta son suelo: antes 78), callejones 0 en 60 estados. Piloto automático a 60 y 20 fps con F / V y
-  marcha atrás (`benchmarkPlayable.test.ts`); mínimo del contador de movimientos 14 (`levelMinimums.json`).
+- Medido (`npm run levels -- benchmark`, 2026-09-30, camión fuera, con las barandillas): movimientos 14 (exacto), extra
+  2 (el cambio de las mentas y la carga equivocada), bloqueos 4, trampas 12, repartos 1, huecos 12, camion 3, estrechas
+  8, libre 78 % (las dos plantas junto a la puerta: antes 80; el objetivo pasa a `libre<=78`), callejones 0 en 60
+  estados. Piloto automático a 60 y 20 fps con F / V y marcha atrás (`benchmarkPlayable.test.ts`); mínimo del contador
+  de movimientos 14 (`levelMinimums.json`, sin cambios).
 
 ## Ajustes
 
@@ -382,7 +476,10 @@ Hecho (2026-09-30; `audio.test.ts`):
   (`GameState.refreshDoorPassage`, `inLineWith`).
 - Lógica (`GameState.ts`): `TRUCK_FACE_ANGLE` 30°, `TRUCK_FACE_LATERAL` 0,5, `TRUCK_FACE_NEAR` 0,8, `TRUCK_FACE_FAR` 1,
   `TRUCK_HOLD_ANGLE` 45°, `TRUCK_HOLD_LATERAL` 0,6, `TRUCK_REACH` 0,3 (más allá de la línea del muro), margen de «carga
-  en la puerta» `RACK_INSIDE_MARGIN` 0,05. Colisión (`collision.ts`): `DOOR_JAMB` 0,02, `DOOR_POCKET` 1.
+  en la puerta» `RACK_INSIDE_MARGIN` 0,05. Colisión (`collision.ts`): `DOOR_JAMB` 0,02 (core/docks), `DOOR_POCKET` 1.
+- Barandillas: `DOOR_JAMB` y `DOCK_RAIL.thickness` 0,06 (core/docks.ts: su línea y su grueso, una sola fuente para la
+  validación, la colisión y el dibujo), `RAIL` (builders/truck.ts: postes, barras y tapas), `Theme.truck.rail` /
+  `railCap`.
 - Modelo (`solver.ts`): carga solo recta desde detrás de la puerta y salida solo marcha atrás (conservador, como los
   huecos); la cota de ciclos está en `MoveSearch.destTerm` / `targetDestinations`.
 - Render: puerta y alturas en `dims.ts` `DOCK` (`doorTop`, `sillTop`, `doorInset`, `bedTop`, `apronTop`); camión, umbral

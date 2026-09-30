@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DOCK_RAIL,
+  DOOR_JAMB,
+  dockRailsOf,
   hasTrucks,
   truckCellOf,
   truckColumnsOf,
@@ -17,7 +20,8 @@ import { columnFrame } from './racks';
 
 /*
  * Loading dock geometry and targets (docs/DOCKS.md): the door cells are map cells against the wall; the bed column of
- * each one lies just beyond the wall, outside the map; a truck reads like a rack loaded from TRUCK_FACING[wall].
+ * each one lies just beyond the wall, outside the map; a truck reads like a rack loaded from TRUCK_FACING[wall]; a
+ * guard rail stands at each end of the door run, on its jamb line, one cell into the room.
  */
 
 const NORTH: LevelTruck = { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] };
@@ -87,6 +91,27 @@ describe('core/docks geometry', () => {
     expect(trucksOf({})).toEqual([]);
     expect(hasTrucks({})).toBe(false);
     expect(hasTrucks(both)).toBe(true);
+  });
+
+  it('guard rails: one at each end of a door run, on its jamb line, one cell into the room, thick outward; none at a corner', () => {
+    const size = { width: 7, depth: 5 };
+    const T = DOCK_RAIL.thickness;
+    // A north door over x 2‥4: its side cells (1,0) and (4,0), its rails just inside the ends of the run.
+    expect(dockRailsOf({ trucks: [NORTH], size })).toEqual([
+      { truckIndex: 0, wall: 'north', end: 0, side: { x: 1, z: 0 }, line: 2 + DOOR_JAMB, outer: 2 + DOOR_JAMB - T, from: 0, to: 1 },
+      { truckIndex: 0, wall: 'north', end: 1, side: { x: 4, z: 0 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
+    ]);
+    // A west door over z 1‥3: along column 0, from the west wall's inner face (x = 0) one cell in.
+    expect(dockRailsOf({ trucks: [NORTH, WEST], size }).slice(2)).toEqual([
+      { truckIndex: 1, wall: 'west', end: 0, side: { x: 0, z: 0 }, line: 1 + DOOR_JAMB, outer: 1 + DOOR_JAMB - T, from: 0, to: 1 },
+      { truckIndex: 1, wall: 'west', end: 1, side: { x: 0, z: 3 }, line: 3 - DOOR_JAMB, outer: 3 - DOOR_JAMB + T, from: 0, to: 1 },
+    ]);
+    // A run that reaches a corner of the room has no side cell (and no rail) at that end.
+    expect(dockRailsOf({ trucks: [{ ...NORTH, x: 0 }], size }).map((r) => [r.end, r.side])).toEqual([[1, { x: 2, z: 0 }]]);
+    expect(dockRailsOf({ trucks: [{ ...NORTH, x: 5 }], size }).map((r) => [r.end, r.side])).toEqual([[0, { x: 4, z: 0 }]]);
+    expect(dockRailsOf({ trucks: [{ ...WEST, z: 0 }], size }).map((r) => r.end)).toEqual([1]);
+    expect(dockRailsOf({ trucks: [{ ...WEST, z: 3 }], size }).map((r) => r.end)).toEqual([0]);
+    expect(dockRailsOf({ size })).toEqual([]);
   });
 
   it('the target rules apply with racks or trucks, never without both', () => {

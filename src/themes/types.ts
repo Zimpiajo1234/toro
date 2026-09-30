@@ -73,7 +73,9 @@ export interface Theme {
    * dock sign (its stickers are Theme.rack.cue*, like a rack's); `wheel` / `hub`; `leveller` = the dock plate in the
    * door (from the floor onto the bed); `apron` / `apronEdge` / `apronLine` = the driveway outside, the face of the dock
    * pit and its painted guide lines; `doorFrame` / `shutter` = the door opening's frame (and the dock sign's frame)
-   * and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black).
+   * and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black); `rail` / `railCap` =
+   * the low guard rails on both sides of the door (posts and bars: a soft cozy orange, clearly none of the box colours
+   * and never red) and the cream caps of their posts.
    */
   truck: {
     cab: string;
@@ -94,6 +96,8 @@ export interface Theme {
     doorFrame: string;
     shutter: string;
     rubber: string;
+    rail: string;
+    railCap: string;
   };
   plant: { pot: string; soil: string; leaves: string[] };
   forklift: {

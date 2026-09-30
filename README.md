@@ -183,6 +183,9 @@ y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así
 encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
 marcha atrás. Con las **pistas** encendidas (P; apagadas por defecto), mientras llevas una caja late el siguiente
 nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+A cada lado de la puerta, una **barandilla naranja** baja, de una casilla, con una planta detrás: al camión se llega de
+frente, desde la fila de detrás de la puerta, y hay que entrar bastante recto (muy torcida, la caja puede quedarse
+atascada en la puerta: marcha atrás y otra vez, alineada).
 Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
