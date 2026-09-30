@@ -286,6 +286,12 @@ export interface ForkliftState {
   wheelSpin: number;
   /** -1 … 1, current turning intent (visual steer of rear wheels, body lean). */
   steer: number;
+  /**
+   * Backing up: the one signal the reverse beeper and the beacon on the roof follow, so the beep and the light switch
+   * on and off on the same frames (core/reversing: latched with hysteresis on speed / maxSpeed; B and M never touch
+   * it). Logic sets it every step; a hand-built state may omit it (reads as false).
+   */
+  reversing?: boolean;
 }
 
 export interface BoxState {

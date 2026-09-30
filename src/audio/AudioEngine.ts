@@ -172,14 +172,18 @@ export class AudioEngine {
    * whine and tyre roll follow |speed|, and moving in reverse (negative) sounds the back-up beeper. `forkMotion` = how
    * fast the forks move, signed −1‥1 (+ raising: the pump whir; − lowering: the soft tone and hiss; a 0‥1 value reads
    * as raising). `forkHeight` = their stack / slot height (0 = floor; the pump sits a little higher per level).
+   * `reversing` = the shared reversing latch (`ForkliftState.reversing`, core/reversing): the beeper starts and stops
+   * on its frames, the ones the roof beacon lights on (omitted, it latches `speed` itself, the same way).
    * Continuous sounds go through the master gain, so mute (M) silences them too (the beeper plays on the SFX bus, and
    * B turns it alone off: setReverseBeep).
    */
-  setMotor(speed: number, forkMotion: number, forkHeight = 0): void {
+  setMotor(speed: number, forkMotion: number, forkHeight = 0, reversing?: boolean): void {
     const rt = this.rt;
     if (!rt) return;
     try {
-      rt.motor.set(speed, forkMotion, forkHeight);
+      // Passed on only when given: without it MotorSound is called exactly as before and latches the speed itself.
+      if (reversing === undefined) rt.motor.set(speed, forkMotion, forkHeight);
+      else rt.motor.set(speed, forkMotion, forkHeight, reversing);
     } catch (err) {
       warn('setMotor', err);
     }

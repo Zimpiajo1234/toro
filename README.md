@@ -197,7 +197,9 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
 - **Marcha atrás**: un «tin… tin… tin» dulce y breve, como una campanita (un tono puro con un leve brillo de octava
   que se apaga solo en unos 0,3 s), uno por pulso y en la tonalidad de la música (620–880 Hz), mientras la carretilla
   retrocede de verdad. Suena a la altura de la música y se distingue por su timbre, nunca más fuerte que coger o dejar
-  una caja. **B** lo quita o lo vuelve a poner (se guarda; en la partida lo confirma un aviso breve).
+  una caja. **B** lo quita o lo vuelve a poner (se guarda; en la partida lo confirma un aviso breve). Con él se enciende
+  en el techo una lucecita ámbar que gira al compás, con un brillo cálido en el suelo detrás, y se apaga suave al
+  parar; se ve también con el pitido quitado o el sonido en silencio.
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y

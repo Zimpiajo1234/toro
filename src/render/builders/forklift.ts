@@ -1,12 +1,14 @@
-import { CircleGeometry, CylinderGeometry, TorusGeometry, type BufferGeometry } from 'three';
+import { BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, SphereGeometry, TorusGeometry } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { TAU, clamp } from '../../core/math';
 import type { Theme } from '../../themes/types';
 import { PartList } from '../paint';
 
 /**
  * The "toro": a compact, friendly forklift modelled facing +Z with its origin at the body collider
  * center on the floor. Split in rigid parts so the view can animate them independently:
- * chassis (tilts), carriage + forks (slides on the mast), wheels (spin / steer), eyes (blink).
+ * chassis (tilts), carriage + forks (slides on the mast), wheels (spin / steer), eyes (blink), and the
+ * reverse beacon's light (fades in and out, its beams turn).
  */
 export const FORKLIFT_LAYOUT = {
   trackHalf: 0.28,
@@ -21,6 +23,41 @@ export const FORKLIFT_LAYOUT = {
   maxSteer: 0.38,
 } as const;
 
+/**
+ * The reverse beacon (views/ForkliftView lights it while backing up): a slate base on the rear edge of the roof with a
+ * small amber glass dome on it (part of the chassis). Its light is three pieces of its own: a lit shell over the glass,
+ * two soft beams on opposite sides of it that turn round its axis, and a feathered glow on the floor behind the
+ * forklift. Every value is safe to tune.
+ */
+export const BEACON = {
+  /** Centre of the base along the rig: on the roof's flat top (it ends at z −0.325; the roof top is y 1.025). */
+  z: -0.265,
+  roofTop: 1.025,
+  baseRadius: 0.056,
+  baseHeight: 0.022,
+  /** The glass: a short round wall, then a dome on it. */
+  lensRadius: 0.047,
+  lensWall: 0.034,
+  /** The lit shell sits this far outside the glass (never z-fighting it). */
+  lampGap: 0.004,
+  /**
+   * Each beam, level with the dome's base: from the lit shell out to `beamReach` (the roof is 0.58 wide), `beamRoot` wide
+   * on each side of its axis at the lamp (it leaves the whole glass) and `beamTip` at its end.
+   */
+  beamReach: 0.6,
+  beamRoot: 0.04,
+  beamTip: 0.19,
+  /** The floor glow: a feathered ellipse centred this far behind the body centre (the counterweight ends at ≈ −0.48). */
+  glowZ: -0.64,
+  glowHalfX: 0.5,
+  glowHalfZ: 0.4,
+  /** Its height: over the zone pads (0.02) and the dock plate (0.026), like the drop preview. */
+  glowY: 0.028,
+} as const;
+
+/** Height of the beacon's light (the base of its dome): the lamp shell's and the beams' origin, chassis-local. */
+export const BEACON_LIGHT_Y = BEACON.roofTop + BEACON.baseHeight + BEACON.lensWall;
+
 export interface ForkliftGeometry {
   chassis: BufferGeometry;
   carriage: BufferGeometry;
@@ -28,6 +65,12 @@ export interface ForkliftGeometry {
   innerMast: BufferGeometry;
   wheel: BufferGeometry;
   eyes: BufferGeometry;
+  /** The reverse beacon's lit shell over its glass (origin: the light, BEACON_LIGHT_Y over BEACON.z). */
+  beaconLamp: BufferGeometry;
+  /** Its two opposite beams, flat and facing up (origin: the light; +z and −z at rest). */
+  beaconBeam: BufferGeometry;
+  /** The glow on the floor behind the forklift, facing up (origin: its centre). */
+  beaconGlow: BufferGeometry;
 }
 
 export interface ForkliftSizes {
@@ -45,6 +88,9 @@ export function buildForkliftGeometry(theme: Theme, sizes: ForkliftSizes): Forkl
     innerMast: buildInnerMast(theme),
     wheel: buildWheel(theme, sizes.wheelRadius),
     eyes: buildEyes(theme),
+    beaconLamp: buildBeaconLamp(theme),
+    beaconBeam: buildBeaconBeam(theme),
+    beaconGlow: buildBeaconGlow(theme),
   };
 }
 
@@ -80,6 +126,13 @@ function buildChassis(theme: Theme): BufferGeometry {
     post(x, -0.3, 0.42, 0.99);
   }
   p.add(rounded(0.58, 0.05, 0.64, 0.025), c.body, { y: 1.0, z: -0.03 });
+
+  // Reverse beacon on the roof's rear edge: slate base, amber glass (its light is buildBeacon*).
+  const B = BEACON;
+  const r = B.lensRadius;
+  p.add(new CylinderGeometry(B.baseRadius - 0.004, B.baseRadius, B.baseHeight, 10), c.mast, { y: B.roofTop + B.baseHeight / 2, z: B.z });
+  p.add(new CylinderGeometry(r, r, B.lensWall, 10, 1, true), c.beacon, { y: BEACON_LIGHT_Y - B.lensWall / 2, z: B.z });
+  p.add(new SphereGeometry(r, 10, 3, 0, TAU, 0, Math.PI / 2), c.beacon, { y: BEACON_LIGHT_Y, z: B.z });
 
   // Mast: two rails and crossbars.
   for (const x of [-0.17, 0.17]) p.block(c.mast, x - 0.025, x + 0.025, 0.06, 1.07, L.mastZ - 0.03, L.mastZ + 0.03);
@@ -135,4 +188,98 @@ function buildEyes(theme: Theme): BufferGeometry {
     p.add(new CircleGeometry(0.021, 10), c.wheel, { x: x * 0.97, y: -0.004, z: L.eyeZ + 0.002 });
   }
   return p.build();
+}
+
+/** The beacon lit: a shell just outside its glass (wall + dome), solid `beaconLight` (RGBA). Origin at the light. */
+function buildBeaconLamp(theme: Theme): BufferGeometry {
+  const B = BEACON;
+  const r = B.lensRadius + B.lampGap;
+  const p = new PartList(true);
+  p.add(new CylinderGeometry(r, r, B.lensWall, 10, 1, true), theme.forklift.beaconLight, { y: -B.lensWall / 2 });
+  p.add(new SphereGeometry(r, 10, 3, 0, TAU, 0, Math.PI / 2), theme.forklift.beaconLight);
+  return p.build();
+}
+
+/** Radial and cross-beam stops of each beam (0 = at the lamp / on its axis, 1 = its tip / its edge). */
+const BEAM_ALONG = [0, 0.18, 0.5, 1] as const;
+const BEAM_ACROSS = [-1, -0.5, 0, 0.5, 1] as const;
+/** Rings of the floor glow (0 = its centre, 1 = its rim) and its segments round. */
+const GLOW_RINGS = [0.4, 0.75, 1] as const;
+const GLOW_SEGMENTS = 20;
+
+/**
+ * Two soft beams on opposite sides of the lamp (+z and −z), flat in its plane and facing up: from the lit shell out to
+ * `beamReach`, widening from `beamRoot` to `beamTip`, `beaconLight` with an alpha that fades toward the tip and toward
+ * both edges (the view sets the peak with its material's opacity).
+ */
+function buildBeaconBeam(theme: Theme): BufferGeometry {
+  const B = BEACON;
+  const r0 = B.lensRadius + B.lampGap;
+  const out = new FeatheredMesh(theme.forklift.beaconLight);
+  for (const side of [1, -1]) {
+    const at = (v: number, u: number) => {
+      const along = r0 + (B.beamReach - r0) * v;
+      const across = u * (B.beamRoot + (B.beamTip - B.beamRoot) * v);
+      out.vertex(side * across, side * along, (1 - v * v) * (1 - u * u));
+    };
+    for (let i = 0; i + 1 < BEAM_ALONG.length; i++) {
+      for (let j = 0; j + 1 < BEAM_ACROSS.length; j++) {
+        const v0 = BEAM_ALONG[i], v1 = BEAM_ALONG[i + 1], u0 = BEAM_ACROSS[j], u1 = BEAM_ACROSS[j + 1];
+        at(v0, u0); at(v1, u0); at(v1, u1);
+        at(v0, u0); at(v1, u1); at(v0, u1);
+      }
+    }
+  }
+  return out.build();
+}
+
+/**
+ * A feathered ellipse of `beaconLight` on the floor (half axes glowHalfX × glowHalfZ), facing up: alpha 1 at its centre
+ * easing to 0 at its rim (the view sets the peak with its material's opacity).
+ */
+function buildBeaconGlow(theme: Theme): BufferGeometry {
+  const B = BEACON;
+  const out = new FeatheredMesh(theme.forklift.beaconLight);
+  const at = (s: number, k: number) => {
+    const a = (k / GLOW_SEGMENTS) * TAU;
+    out.vertex(s * B.glowHalfX * Math.sin(a), s * B.glowHalfZ * Math.cos(a), Math.pow(1 - s * s, 1.5));
+  };
+  for (let k = 0; k < GLOW_SEGMENTS; k++) {
+    at(0, k); at(GLOW_RINGS[0], k); at(GLOW_RINGS[0], k + 1);
+    for (let i = 0; i + 1 < GLOW_RINGS.length; i++) {
+      const s0 = GLOW_RINGS[i], s1 = GLOW_RINGS[i + 1];
+      at(s0, k); at(s1, k); at(s1, k + 1);
+      at(s0, k); at(s1, k + 1); at(s0, k + 1);
+    }
+  }
+  return out.build();
+}
+
+/**
+ * Flat triangles in the XZ plane (y = 0) with one colour and a per-vertex alpha (RGBA): the beams and the floor glow.
+ * Vertices come in triangles, counter-clockwise seen from above (facing up, for front-face-only materials).
+ */
+class FeatheredMesh {
+  private readonly positions: number[] = [];
+  private readonly colors: number[] = [];
+  private readonly color: Color;
+
+  constructor(color: string) {
+    this.color = new Color(color);
+  }
+
+  vertex(x: number, z: number, alpha: number): void {
+    this.positions.push(x, 0, z);
+    this.colors.push(this.color.r, this.color.g, this.color.b, clamp(alpha, 0, 1));
+  }
+
+  build(): BufferGeometry {
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(new Float32Array(this.positions), 3));
+    geo.setAttribute('color', new BufferAttribute(new Float32Array(this.colors), 4));
+    geo.computeVertexNormals();
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    return geo;
+  }
 }

@@ -1,3 +1,4 @@
+import { REVERSING, nextReversing } from '../core/reversing';
 import { disconnectAll, gain, holdParam, osc } from './nodes';
 import { midiToFreq } from './music/harmony';
 import { BPM } from './music/timing';
@@ -10,10 +11,14 @@ import { BPM } from './music/timing';
  * apart by its pitch and its bell-like tone, and always under a box pick-up or drop.
  */
 export const BEEPER = {
-  /** Starts once the forklift backs up faster than this (≈ 0.09 u/s, ≈ 0.08 s after S from rest): a nudge beeps. */
-  onSpeed: 0.04,
+  /**
+   * Starts once the forklift backs up faster than this (≈ 0.09 u/s, ≈ 0.08 s after S from rest): a nudge beeps. Both
+   * thresholds are the shared reversing latch's (core/reversing `REVERSING`, tuned there), which the roof beacon
+   * follows too.
+   */
+  onSpeed: REVERSING.onSpeed,
   /** Stops once reversing slows below this (≈ 0.035 u/s), i.e. stopped, or crossing over to drive forward. */
-  offSpeed: 0.015,
+  offSpeed: REVERSING.offSpeed,
   /** One beep per beat of the music (70 BPM → 0.857 s): the steady back-up rhythm, in time with the song. */
   periodSec: 60 / BPM,
   /** The first beep follows the start of reversing this closely. */
@@ -134,16 +139,20 @@ export class ReverseBeeper {
     if (!enabled) this.stop();
   }
 
-  /** `speed` = signed normalised drive speed (negative = reverse), once per frame. */
-  update(speed: number): void {
+  /**
+   * Once per frame. `speed` = signed normalised drive speed (negative = reverse). `reversing` = this frame's shared
+   * reversing latch (`ForkliftState.reversing`, as Game passes it), so the beeps start and stop on the frames the roof
+   * beacon does; omitted, the beeper runs that same latch (core/reversing) on `speed` itself.
+   */
+  update(speed: number, reversing?: boolean): void {
     if (!this.on) return;
-    const s = Number.isFinite(speed) ? speed : 0;
     const now = this.ctx.currentTime;
+    const back = reversing ?? nextReversing(this.active, speed);
     if (!this.active) {
-      if (s >= -BEEPER.onSpeed) return;
+      if (!back) return;
       this.active = true;
       this.nextAt = now + BEEPER.startDelaySec;
-    } else if (s > -BEEPER.offSpeed) {
+    } else if (!back) {
       this.stop();
       return;
     }

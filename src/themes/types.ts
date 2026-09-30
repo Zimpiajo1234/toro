@@ -105,6 +105,13 @@ export interface Theme {
     hub: string;
     seat: string;
     light: string;
+    /** The glass of the reverse beacon on the roof (views/ForkliftView) while it is off: lit and shaded like the body. */
+    beacon: string;
+    /**
+     * The beacon's warm amber light while backing up: its lit lens, the two soft beams turning round it and the faint
+     * glow on the floor behind. Cozy, pastel-leaning: clearly apart from the yellow box, never red.
+     */
+    beaconLight: string;
   };
   boxes: Record<ColorId, BoxPalette>;
   zones: Record<ColorId, ZonePalette>;

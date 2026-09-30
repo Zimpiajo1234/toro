@@ -64,6 +64,10 @@ export const defaultTheme: Theme = {
     hub: '#d7d2c8',
     seat: '#b3a58f',
     light: '#fff5d6',
+    // Amber (hue ≈ 33°): a pale peach glass (lit, the light reads against it), and a warm light far from the yellow box
+    // (#f3d47c, hue ≈ 44°) and from coral.
+    beacon: '#f3d2aa',
+    beaconLight: '#ffc378',
   },
   // `ink` (the large lid symbol of the sorting levels) and `engrave` (a symbol cut into a pad) are deeper tones of the
   // same hue: readable from the default camera, never black, coral kept pink so it never reads as red. `locked` (a box

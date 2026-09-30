@@ -273,6 +273,7 @@ export class GameState {
       carrying: null,
       wheelSpin: 0,
       steer: 0,
+      reversing: false,
     };
 
     this.world = CollisionWorld.fromLevel(level, config.box.size);

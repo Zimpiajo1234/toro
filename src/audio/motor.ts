@@ -237,13 +237,14 @@ export class MotorSound {
    * Once per frame. `speed` = signed normalised drive speed −1‥1 (|speed| / maxSpeed; negative = in reverse, which
    * also beeps). `forkMotion` = signed normalised fork rate −1‥1 (+ up, − down; 0‥1 values read as rising).
    * `forkHeight` = the carriage's stack / slot height (0 = floor, fractional while it moves): the pump sits a little
-   * higher per level. Smoothing is done by the audio thread (setTargetAtTime).
+   * higher per level. `reversing` = the shared reversing latch (`ForkliftState.reversing`): the beeper follows it
+   * (omitted, it latches `speed` itself, the same way). Smoothing is done by the audio thread (setTargetAtTime).
    */
-  set(speed: number, forkMotion: number, forkHeight = 0): void {
+  set(speed: number, forkMotion: number, forkHeight = 0, reversing?: boolean): void {
     const now = this.ctx.currentTime;
     const signed = clampSigned(speed);
     this.setDrive(Math.abs(signed), now);
-    this.beeper.update(signed);
+    this.beeper.update(signed, reversing);
     this.setForks(clampSigned(forkMotion), clampHeight(forkHeight), now);
   }
 

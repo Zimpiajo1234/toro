@@ -545,10 +545,12 @@ export class Game implements GameActions {
     const climbMotion = forkMotion01(climb, dt, climbRate);
     const forkMotion = liftMotion >= climbMotion ? Math.sign(lift) * liftMotion : Math.sign(climb) * climbMotion;
     rt.audio.setMotor(
-      // Signed: backing up (speed < 0, S or leaving a rack slot) sounds the reverse beeper.
+      // Signed: backing up (speed < 0, S or leaving a rack slot) sounds the reverse beeper, on the frames logic's
+      // reversing latch says so: the same ones the beacon on the roof lights on.
       Math.sign(forklift.speed) * speed01(forklift.speed, cfg.maxSpeed),
       forkMotion,
       forklift.forkHeight,
+      forklift.reversing,
     );
     rt.renderer.update(snapshot, dt);
   }

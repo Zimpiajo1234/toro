@@ -336,6 +336,18 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   forks that move with `forkLift` (y 0.06 → 0.34), 4 low-segment wheels spinning with `wheelSpin`, rear wheels
   steered by `steer`, two round headlight "eyes" at the front that occasionally blink (every 4–8 s),
   slight body pitch on acceleration and roll on turns (≤ 3°). Carried box rides on the forks.
+  Reverse beacon (2026-09-30, `builders/forklift.ts` `BEACON`, `views/ForkliftView.ts` `BEACON_*`, safe to tune): a
+  small amber glass dome on a slate base at the rear edge of the roof (`Theme.forklift.beacon`), lit while
+  `ForkliftState.reversing` — the reverse beeper's own signal (core/reversing), so it lights and dims on the beep's
+  frames, with B or M too. Its light is three unlit pieces in `Theme.forklift.beaconLight` (a warm pastel amber,
+  hue ≈ 33°: never the yellow box, never red; `SharedMaterials.beacon`, vertex RGBA, no depth write, front faces only,
+  hidden while off; no three.js light, no shadow): a shell just over the glass (≈ 0.9), two soft opposite beams level
+  with the dome's base (0.6 long, ≈ 0.85 at the lamp, feathered to the tip and edges) turning half a turn per beat of
+  the music (`core/tempo` `BEAT_SEC`, 70 BPM: a beam points back as each "tin" sounds, the first one as it lights), and
+  a feathered ellipse on the floor behind (≈ 0.6 at its centre, swelling as a beam points back), floating at 0.028 over
+  the zone pads and the dock plate with the overlays' polygon offset, drawn under the drop preview. It eases in
+  (λ 9: ≈ 14 % on the first frame, lit in ≈ 0.3 s) and out (λ 4.5, gone in ≈ 1.2 s); lit again from off, the beams
+  start over pointing back.
 - Level complete: zones glow in a gentle sequential wave, window light warms slightly. No flashes, no particles
   storms, no screen effects. Everything eases.
 - Stacks: box y = `level · boxHeight` (visual height `box.size · 0.82`); drop glide ends on the stack top (landing
@@ -457,6 +469,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
       title and while playing, `Game.toggleReverseBeep`; the title footer reads "B pitido" / "B activar pitido", and
       in a level the notice pill says "Pitido de marcha atrás: sí / no") → `AudioEngine.setReverseBeep` →
       `ReverseBeeper.setEnabled`: off, backing up stays silent and a beep sounding fades out at once (τ 25 ms).
+      When it beeps is one shared signal, `ForkliftState.reversing` (`core/reversing.ts` `REVERSING`, 2026-09-30):
+      a latch with hysteresis on the signed normalised speed (on below −0.04, off above −0.015), set by
+      `ForkliftController` every step and handed by Game as `setMotor`'s 4th argument; the beeper follows it (called
+      without it, as in the dev tools and tests, it runs the same latch on the speed itself: the very same beeps), and
+      so does the beacon on the roof (Render direction), which B and M never touch. Its period is the song's beat
+      (`core/tempo` `BPM`, which `audio/music/timing.ts` re-exports), the beacon's too.
   - uiClick: tiny soft wooden tap.
 
 ## UI direction (ui)
