@@ -125,6 +125,7 @@ export class Game implements GameActions {
     this.nextLevel = this.nextLevel.bind(this);
     this.toTitle = this.toTitle.bind(this);
     this.toggleMute = this.toggleMute.bind(this);
+    this.toggleReverseBeep = this.toggleReverseBeep.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleMoves = this.toggleMoves.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
@@ -160,6 +161,7 @@ export class Game implements GameActions {
 
     const settings = progress.getSettings();
     audio.setMuted(settings.muted);
+    audio.setReverseBeep(settings.reverseBeep);
     const index = resolveStartLevel(undefined, this.savedProgress(rt), LEVELS.length);
     const level = this.loadLevel(rt, index);
     renderer.setIdleOrbit(true);
@@ -176,6 +178,7 @@ export class Game implements GameActions {
       showTimer: settings.showTimer,
       showMoves: settings.showMoves,
       muted: settings.muted,
+      reverseBeep: settings.reverseBeep,
       testMode: settings.testMode,
       benchmark: false,
       ...this.progressSummary(rt, settings.testMode),
@@ -337,6 +340,20 @@ export class Game implements GameActions {
     rt.audio.setMuted(muted);
     rt.progress.setSettings({ muted });
     this.store.set({ muted });
+  }
+
+  /**
+   * The reverse beeper (B), persisted like the timer: off, backing up is silent (a beep sounding fades out at once).
+   * Independent of mute. The overlay confirms it (a brief pill in a level, the footer wording on the title).
+   */
+  toggleReverseBeep(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const reverseBeep = !this.store.get().reverseBeep;
+    rt.audio.setReverseBeep(reverseBeep);
+    rt.progress.setSettings({ reverseBeep });
+    this.store.set({ reverseBeep });
   }
 
   toggleTimer(): void {
@@ -518,6 +535,7 @@ export class Game implements GameActions {
   /** Keyboard / gamepad shortcuts that act on the flow rather than the forklift. */
   private handleCommands(rt: Runtime, input: InputSample, confirm: boolean, dt: number): void {
     if (input.mutePressed) this.toggleMute();
+    if (input.beepPressed) this.toggleReverseBeep();
     if (input.timerPressed) this.toggleTimer();
     if (input.movesPressed) this.toggleMoves();
     const testMode = this.store.get().testMode;

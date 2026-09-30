@@ -124,6 +124,21 @@ describe('Input keyboard', () => {
     expect([t.movesPressed, t.timerPressed]).toEqual([false, true]);
   });
 
+  it('reports B (the reverse beeper on / off) as its own edge, once per press', () => {
+    const { input, down, up } = setup();
+    down({ code: 'KeyB', key: 'b' });
+    const s = input.poll();
+    expect([s.beepPressed, s.mutePressed, s.movesPressed, s.timerPressed, s.any]).toEqual([true, false, false, false, true]);
+    expect(input.poll().beepPressed).toBe(false);
+    down({ code: 'KeyB', key: 'b', repeat: true }); // held: never a second toggle
+    expect(input.poll().beepPressed).toBe(false);
+    up({ code: 'KeyB', key: 'b' });
+    down({ code: '', key: 'B' }); // no code (autofill-style events): the character still works
+    expect(input.poll().beepPressed).toBe(true);
+    down({ code: 'KeyB', key: 'b', ctrlKey: true }); // a browser shortcut is left alone
+    expect(input.poll().beepPressed).toBe(false);
+  });
+
   it('tracks R as held until released (hold-to-restart), re-synced by repeats', () => {
     const { input, down, up, win } = setup();
     down({ code: 'KeyR', key: 'r' });

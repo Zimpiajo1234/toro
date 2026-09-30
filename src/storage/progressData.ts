@@ -14,9 +14,17 @@ export interface Settings {
   showMoves: boolean;
   /** "Modo prueba": every level can be started from the title (unlock progress itself is never changed). */
   testMode: boolean;
+  /** The reverse beeper ("tin… tin…" while backing up; B toggles it). Additive field, default on. */
+  reverseBeep: boolean;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: true, showMoves: true, testMode: false };
+export const DEFAULT_SETTINGS: Readonly<Settings> = {
+  muted: false,
+  showTimer: true,
+  showMoves: true,
+  testMode: false,
+  reverseBeep: true,
+};
 
 /**
  * In-memory model. The best time of a level is always `rankings.get(id)[0]`.
@@ -128,13 +136,15 @@ export function parseProgress(json: string | null): ProgressModel {
   if (isValidIndex(raw.lastLevel)) progress.lastLevel = raw.lastLevel;
   if (typeof raw.lastLevelId === 'string' && raw.lastLevelId !== '') progress.lastLevelId = raw.lastLevelId;
   if (isRecord(raw.settings)) {
-    const { muted, showTimer, showMoves, testMode } = raw.settings;
+    const { muted, showTimer, showMoves, testMode, reverseBeep } = raw.settings;
     if (typeof muted === 'boolean') progress.settings.muted = muted;
     if (typeof showTimer === 'boolean') progress.settings.showTimer = showTimer;
     // Additive field (same version): saves written before the move counter lack it (default shown).
     if (typeof showMoves === 'boolean') progress.settings.showMoves = showMoves;
     // Additive field (same version): saves written before it simply lack it (default off).
     if (typeof testMode === 'boolean') progress.settings.testMode = testMode;
+    // Additive field (same version): saves written before the beep toggle lack it (default on).
+    if (typeof reverseBeep === 'boolean') progress.settings.reverseBeep = reverseBeep;
   }
   return progress;
 }

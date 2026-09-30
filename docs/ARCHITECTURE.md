@@ -418,9 +418,18 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
       (only after ≥ 0.15 s of motion, at most one per 0.3 s, never within 0.8 s of a pick or drop:
       `AudioEngine.hushForkClunk`).
     - reverse beeper (`audio/beeper.ts` `ReverseBeeper`, `BEEPER`): while the forklift really moves backwards (S, or
-      backing out of a rack slot or a truck), "beep… beep… beep", one 0.34 s beep per beat of the music (0.86 s),
-      scheduled on the audio clock; a round, low-passed sine on the song's tonic (C5 octave: 523–784 Hz with the
-      composer's keys, well under a real back-up alarm), ≈ 7 dB under the music, soft fade in and out, no click.
+      backing out of a rack slot or a truck), a sweet, soft "tin… tin… tin", one strike per beat of the music
+      (0.86 s), scheduled on the audio clock (2026-09-30: the ≈ 1.1 kHz sustained alarm before it was "too
+      industrial"). A sine on the song's tonic or fifth, whichever is nearest F♯5 (622–880 Hz with the composer's
+      keys), and a faint octave (0.16) whose own faster envelope sits under the beep's; no odd harmonic. Each beep is
+      a strike: a quick soft rise (τ 5 ms, the peak in ≈ 15 ms), then a natural decay (τ 0.1 s: ≈ 0.3 s of ring, gone
+      long before the next beat); no click. It plays on the SFX bus (`MotorSound`'s `beepOut`; on the quiet motor bus
+      it vanished), level 0.08: its loudest 100 ms ≈ −31.5 LUFS, the music's own mean, ≈ 6 dB under the old alarm,
+      ≈ 9 / 11 dB under a pick-up / floor drop, yet ≈ 12–14 dB over the music in its own third-octave band (measured
+      offline: `dev/audioPreview` `toroLevels()`). `Settings.reverseBeep` (persisted, additive, default on; B on the
+      title and while playing, `Game.toggleReverseBeep`; the title footer reads "B pitido" / "B activar pitido", and
+      in a level the notice pill says "Pitido de marcha atrás: sí / no") → `AudioEngine.setReverseBeep` →
+      `ReverseBeeper.setEnabled`: off, backing up stays silent and a beep sounding fades out at once (τ 25 ms).
   - uiClick: tiny soft wooden tap.
 
 ## UI direction (ui)
@@ -522,7 +531,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

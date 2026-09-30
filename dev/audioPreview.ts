@@ -1,18 +1,20 @@
 /**
  * Dev-only audio preview (not part of the build): open http://localhost:5173/dev/audio-preview.html
  * with `npm run dev`. Buttons drive the real AudioEngine; the offline analysis renders the full mix
- * into an OfflineAudioContext and reports levels and voice counts.
+ * into an OfflineAudioContext and reports levels and voice counts. `toroLevels()` in the console renders single
+ * layers (music, reverse beep, pick-up, drop) through the real graph and reports their K-weighted loudness.
  */
 import { AudioEngine, COMPLETE_AFTER_LAND_SEC, DROP_LAND_SEC, type AudioScene } from '../src/audio/AudioEngine';
 import { GAME_CONFIG } from '../src/config';
 import type { GameEvent } from '../src/core/types';
-import { createAudioGraph } from '../src/audio/graph';
+import { createAudioGraph, type AudioGraph } from '../src/audio/graph';
 import { Composer } from '../src/audio/music/Composer';
 import { MusicPlayer } from '../src/audio/MusicPlayer';
 import { SfxPlayer } from '../src/audio/sfx';
 import { MotorSound } from '../src/audio/motor';
-import { beepFrequency } from '../src/audio/beeper';
+import { beepFrequency, ReverseBeeper } from '../src/audio/beeper';
 import { mulberry32 } from '../src/audio/random';
+import type { Rng } from '../src/audio/types';
 import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing } from '../src/audio/music/harmony';
 import { TONIC_CHORD } from '../src/audio/music/progressions';
 
@@ -95,7 +97,8 @@ on('matchFinal', () => {
 });
 on('click', () => engine.uiClick());
 
-// Motor: sliders, or a simulated drive (accelerate, cruise, brake, lift forks).
+// Motor: sliders, or a simulated drive (accelerate, cruise, brake, lift forks, back up: the reverse beep).
+// `toroAudio.setReverseBeep(false)` in the console turns the beep off, like B in the game.
 let driving = false;
 on('drive', () => {
   driving = !driving;
@@ -107,9 +110,11 @@ function frame(t: number): void {
   let speed = Number(speedInput.value);
   let fork = Number(forkInput.value);
   if (driving) {
-    const s = (t / 1000) % 8;
+    const s = (t / 1000) % 10;
     speed = s < 1.5 ? s / 1.5 : s < 4.5 ? 1 : s < 5.5 ? 1 - (s - 4.5) : 0;
     fork = s > 6 && s < 6.35 ? 1 : 0;
+    // Backing up (reverse tops out near half speed): the beeper's "tin… tin…".
+    if (s > 6.8) speed = -0.5 * Math.max(0, Math.min(1, (s - 6.8) / 0.4, (9.6 - s) / 0.4));
     speedInput.value = String(speed);
     forkInput.value = String(fork);
   }
@@ -185,8 +190,9 @@ async function analyse(seconds = 40): Promise<void> {
     const t = i * quantum;
     void ctx.suspend(t).then(() => {
       for (const [at, fn] of events) if (at > t - quantum && at <= t) fn(ctx.currentTime);
-      const drive = t > 9 && t < 29 ? Math.max(0, Math.sin((t - 9) * 0.9)) : 0;
-      motor.set(drive, t % 3 < 0.3 && t > 9 && t < 29 ? 1 : 0);
+      // Forward and back (reverse at half speed at most, like the forklift): the beeper sounds while it backs up.
+      const wave = t > 9 && t < 29 ? Math.sin((t - 9) * 0.9) : 0;
+      motor.set(wave >= 0 ? wave : 0.5 * wave, t % 3 < 0.3 && t > 9 && t < 29 ? 1 : 0);
       music.pump();
       maxVoices = Math.max(maxVoices, music.voiceCount() + sfx.voiceCount());
       void ctx.resume();
@@ -240,5 +246,209 @@ $('playRender').addEventListener('click', () => {
   src.start();
 });
 
+/* ------------------------------------------------------------------ */
+/* Loudness of single layers (K-weighted, ITU-R BS.1770)               */
+/* ------------------------------------------------------------------ */
+
+/** The K-weighting coefficients below are the 48 kHz ones. */
+const LOUDNESS_SR = 48000;
+/** BS.1770 K-weighting at 48 kHz: the high-shelf "head" stage, then the RLB high-pass. [b0, b1, b2], [a1, a2]. */
+const K_STAGES: readonly (readonly [readonly number[], readonly number[]])[] = [
+  [
+    [1.53512485958697, -2.69169618940638, 1.19839281085285],
+    [-1.69065929318241, 0.73248077421585],
+  ],
+  [
+    [1, -2, 1],
+    [-1.99004745483398, 0.99007225036621],
+  ],
+];
+
+function kWeighted(x: Float32Array): Float64Array {
+  let y = Float64Array.from(x);
+  for (const [b, a] of K_STAGES) {
+    const out = new Float64Array(y.length);
+    let x1 = 0;
+    let x2 = 0;
+    let y1 = 0;
+    let y2 = 0;
+    for (let i = 0; i < y.length; i++) {
+      const x0 = y[i];
+      const y0 = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[0] * y1 - a[1] * y2;
+      out[i] = y0;
+      x2 = x1;
+      x1 = x0;
+      y2 = y1;
+      y1 = y0;
+    }
+    y = out;
+  }
+  return y;
+}
+
+/** RBJ band-pass (0 dB at `f0`), a third of an octave wide (Q 4.32): a tone against the music in its own band. */
+function thirdOctave(x: Float32Array, f0: number): Float64Array {
+  const w = (2 * Math.PI * f0) / LOUDNESS_SR;
+  const alpha = Math.sin(w) / (2 * 4.32);
+  const a0 = 1 + alpha;
+  const [b0, b2, a1, a2] = [alpha / a0, -alpha / a0, (-2 * Math.cos(w)) / a0, (1 - alpha) / a0];
+  const y = new Float64Array(x.length);
+  let x1 = 0;
+  let x2 = 0;
+  let y1 = 0;
+  let y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const x0 = x[i];
+    const y0 = b0 * x0 + b2 * x2 - a1 * y1 - a2 * y2;
+    y[i] = y0;
+    x2 = x1;
+    x1 = x0;
+    y2 = y1;
+    y1 = y0;
+  }
+  return y;
+}
+
+/**
+ * Running sum of the power of both channels after `weigh` (K-weighting by default; BS.1770 channel weights 1): any
+ * window's mean in O(1).
+ */
+function powerSums(buffer: AudioBuffer, weigh: (x: Float32Array) => Float64Array = kWeighted): Float64Array {
+  const l = weigh(buffer.getChannelData(0));
+  const r = weigh(buffer.getChannelData(1));
+  const sums = new Float64Array(l.length + 1);
+  for (let i = 0; i < l.length; i++) sums[i + 1] = sums[i] + l[i] * l[i] + r[i] * r[i];
+  return sums;
+}
+
+const toLufs = (power: number) => (power > 0 ? -0.691 + 10 * Math.log10(power) : -Infinity);
+
+/** Mean K-weighted power over [from, to) s. */
+function meanPower(sums: Float64Array, from: number, to: number): number {
+  const a = Math.max(0, Math.floor(from * LOUDNESS_SR));
+  const b = Math.min(sums.length - 1, Math.floor(to * LOUDNESS_SR));
+  return b > a ? (sums[b] - sums[a]) / (b - a) : 0;
+}
+
+/** Mean power of the loudest `win`-second window over [from, to) (10 ms hop). */
+function maxPower(sums: Float64Array, win: number, from: number, to: number): number {
+  let best = 0;
+  for (let t = from; t + win <= to + 1e-9; t += 0.01) best = Math.max(best, meanPower(sums, t, t + win));
+  return best;
+}
+
+const maxLufs = (sums: Float64Array, win: number, from: number, to: number) => toLufs(maxPower(sums, win, from, to));
+
+/** BS.1770-4 integrated loudness over [from, to): 400 ms blocks every 100 ms, −70 LUFS then −10 LU gates. */
+function integratedLufs(sums: Float64Array, from: number, to: number): number {
+  const blocks: number[] = [];
+  for (let t = from; t + 0.4 <= to + 1e-9; t += 0.1) blocks.push(meanPower(sums, t, t + 0.4));
+  const mean = (list: number[]) => list.reduce((s, v) => s + v, 0) / Math.max(1, list.length);
+  const loud = blocks.filter((p) => toLufs(p) > -70);
+  const gate = toLufs(mean(loud)) - 10;
+  return toLufs(mean(loud.filter((p) => toLufs(p) > gate)));
+}
+
+function samplePeakDb(buffer: AudioBuffer, from: number, to: number): number {
+  const a = Math.max(0, Math.floor(from * buffer.sampleRate));
+  const b = Math.min(buffer.length, Math.floor(to * buffer.sampleRate));
+  let peak = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const d = buffer.getChannelData(c);
+    for (let i = a; i < b; i++) peak = Math.max(peak, Math.abs(d[i]));
+  }
+  return peak > 0 ? 20 * Math.log10(peak) : -Infinity;
+}
+
+/**
+ * Renders `seconds` of one layer alone through the real mixing graph (48 kHz, music at full level: no fade-in).
+ * `build` wires the layer and returns what runs every `quantum` s of audio time (the frame loop's stand-in).
+ */
+async function renderLayer(
+  seconds: number,
+  build: (ctx: OfflineAudioContext, graph: AudioGraph, rng: Rng) => (t: number) => void,
+  quantum = 0.02,
+): Promise<AudioBuffer> {
+  const ctx = new OfflineAudioContext(2, Math.round(LOUDNESS_SR * seconds), LOUDNESS_SR);
+  const rng = mulberry32(0x70a0);
+  const graph = createAudioGraph(ctx, GAME_CONFIG.audio, rng, false);
+  graph.musicFade.gain.value = 1;
+  const tick = build(ctx, graph, rng);
+  tick(0);
+  for (let i = 1; i * quantum < seconds - 0.05; i++) {
+    void ctx.suspend(i * quantum).then(() => {
+      tick(ctx.currentTime);
+      void ctx.resume();
+    });
+  }
+  return ctx.startRendering();
+}
+
+/** Loudest 100 ms (LUFS) and sample peak (dBFS) of each one-second slot holding one hit, averaged. */
+function hitLevels(buffer: AudioBuffer, starts: readonly number[]): { lufs: number; peak: number } {
+  const sums = powerSums(buffer);
+  let lufs = 0;
+  let peak = 0;
+  for (const t of starts) {
+    lufs += maxLufs(sums, 0.1, t - 0.05, t + 0.9);
+    peak += samplePeakDb(buffer, t - 0.05, t + 0.9);
+  }
+  return { lufs: lufs / starts.length, peak: peak / starts.length };
+}
+
+/**
+ * The numbers the reverse beep's level is balanced against: the music's mean (playing scene), the loudest 100 ms of
+ * one beep, a box pick-up and a floor drop (each alone through the whole graph, K-weighted), plus sample peaks and how
+ * far the beep stands over the music in its own third-octave band. `keyPc` = the song's key (default F, the
+ * composer's most likely one). About 10 s per call.
+ */
+async function levels(keyPc = 5): Promise<string> {
+  const report = $('report');
+  report.textContent = 'Midiendo…';
+  const music = await renderLayer(
+    40,
+    (_ctx, graph, rng) => {
+      const composer = new Composer({ rng, keyPc });
+      composer.setScene('playing');
+      const player = new MusicPlayer(graph, composer, rng);
+      return () => player.pump();
+    },
+    0.1,
+  );
+  const musicSums = powerSums(music);
+  // Reversing from 0.5 s to 5 s: the beeps land on the beat grid from there.
+  const beepHz = beepFrequency(keyPc);
+  const beeps = await renderLayer(6, (ctx, graph) => {
+    const beeper = new ReverseBeeper(ctx, graph.sfxIn, beepHz);
+    return (t) => beeper.update(t >= 0.5 && t < 5 ? -0.5 : 0);
+  });
+  const beepSums = powerSums(beeps);
+  const band = (x: Float32Array) => thirdOctave(x, beepHz);
+  const inBand = 10 * Math.log10(maxPower(powerSums(beeps, band), 0.1, 0.5, 5) / meanPower(powerSums(music, band), 4, 40));
+  const hits = [0.5, 1.5, 2.5, 3.5, 4.5];
+  const hitRender = (play: (sfx: SfxPlayer, t: number) => void) =>
+    renderLayer(6, (ctx, graph, rng) => {
+      const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, rng);
+      for (const t of hits) play(sfx, t);
+      return () => undefined;
+    });
+  const pickup = hitLevels(await hitRender((sfx, t) => sfx.pickup(t)), hits);
+  const drop = hitLevels(await hitRender((sfx, t) => sfx.drop(t, null)), hits);
+
+  const f = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : '-∞');
+  const beep100 = maxLufs(beepSums, 0.1, 0.5, 5);
+  const musicMean = toLufs(meanPower(musicSums, 4, 40));
+  const lines = [
+    `música (jugando, 4–40 s): media ${f(musicMean)} LUFS · integrada ${f(integratedLufs(musicSums, 4, 40))} LUFS · 100 ms máx. ${f(maxLufs(musicSums, 0.1, 4, 40))} LUFS · pico ${f(samplePeakDb(music, 4, 40))} dBFS`,
+    `pitido (${beepHz.toFixed(0)} Hz): 100 ms más fuertes ${f(beep100)} LUFS · 400 ms ${f(maxLufs(beepSums, 0.4, 0.5, 5))} LUFS · pico ${f(samplePeakDb(beeps, 0.5, 5))} dBFS`,
+    `recoger caja: 100 ms ${f(pickup.lufs)} LUFS · pico ${f(pickup.peak)} dBFS`,
+    `dejar en el suelo: 100 ms ${f(drop.lufs)} LUFS · pico ${f(drop.peak)} dBFS`,
+    `pitido − música: ${f(beep100 - musicMean)} LU · pitido − recoger: ${f(beep100 - pickup.lufs)} dB · pitido − dejar: ${f(beep100 - drop.lufs)} dB`,
+    `en su tercio de octava: pitido ${f(inBand)} dB sobre la media de la música`,
+  ];
+  report.textContent = lines.join('\n');
+  return report.textContent;
+}
+
 // Expose for console experiments.
-Object.assign(window, { toroAudio: engine, toroAnalyse: analyse });
+Object.assign(window, { toroAudio: engine, toroAnalyse: analyse, toroLevels: levels });

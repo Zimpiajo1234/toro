@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LevelCaption } from './LevelDots';
 import { Overlay } from './Overlay';
+import { beepNoticeText, soundNotice, soundNoticeText } from './SoundNotice';
 import { createUIStore, type GameActions, type LevelResult, type UIState } from './uiState';
 
 const noopActions: GameActions = {
@@ -11,6 +12,7 @@ const noopActions: GameActions = {
   nextLevel() {},
   toTitle() {},
   toggleMute() {},
+  toggleReverseBeep() {},
   toggleTimer() {},
   toggleMoves() {},
   toggleTestMode() {},
@@ -123,6 +125,21 @@ describe('Overlay', () => {
     expect(muted).not.toContain('Sonido desactivado');
   });
 
+  it('title footer names B for the reverse beeper right after M, and tells the truth when it is off', () => {
+    const on = render({ screen: 'title' });
+    expect(on).toContain('<span class="ui-swap"><kbd class="keycap">B</kbd> pitido</span>');
+    expect(on.indexOf('M</kbd> silencio')).toBeLessThan(on.indexOf('B</kbd> pitido'));
+    expect(on.indexOf('B</kbd> pitido')).toBeLessThan(on.indexOf('T</kbd> tiempo'));
+    const off = render({ screen: 'title', reverseBeep: false });
+    // A quiet crossed bell and the way back, like the muted "M activar sonido".
+    expect(off).toMatch(/<span class="ui-swap"><svg class="title__footer-icon"[^>]*>.*?<\/svg><kbd class="keycap">B<\/kbd> activar pitido<\/span>/);
+    expect(off).not.toContain('B</kbd> pitido');
+    expect(off).toContain('M</kbd> silencio'); // mute is its own setting
+    // The saved state is never announced on load.
+    expect(off).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
+    expect(off).not.toContain('Pitido de marcha atrás');
+  });
+
   it('caption never shows a locked level as available', () => {
     const html = renderToStaticMarkup(createElement(LevelCaption, { level: levels[2], showTimes: true }));
     expect(html).toContain('Nivel 3 · por descubrir');
@@ -193,10 +210,12 @@ describe('Overlay', () => {
     for (const patch of screens) {
       const html = render(patch);
       expect(html).not.toMatch(/\bmando\b/i);
-      // Pad-only buttons (A is also the keyboard's turn-left key, so it is not in the list).
-      for (const pad of ['X', 'B', 'Y', 'LB', 'RB', 'LT', 'RT', 'Start', 'Back']) {
+      // Pad-only buttons (A and B are keyboard keys too: turn left, and the reverse beeper's toggle on the title).
+      for (const pad of ['X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Start', 'Back']) {
         expect(html).not.toContain(`<kbd class="keycap">${pad}</kbd>`);
       }
+      // In a level nothing names B (there it would read as the pad's fork-down button): the beep key is on the title.
+      if (patch.screen !== 'title') expect(html).not.toContain('<kbd class="keycap">B</kbd>');
     }
   });
 
@@ -451,5 +470,28 @@ describe('Overlay: move counter', () => {
     expect(practice).toContain('>Modo prueba · estos movimientos no se guardan</p>');
     const both = render({ screen: 'complete', result: result({ practice: true, minMoves: min }) });
     expect(both).toContain('>Modo prueba · este resultado no se guarda</p>');
+  });
+});
+
+describe('Sound notice (M, B)', () => {
+  const sound = (muted: boolean, reverseBeep: boolean) => ({ muted, reverseBeep });
+
+  it('names the setting that changed, in Spanish: the mute, or the reverse beeper', () => {
+    expect(soundNoticeText(true)).toBe('Sonido desactivado');
+    expect(beepNoticeText(false)).toBe('Pitido de marcha atrás: no');
+    expect(beepNoticeText(true)).toBe('Pitido de marcha atrás: sí');
+    expect(soundNotice(sound(false, true), sound(false, true))).toBeNull();
+    expect(soundNotice(sound(false, true), sound(false, false))).toEqual({ kind: 'beep', text: 'Pitido de marcha atrás: no', off: true });
+    expect(soundNotice(sound(true, false), sound(true, true))).toEqual({ kind: 'beep', text: 'Pitido de marcha atrás: sí', off: false });
+    expect(soundNotice(sound(false, true), sound(true, true))).toEqual({ kind: 'sound', text: 'Sonido desactivado', off: true });
+    // Both at once (never from one key press): the mute, which silences everything, is the one named.
+    expect(soundNotice(sound(true, true), sound(false, false))).toMatchObject({ kind: 'sound', text: 'Sonido activado' });
+  });
+
+  it('shows nothing until a toggle: saved settings are never announced when a level loads', () => {
+    const html = render({ screen: 'playing', muted: true, reverseBeep: false });
+    expect(html).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
+    expect(html).not.toContain('Pitido de marcha atrás');
+    expect(html).not.toContain('class="hud-pill notice');
   });
 });

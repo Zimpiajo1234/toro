@@ -41,6 +41,8 @@ const fakes = vi.hoisted(() => {
     zooms: [] as number[],
     zoomSteps: [] as number[],
     zoomResets: 0,
+    /** Every AudioEngine.setReverseBeep call (the «pitido» setting handed to audio), oldest first. */
+    beepCalls: [] as boolean[],
   };
 
   class FakeGameState {
@@ -110,6 +112,9 @@ const fakes = vi.hoisted(() => {
     }
     uiClick() {}
     setMuted() {}
+    setReverseBeep(enabled: boolean) {
+      sim.beepCalls.push(enabled);
+    }
     setScene() {}
     setMotor() {}
     handleEvent() {}
@@ -193,6 +198,7 @@ beforeEach(() => {
   sim.zooms.length = 0;
   sim.zoomSteps.length = 0;
   sim.zoomResets = 0;
+  sim.beepCalls.length = 0;
   win = fakeWindow();
   rafCallback = null;
   now = 1000;
@@ -637,6 +643,57 @@ describe('Game settings keys and other tabs', () => {
     expect(store.get().showTimer).toBe(!shown);
     tap('KeyT', 't');
     expect(store.get().showTimer).toBe(shown);
+  });
+
+  it('B turns the reverse beeper off / on on the title, while playing and on the card, persisted; audio follows', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    const savedBeep = () => (JSON.parse(items.get('toro.progress.v1') ?? '{}').settings ?? {}).reverseBeep;
+    const first = setup();
+    expect(first.store.get().reverseBeep).toBe(true); // on by default
+    expect(sim.beepCalls).toEqual([true]); // the saved setting reaches audio at mount
+    tap('KeyB', 'b'); // on the title
+    expect(first.store.get().reverseBeep).toBe(false);
+    expect(sim.beepCalls.at(-1)).toBe(false);
+    expect(savedBeep()).toBe(false);
+    first.game.start(0);
+    tap('KeyB', 'b'); // while playing
+    expect(first.store.get()).toMatchObject({ screen: 'playing', reverseBeep: true });
+    expect(sim.beepCalls.at(-1)).toBe(true);
+    expect(savedBeep()).toBe(true);
+    // Its own setting: T and M leave it alone, and it leaves them alone.
+    tap('KeyT', 't');
+    tap('KeyM', 'm');
+    expect(first.store.get()).toMatchObject({ reverseBeep: true, showTimer: false, muted: true, showMoves: true });
+    tap('KeyB', 'b');
+    expect(first.store.get()).toMatchObject({ reverseBeep: false, showTimer: false, muted: true });
+    // On the completion card too, like T / N.
+    emit({ type: 'firstInput' });
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(first.store.get().screen).toBe('complete');
+    tap('KeyB', 'b');
+    expect(first.store.get()).toMatchObject({ screen: 'complete', reverseBeep: true });
+    first.game.toggleReverseBeep(); // the action itself (GameActions)
+    expect(first.store.get().reverseBeep).toBe(false);
+    expect(sim.beepCalls.slice(1)).toEqual([false, true, false, true, false]);
+    first.game.dispose();
+
+    sim.beepCalls.length = 0;
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ reverseBeep: false, showTimer: false, muted: true });
+    expect(sim.beepCalls).toEqual([false]);
+  });
+
+  it('a save from before the reverse beep toggle loads with the beep on', () => {
+    savedGame({ rankings: {}, highestUnlocked: 0, lastLevel: 0 }); // settings: muted and showTimer only
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ reverseBeep: true, muted: false, showTimer: true });
+    expect(sim.beepCalls).toEqual([true]);
   });
 
   it('refreshes the title summaries when another tab writes the progress key', () => {

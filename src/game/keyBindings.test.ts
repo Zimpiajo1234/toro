@@ -19,6 +19,9 @@ describe('resolveKey', () => {
     expect(resolveKey('KeyT', 't')).toBe('timer');
     expect(resolveKey('KeyN', 'n')).toBe('moves');
     expect(resolveKey('', 'N')).toBe('moves');
+    expect(resolveKey('KeyB', 'b')).toBe('beep');
+    expect(resolveKey('', 'B')).toBe('beep');
+    expect(resolveKey(undefined, 'b')).toBe('beep');
     expect(resolveKey('Enter', 'Enter')).toBe('confirm');
     expect(resolveKey('NumpadEnter', 'Enter')).toBe('confirm');
     expect(resolveKey('Escape', 'Escape')).toBe('back');
@@ -53,7 +56,8 @@ describe('resolveKey', () => {
 
   it('no two game keys share a physical key or a character', () => {
     // F / V were free; the fork keys must not steal a key another binding already uses.
-    // N (move counter) was free too; so were the keys right of 0 and the numpad + / − (camera zoom).
+    // N (move counter) was free too; so were the keys right of 0 and the numpad + / − (camera zoom), and B (the
+    // reverse beeper on / off).
     const codes = [
       'KeyW',
       'KeyA',
@@ -65,6 +69,7 @@ describe('resolveKey', () => {
       'KeyM',
       'KeyT',
       'KeyN',
+      'KeyB',
       'KeyU',
       'KeyF',
       'KeyV',

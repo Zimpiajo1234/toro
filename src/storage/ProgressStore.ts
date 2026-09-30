@@ -219,6 +219,10 @@ export class ProgressStore {
       settings.testMode = patch.testMode;
       changed = true;
     }
+    if (typeof patch.reverseBeep === 'boolean' && patch.reverseBeep !== settings.reverseBeep) {
+      settings.reverseBeep = patch.reverseBeep;
+      changed = true;
+    }
     if (changed) this.save();
   }
 

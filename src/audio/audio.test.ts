@@ -119,6 +119,10 @@ describe('AudioEngine without Web Audio', () => {
     engine.handleEvent({ type: 'levelComplete' });
     engine.uiClick();
     engine.forkClick(1, 1);
+    expect(engine.isReverseBeepOn()).toBe(true);
+    engine.setReverseBeep(false);
+    expect(engine.isReverseBeepOn()).toBe(false);
+    engine.setReverseBeep(true);
     expect(engine.getDebugInfo().state).toBe('unavailable');
     engine.setMuted(false);
     expect(engine.isMuted()).toBe(false);
@@ -993,6 +997,44 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       const sfxVol = (graph.sfxIn as unknown as FakeGain).outputs[0] as FakeGain;
       expect(sfxVol.outputs).toContain(graph.master);
       engine.dispose();
+    });
+
+    it('B: the reverse beeper follows setReverseBeep, set before audio starts or after, and mute leaves it alone', async () => {
+      vi.stubGlobal('AudioContext', FakeAudioContext);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const engine = new AudioEngine();
+      engine.setReverseBeep(false); // the saved setting, applied before any gesture
+      expect(engine.isReverseBeepOn()).toBe(false);
+      await engine.unlock();
+      const ctx = FakeAudioContext.instances[0];
+      const motor = (engine as unknown as { rt: { motor: MotorSound } }).rt.motor;
+      const beeper = (motor as unknown as { beeper: { env: FakeGain; enabled: boolean } }).beeper;
+      expect(beeper.enabled).toBe(false);
+      const backUp = (frames: number) => {
+        for (let i = 0; i < frames; i++) {
+          ctx.currentTime += 1 / 60;
+          engine.setMotor(-0.4, 0);
+        }
+      };
+      backUp(60);
+      expect(motor.reversing).toBe(false);
+      expect(beeper.env.gain.events).toHaveLength(0); // silent: not a single strike scheduled
+
+      engine.setReverseBeep(true);
+      backUp(2);
+      expect(motor.reversing).toBe(true);
+      // Off while beeping: the beep fades out at once.
+      engine.setReverseBeep(false);
+      expect(motor.reversing).toBe(false);
+      expect((beeper.env.gain as unknown as FakeParam).last()).toMatchObject({ kind: 'target', value: 0 });
+      // Mute is its own setting.
+      engine.setMuted(true);
+      engine.setMuted(false);
+      expect(engine.isReverseBeepOn()).toBe(false);
+      expect(beeper.enabled).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+      engine.setReverseBeep(true); // after dispose: a no-op that never throws
     });
   });
 });

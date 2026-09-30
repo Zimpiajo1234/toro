@@ -51,6 +51,17 @@ export function SoundIcon({ className, off = false }: IconProps & { off?: boolea
   );
 }
 
+/** Small bell (the reverse beeper's soft "tin"), crossed out when `off` (the beep turned off). */
+export function BellIcon({ className, off = false }: IconProps & { off?: boolean }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...LINE}>
+      <path d="M6.5 16.5h11L16 14.3v-3.8a4 4 0 0 0-8 0v3.8z" />
+      <path d="M10.4 19.2a1.8 1.8 0 0 0 3.2 0" />
+      {off && <path d="M5 5l14 14" />}
+    </svg>
+  );
+}
+
 /** Mouse seen from above, its wheel marked: "rueda" in the fork hint. */
 export function MouseWheelIcon({ className }: IconProps) {
   return (

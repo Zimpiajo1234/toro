@@ -8,6 +8,8 @@ export type CommandBinding =
   | 'timer'
   /** Show / hide the optional move counter (N: "número de movimientos"; far from the driving and fork keys). */
   | 'moves'
+  /** Turn the reverse beeper on / off (B: «bip»; it was free, and like M / T / N it is a setting, not a control). */
+  | 'beep'
   | 'confirm'
   | 'back'
   /** "Modo prueba" only: previous / next level ([ / ], PageUp / PageDown). */
@@ -41,6 +43,7 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['KeyM', 'mute'],
   ['KeyT', 'timer'],
   ['KeyN', 'moves'],
+  ['KeyB', 'beep'],
   ['Enter', 'confirm'],
   ['NumpadEnter', 'confirm'],
   ['Escape', 'back'],
@@ -76,6 +79,7 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['m', 'mute'],
   ['t', 'timer'],
   ['n', 'moves'],
+  ['b', 'beep'],
   ['enter', 'confirm'],
   ['escape', 'back'],
   ['esc', 'back'],

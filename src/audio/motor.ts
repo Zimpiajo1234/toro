@@ -6,9 +6,9 @@ import { ReverseBeeper } from './beeper';
 
 /*
  * The forklift's own sounds: an electric traction motor, the tyres on the tiles and the hydraulic forks on the (dry)
- * motor bus, plus the reverse beeper (beeper.ts), which AudioEngine sends to the SFX bus so it carries over the music.
- * Every tuning value lives in the tables below; their levels are on the motor bus (`audio.motor` in gameConfig.json
- * scales them all).
+ * motor bus, plus the reverse beeper (beeper.ts), which AudioEngine sends to the SFX bus so it is heard with the music
+ * rather than under it. Every tuning value lives in the tables below; their levels are on the motor bus (`audio.motor`
+ * in gameConfig.json scales them all).
  */
 
 /** Electric traction motor: a smooth whine whose pitch and level climb with speed. Silent at a standstill. */
@@ -250,6 +250,14 @@ export class MotorSound {
   /** Whether the reverse beeper is running. */
   get reversing(): boolean {
     return this.beeper.beeping;
+  }
+
+  /**
+   * The reverse beeper on / off (the player's «pitido» setting, B): off, backing up is silent and a beep sounding fades
+   * out at once; the drive whine and the forks are unaffected.
+   */
+  setReverseBeep(enabled: boolean): void {
+    this.beeper.setEnabled(enabled);
   }
 
   /** No end-of-travel clunk until audio time `until` (a box was just picked or set down: its own knock says it). */
