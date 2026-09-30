@@ -65,7 +65,8 @@ export interface ColorSymbol {
  * A box of a level. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list order (the
  * first one on the floor, the next on top of it, …; a `.level` file writes it «pila azul,menta»). No height field for
  * floor boxes. A box that starts in a storage rack slot has (x, z) = its rack cell and `level` = the slot; one that
- * starts loaded on a truck (docs/DOCKS.md) has (x, z) = its bed cell and `level` = its truck level.
+ * starts loaded on a truck (docs/DOCKS.md) has (x, z) = its bed cell, outside the map beyond the dock door (core/docks
+ * `truckCellOf`: z = -1 for a north dock, x = -1 for a west one), and `level` = its truck level.
  */
 export interface LevelBox {
   id: string;
@@ -76,7 +77,8 @@ export interface LevelBox {
   z: number;
   /**
    * Storage rack slot the box starts in (0 = bottom slot), or its truck level on a truck bed cell (0 = on the bed;
-   * the levels below it hold boxes too). Only on rack and truck bed cells; never on floor boxes.
+   * the levels below it hold boxes too). Only on rack cells and truck bed cells (outside the map); never on floor
+   * boxes.
    */
   level?: number;
   kind?: BoxKind;
@@ -173,39 +175,49 @@ export interface LevelPlant {
   variant?: number;
 }
 
-/** Most levels a truck bed column holds (docs/DOCKS.md): the bed + 2, the tallest floor stack. */
-export const MAX_TRUCK_LEVELS = 3;
+/**
+ * Most levels a truck bed column holds (docs/DOCKS.md): the bed + 1 («solo hasta 2 alturas»). Nothing stands over or
+ * between the bed columns: the cues are on the framed sign above the dock door.
+ */
+export const MAX_TRUCK_LEVELS = 2;
+
+/** Most bed columns a truck has (docs/DOCKS.md): its door is 1 to 3 cells wide; the sign above it grows with it. */
+export const MAX_TRUCK_COLUMNS = 3;
 
 /**
- * The side a truck bed is loaded from, by the wall its dock is in (docs/DOCKS.md): a truck in the north wall is loaded
- * from the south (the floor cells of row 1), one in the west wall from the east (column 1). With it the core/racks
- * geometry reads a truck like a rack: `rackCellOf({ x, z, facing: TRUCK_FACING[wall] }, column)`, `frontCellOf`,
- * `inwardHeading`, `columnFrame`.
+ * The side a truck is loaded from, by the wall its dock is in (docs/DOCKS.md): a truck in the north wall is loaded
+ * from the south (its door cells, row 0, facing north through the door), one in the west wall from the east (column
+ * 0, facing west). With it the core/racks geometry reads a truck like a rack whose cells lie one step beyond the wall:
+ * core/docks `truckCellOf` (the bed cell, outside the map), `truckFrontOf` (the door cell), `inwardHeading`,
+ * `columnFrame` (depth 0 = the wall line).
  */
 export const TRUCK_FACING: Readonly<Record<WallSide, Facing>> = { north: 'south', west: 'east' };
 
 /**
- * What one level of a truck bed column asks for (docs/DOCKS.md), shown as a sticker on the truck's cue board: a
- * colour, a symbol or both, like a zone. At least one is set: a truck has no «libre» levels, every level is a target.
+ * What one level of a truck bed column asks for (docs/DOCKS.md), shown as a cell of the framed sign above the dock
+ * door (one cell per bed column and level): a colour, a symbol or both, like a zone. At least one is set: a truck has
+ * no «libre» levels, every level is a target.
  */
 export type TruckCue = ZoneCriteria;
 
 /**
- * A loading dock (docs/DOCKS.md): a door in the north or west wall with a truck parked in it. The truck bed takes a
- * straight run of `w` map cells along that wall, 1 cell deep (row z = 0 for a north dock, column x = 0 for a west
- * one); the door is that same run (it is not declared apart). Bed cells are solid for the forklift body; each column
- * is loaded only from the floor cell in front of it (TRUCK_FACING), exactly like a floor stack (automatic fork
- * height), bottom → top, up to its number of levels. A box that starts loaded is a LevelBox with (x, z) = its bed cell
- * and `level` = its truck level.
+ * A loading dock (docs/DOCKS.md): a door in the north or west wall with a truck parked OUTSIDE the building, its rear
+ * right against the outer face of the wall at the door. The door is a straight run of `w` map cells along that wall
+ * (row z = 0 for a north dock, column x = 0 for a west one): the **door cells**, ordinary floor in front of the door.
+ * Each door cell has one **bed column** of the truck just beyond the wall (core/docks `truckCellOf`: z = -1 / x = -1,
+ * outside the map). The forklift stands on a door cell facing the wall and loads its bed column through the door
+ * exactly like a floor stack (automatic fork height), bottom → top, up to its number of levels; its body never passes
+ * the wall line. 1‥MAX_TRUCK_COLUMNS columns of 1‥MAX_TRUCK_LEVELS levels. A box that starts loaded is a LevelBox with
+ * (x, z) = its bed cell (outside) and `level` = its truck level.
  */
 export interface LevelTruck {
   id: string;
   /** Wall the dock door is in. */
   wall: WallSide;
-  /** First bed cell: the west-most of a north dock (z = 0), the north-most of a west dock (x = 0). */
+  /** First door cell (a map cell): the west-most of a north dock (z = 0), the north-most of a west dock (x = 0). */
   x: number;
   z: number;
-  /** Bed cells along the wall (= columns.length). */
+  /** Door cells along the wall = bed columns (= columns.length, 1‥MAX_TRUCK_COLUMNS). */
   w: number;
   /** Per bed column (first cell first), the cue of each level bottom → top (1‥MAX_TRUCK_LEVELS, ≤ stackLimit). */
   columns: TruckCue[][];
@@ -284,7 +296,10 @@ export interface BoxState {
   kind: BoxKind;
   /** World position of the box center on the floor plane. While carried it follows the forks. */
   pos: Vec2;
-  /** Grid cell when resting (on the floor, on a stack or in a rack slot: its rack cell), null while carried. */
+  /**
+   * Grid cell when resting (on the floor, on a stack, in a rack slot: its rack cell; on a truck: its bed cell, outside
+   * the map beyond the dock door), null while carried.
+   */
   cell: CellPos | null;
   /** Height in its stack: 0 = on the floor, 1 = on one box, … ; in a rack, its slot level (0 while carried). */
   level: number;
@@ -295,7 +310,8 @@ export interface BoxState {
   slotId: string | null;
   /**
    * Levels with trucks (docs/DOCKS.md): the truck slot the box rests on (`${truckId}:${column}:${level}`, see
-   * TruckSlotState), else null; `cell` is then its bed cell and `level` its truck level (zoneId and slotId null).
+   * TruckSlotState), else null; `cell` is then its bed cell (outside the map) and `pos` its centre, `level` its truck
+   * level (zoneId and slotId null).
    * GameState sets it on every box of a level with trucks and leaves it undefined in every other level, so their state
    * is exactly as before: undefined reads as null.
    */
@@ -391,27 +407,34 @@ export interface SlotState {
  * One level of a truck bed column (docs/DOCKS.md), in GameSnapshot.truckSlots: every truck, column by column, bottom
  * → top. The fields it shares with SlotState mean the same, so the core/sorting helpers (`cueFits`, `isDestined`,
  * `satisfiesTarget`) and the glow / lock / success code read both. Unlike a rack slot, a bed column is a stack: its
- * boxes sit on each other from the bed up (the levels below an occupied one are occupied).
+ * boxes sit on each other from the bed up (the levels below an occupied one are occupied). The bed column lies just
+ * outside the building, beyond its door cell: the forklift loads it through the door from `front`.
  */
 export interface TruckSlotState {
   /** `${truckId}:${column}:${level}` (column and level from 0; level 0 = on the bed). */
   id: string;
   truckId: string;
-  /** Column along the truck bed (0 = its first cell, see LevelTruck). */
+  /** Column along the truck bed (0 = its first door cell, see LevelTruck). */
   column: number;
   /** Height: 0 = on the bed, 1 = on one box, … as on a floor stack (the box's `level` there, the drop level). */
   level: number;
-  /** The bed cell of this column. */
+  /**
+   * The bed cell of this column: OUTSIDE the map, one step beyond the wall from its door cell (a north dock:
+   * { x, z: -1 }; a west dock: { x: -1, z }). Boxes on it carry this cell.
+   */
   cell: CellPos;
-  /** Floor cell in front of the column: where the forklift stands, facing the truck, to load or unload it. */
+  /**
+   * The door cell of the column (floor inside the room, row 0 / column 0): where the forklift stands, facing the wall,
+   * to load or unload it through the door.
+   */
   front: CellPos;
   /** Wall of its dock. */
   wall: WallSide;
   /** Side the column is loaded from: TRUCK_FACING[wall]. */
   facing: Facing;
-  /** World position of the bed cell's centre. */
+  /** World position of the (outside) bed cell's centre. */
   pos: Vec2;
-  /** The level's cue (on the truck's cue board): a colour, a symbol or both. Never null: no «libre» truck levels. */
+  /** The level's cue (on the sign above the dock door): a colour, a symbol or both. Never null: no «libre» levels. */
   accepts: ZoneCriteria;
   /** The kind of box the level's unique solution puts here (null only in a hand-built level without one). */
   destined: ColorSymbol | null;
@@ -453,7 +476,10 @@ export interface RackHint {
 export interface InteractionHint {
   /** Box that would be picked up if the action were pressed now. */
   targetBoxId: string | null;
-  /** While carrying: the cell the box would be dropped on (null if nowhere valid; a rack cell for a slot). */
+  /**
+   * While carrying: the cell the box would be dropped on (null if nowhere valid; a rack cell for a slot; a truck's bed
+   * cell, outside the map, for a truck slot).
+   */
   dropCell: CellPos | null;
   /** While carrying: the zone at dropCell, if any. */
   dropZoneId: string | null;
@@ -462,8 +488,9 @@ export interface InteractionHint {
   /** Levels with racks: the rack column faced and the selected slot, or null (always null without racks). */
   rack: RackHint | null;
   /**
-   * Levels with trucks, while carrying: the truck slot the box would land in (`dropCell` = its bed cell, `dropLevel` =
-   * its level, `dropZoneId` null), else null. Undefined in levels without trucks (their hint is exactly as before).
+   * Levels with trucks, while carrying: the truck slot the box would land in (`dropCell` = its bed cell, outside the
+   * map; `dropLevel` = its level, `dropZoneId` null), else null. Undefined in levels without trucks (their hint is
+   * exactly as before).
    */
   dropTruckSlotId?: string | null;
 }
@@ -559,7 +586,7 @@ export type GameEvent =
       total: number;
       /** The rack slot it landed in (only then present; `cell` is the rack cell). */
       slotId?: string;
-      /** The truck slot it landed on (only then present; `cell` is the bed cell, `zoneId` null). */
+      /** The truck slot it landed on (only then present; `cell` is the bed cell outside the map, `zoneId` null). */
       truckSlotId?: string;
       /**
        * Levels with racks or trucks only: true when the box landed on a target it does not satisfy — a floor zone, a

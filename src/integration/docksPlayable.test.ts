@@ -1,6 +1,6 @@
 /**
  * Integration check (loading docks × logic × controls, docs/DOCKS.md): the autopilot (./autopilot.ts) plays small truck
- * levels with the real GameState at 60 fps and at Game's worst dt (1/20): the truck loaded from the front at the
+ * levels with the real GameState at 60 fps and at Game's worst dt (1/20): the truck loaded through its door at the
  * automatic fork height (never F / V), a wrong load taken off and backed out with the reverse gear (S), a box loaded on
  * top of a locked one, every truck level lit once and never lifted again.
  */
@@ -52,13 +52,32 @@ a = caja menta ▲        b = caja coral ●
 T = camión muelle oeste: azul + caja azul ● / ▲ | coral
 `);
 
+/** A door 3 cells wide (the most): its last column starts satisfied; a box goes on top of another in the middle one. */
+const WIDE = level(`
+# 3 · Muelle de tres
+id: muelle-tres
+limit: 2
+
+  0123456
+0 .TTT...
+1 .......
+2 .......
+3 .a.b.c.
+4 ....^..
+
+a = caja azul ●     b = caja coral ◆    c = caja menta ▲
+T = camión muelle norte: azul | coral ◆ / ▲ | lavanda + caja lavanda ●
+`);
+
 describe('truck levels are playable with the real controls', () => {
   it.each([
     ['muelle-ejemplo, 60 fps', NORTH, 1 / 60],
     ['muelle-ejemplo, 20 fps', NORTH, 1 / 20],
     ['muelle-oeste, 60 fps', WEST, 1 / 60],
     ['muelle-oeste, 20 fps', WEST, 1 / 20],
-  ] as const)('%s: the autopilot finishes it, loading the truck from the front', (_, lvl, dt) => {
+    ['muelle-tres, 60 fps', WIDE, 1 / 60],
+    ['muelle-tres, 20 fps', WIDE, 1 / 20],
+  ] as const)('%s: the autopilot finishes it, loading the truck through its door', (_, lvl, dt) => {
     const out = autopilot(lvl, dt);
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
@@ -71,7 +90,7 @@ describe('truck levels are playable with the real controls', () => {
     const started = lvl.boxes.filter((b) => b.level !== undefined).length;
     // Every truck level lit exactly once (the one that starts satisfied never needs a drop), on top of a locked box too.
     expect(new Set(correct.map((d) => d.truckSlotId)).size).toBe(correct.length);
-    expect(correct.length + (lvl === WEST ? started : 0)).toBe(truckSlots.length);
+    expect(correct.length + (lvl === NORTH ? 0 : started)).toBe(truckSlots.length);
     expect(correct.some((d) => d.level === 1)).toBe(true);
     for (const d of correct) {
       expect(d).not.toHaveProperty('wrongTarget');

@@ -25,8 +25,9 @@ import {
 } from './solver';
 
 /*
- * The grid model with loading docks (docs/DOCKS.md): a truck bed cell is solid and holds a stack whose steps are the
- * destined kinds of its levels; it is loaded by one step on from behind its front cell and a box lifted off it backs
+ * The grid model with loading docks (docs/DOCKS.md): the truck waits outside, so each bed column is a position after
+ * the rack slots (off the map, beyond its door cell, which is floor) holding a stack whose steps are the destined kinds
+ * of its levels; it is loaded by one step on from behind its door cell (through the door) and a box lifted off it backs
  * straight out; its satisfied levels are locked, but the next level still loads on top.
  */
 
@@ -69,7 +70,7 @@ a = caja menta ▲        b = caja coral ●
 T = camión muelle oeste: azul + caja azul ● / ▲ | coral
 `);
 
-/** The bed can only be loaded straight from its front: a plant behind the front cell leaves no approach. */
+/** The bed can only be loaded straight through its door: a plant right behind the door cell leaves no approach. */
 const BLOCKED = level(`
 # 3 · Sin acceso
 id: sin-acceso
@@ -77,8 +78,8 @@ limit: 1
 
   01234
 0 ..T..
-1 .....
-2 ..p..
+1 ..p..
+2 .....
 3 .a..^
 
 a = caja azul
@@ -86,17 +87,24 @@ T = camión muelle norte: azul
 `);
 
 describe('grid model with trucks', () => {
-  it('bed cells are solid stacks asking for the destined kind of each level, reached from their front cell', () => {
+  it('bed columns are positions after the slots, off the map, asking for the destined kind of each level, reached from their door cell', () => {
     const grid = new LevelGrid(EXAMPLE);
-    const [bed0, bed1] = [grid.index(2, 0), grid.index(3, 0)];
+    const [bed0, bed1] = [grid.posOf(2, -1), grid.posOf(3, -1)];
+    expect([bed0, bed1]).toEqual([grid.bedBase, grid.bedBase + 1]);
+    expect(grid.bedBase).toBe(grid.cellCount + grid.slotCount);
+    expect(grid.posCount).toBe(grid.bedBase + 2);
     expect(grid.targets).toBe(true);
     expect(grid.racks).toBe(false);
     expect(grid.sorting).toBe(false);
-    expect([grid.solid[bed0], grid.solid[bed1]]).toEqual([1, 1]);
+    // The door cells are plain floor.
+    expect([grid.solid[grid.index(2, 0)], grid.solid[grid.index(3, 0)]]).toEqual([0, 0]);
     expect([grid.bedLevels[bed0], grid.bedLevels[bed1]]).toEqual([2, 1]);
-    expect([grid.isBed(bed0), grid.isBed(grid.index(4, 0)), grid.isBed(grid.cellCount)]).toEqual([true, false, false]);
-    expect(grid.accessOf(bed1)).toBe(grid.index(3, 1));
+    expect([grid.isBed(bed0), grid.isBed(grid.index(3, 0)), grid.isSlot(bed0), grid.isBed(grid.posCount)]).toEqual([true, false, false, false]);
+    expect([grid.cellOfPos(bed1), grid.posOf(3, -2), grid.posOf(4, -1)]).toEqual([{ x: 3, z: -1 }, -1, -1]);
+    expect(grid.accessOf(bed1)).toBe(grid.index(3, 0));
     expect(grid.bedDir[bed1]).toBe(DIR.N);
+    expect(grid.bedAtPose[grid.index(3, 0) * 4 + DIR.N]).toBe(bed1);
+    expect(grid.bedAtPose[grid.index(3, 0) * 4 + DIR.E]).toBe(-1);
     expect([grid.capacity(bed0), grid.capacity(bed1), grid.capacity(grid.index(0, 0))]).toEqual([2, 1, 2]);
     expect(grid.steps[bed0]).toEqual([
       { color: 'blue', symbol: 'triangle' },
@@ -105,31 +113,32 @@ describe('grid model with trucks', () => {
     expect(grid.steps[bed1]).toEqual([{ color: 'coral', symbol: 'diamond' }]);
     const stacks = stacksOf(grid, EXAMPLE);
     expect(stacks[bed1]).toBe(boxCode({ color: 'mint', symbol: 'triangle' }));
-    expect(grid.posOf(3, 0, 0)).toBe(bed1);
+    expect(grid.posOf(3, -1, 0)).toBe(bed1);
     // The wrong load and the three floor boxes all have to move.
     expect(misplacedCount(grid, stacks, EXAMPLE.boxes.length)).toBe(4);
-    // A west dock is loaded from the east (column 1).
+    // A west dock: its bed columns at x = -1, loaded from its door cells (column 0) facing west.
     const west = new LevelGrid(WEST);
-    expect(west.accessOf(west.index(0, 2))).toBe(west.index(1, 2));
-    expect(west.bedDir[west.index(0, 2)]).toBe(DIR.W);
+    expect(west.accessOf(west.posOf(-1, 2))).toBe(west.index(0, 2));
+    expect(west.bedDir[west.posOf(-1, 2)]).toBe(DIR.W);
+    expect(stacksOf(west, WEST)[west.posOf(-1, 1)]).toBe(boxCode({ color: 'blue', symbol: 'circle' }));
   });
 
   it('the lock: a satisfied level is never lifted, a wrong top is; the next level loads on top of a locked box', () => {
     const grid = new LevelGrid(WEST);
-    const bed = grid.index(0, 1);
+    const bed = grid.posOf(-1, 1);
     const stacks = stacksOf(grid, WEST);
     const blue = boxCode({ color: 'blue', symbol: 'circle' });
     const mint = boxCode({ color: 'mint', symbol: 'triangle' });
     expect(stacks[bed]).toBe(blue);
     expect(lockedAt(grid, stacks, bed)).toBe(true);
     expect(canLift(grid, stacks, bed)).toBe(false);
-    // Loading on top of it is a drop the searches offer (from behind the front cell, one step on).
+    // Loading on top of it is a drop the searches offer (from behind the door cell, one step on through the door).
     const occupancy = occupancyOf(grid, stacks);
     const from = grid.index(3, 2);
     const region = reachableFrom(grid, occupancy, grid.index(3, 4));
     occupancy[from] = -1;
     const drops = carrySearch(grid, occupancy, lift(stacks, from), pickupStarts(grid, region, from)).drops;
-    expect(drops.get(bed)).toEqual([grid.index(1, 1)]);
+    expect(drops.get(bed)).toEqual([grid.index(0, 1)]);
     // Satisfied from the bed up: locked; a wrong box on a satisfied level: liftable; on a wrong base: never locked.
     const done = stacks.slice();
     done[bed] = blue + mint;
@@ -161,19 +170,22 @@ a = caja azul
 
   it('a box lifted off a truck only backs straight out; a full column takes nothing; from the side, never', () => {
     const grid = new LevelGrid(EXAMPLE);
-    const bed = grid.index(3, 0);
+    const bed = grid.posOf(3, -1);
+    const other = grid.posOf(2, -1);
     const stacks = stacksOf(grid, EXAMPLE);
     const occupancy = occupancyOf(grid, stacks);
     const region = reachableFrom(grid, occupancy, grid.index(4, 4));
     const starts = pickupStarts(grid, region, bed);
-    expect(starts).toEqual([grid.index(3, 1) * 4 + DIR.N]);
+    expect(starts).toEqual([grid.index(3, 0) * 4 + DIR.N]);
     const search = carrySearch(grid, occupancy, lift(stacks, bed), starts);
-    // Out backwards first: every chain starts with the step back to (3,2).
-    const chain = search.chain(grid.index(2, 0))!;
-    expect(chain.slice(0, 2)).toEqual([grid.index(3, 1) * 4 + DIR.N, grid.index(3, 2) * 4 + DIR.N]);
-    // …then back onto the other column by one step on from behind its front cell, ending on that front cell.
-    expect(search.chainTo(grid.index(2, 0), grid.index(2, 1))?.at(-1)).toBe(grid.index(2, 1) * 4 + DIR.N);
-    expect(search.drops.get(grid.index(2, 0))).toEqual([grid.index(2, 1)]);
+    // Out backwards first, through the door: every chain starts with the step back to (3,1).
+    const chain = search.chain(other)!;
+    expect(chain.slice(0, 2)).toEqual([grid.index(3, 0) * 4 + DIR.N, grid.index(3, 1) * 4 + DIR.N]);
+    // …then onto the other column by one step on from behind its door cell, ending on that door cell.
+    expect(search.chainTo(other, grid.index(2, 0))?.at(-1)).toBe(grid.index(2, 0) * 4 + DIR.N);
+    expect(search.drops.get(other)).toEqual([grid.index(2, 0)]);
+    // Nothing is ever dropped outside the map but on a bed.
+    expect([...search.drops.keys()].every((d) => d >= 0 && d < grid.posCount)).toBe(true);
     // The forward-only model cannot take it off the truck.
     const forward = new LevelGrid(EXAMPLE, { reverse: false });
     expect(carrySearch(forward, occupancy, lift(stacks, bed), starts).drops.size).toBe(0);
@@ -183,7 +195,9 @@ a = caja azul
     occupancy[from] = -1;
     const floor = carrySearch(grid, occupancy, lifted, pickupStarts(grid, region, from)).drops;
     expect(floor.has(bed)).toBe(false);
-    expect(floor.get(grid.index(2, 0))).toEqual([grid.index(2, 1)]);
+    expect(floor.get(other)).toEqual([grid.index(2, 0)]);
+    // The door cells are floor: a box may be parked on one (it then closes that column until it moves).
+    expect(floor.has(grid.index(2, 0))).toBe(true);
     // Unreachable straight from the front: no plan at all.
     expect(minMoves(BLOCKED).unsolvable).toBe(true);
   });
@@ -209,8 +223,8 @@ describe('searches on truck levels', () => {
   it('the plan unloads the wrong box before its column is loaded, and loads bottom → top', () => {
     const grid = new LevelGrid(EXAMPLE);
     const plan = minMoves(EXAMPLE).plan!;
-    const bed1 = grid.index(3, 0);
-    const bed0 = grid.index(2, 0);
+    const bed1 = grid.posOf(3, -1);
+    const bed0 = grid.posOf(2, -1);
     const unload = plan.findIndex((m) => m.from === bed1);
     expect(unload).toBeGreaterThanOrEqual(0);
     expect(plan.findIndex((m) => m.drop === bed1)).toBeGreaterThan(unload);

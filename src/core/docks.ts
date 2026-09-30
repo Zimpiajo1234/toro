@@ -1,10 +1,11 @@
 /**
- * Loading dock geometry (docs/DOCKS.md), shared by validation, logic, the level solver and render: which map cell each
- * truck bed column takes, where it is loaded from, truck slot ids and the flattened slot / column lists. A truck reads
- * like a storage rack loaded from TRUCK_FACING[wall], so the core/racks helpers do the geometry. Pure.
+ * Loading dock geometry (docs/DOCKS.md), shared by validation, logic, the level solver and render: the door cells of
+ * each truck (floor, inside the map), the bed column beyond each one (outside the map, past the wall), truck slot ids
+ * and the flattened slot / column lists. A truck reads like a storage rack loaded from TRUCK_FACING[wall] whose cells
+ * lie one step beyond the wall (its front cells are the door cells), so the core/racks helpers do the geometry. Pure.
  */
 import { TRUCK_FACING, type CellPos, type Facing, type LevelData, type LevelTruck, type TruckCue } from './types';
-import { frontCellOf, hasRacks, inwardHeading, rackCellOf } from './racks';
+import { FACING_X, FACING_Z, hasRacks, inwardHeading, rackCellOf } from './racks';
 
 /** A level's trucks (none → an empty list). */
 export function trucksOf(level: Pick<LevelData, 'trucks'>): readonly LevelTruck[] {
@@ -29,17 +30,25 @@ export function truckFacing(truck: Pick<LevelTruck, 'wall'>): Facing {
   return TRUCK_FACING[truck.wall];
 }
 
-/** Bed cell of `column` (0 = the truck's first cell: the west-most of a north dock, the north-most of a west one). */
+/**
+ * Bed cell of `column` (0 = the truck's first door cell: the west-most of a north dock, the north-most of a west one):
+ * OUTSIDE the map, one step beyond the wall from its door cell (a north dock: z = -1; a west dock: x = -1). A box on
+ * the truck rests there; its world centre is cellToWorld of it, just past the wall.
+ */
 export function truckCellOf(truck: Pick<LevelTruck, 'x' | 'z' | 'wall'>, column: number): CellPos {
+  const facing = TRUCK_FACING[truck.wall];
+  return rackCellOf({ x: truck.x - FACING_X[facing], z: truck.z - FACING_Z[facing], facing }, column);
+}
+
+/**
+ * Door cell of `column`: the map cell (floor) in front of the door, row 0 of a north dock or column 0 of a west one,
+ * where the forklift stands facing the wall to load or unload that column through the door.
+ */
+export function truckFrontOf(truck: Pick<LevelTruck, 'x' | 'z' | 'wall'>, column: number): CellPos {
   return rackCellOf({ x: truck.x, z: truck.z, facing: TRUCK_FACING[truck.wall] }, column);
 }
 
-/** Floor cell in front of `column`: where the forklift stands, facing the truck, to load or unload that column. */
-export function truckFrontOf(truck: Pick<LevelTruck, 'x' | 'z' | 'wall'>, column: number): CellPos {
-  return frontCellOf({ x: truck.x, z: truck.z, facing: TRUCK_FACING[truck.wall] }, column);
-}
-
-/** Heading (radians) of a forklift on a column's front cell facing into the truck. */
+/** Heading (radians) of a forklift on a column's door cell facing the wall, into the truck. */
 export function truckInwardHeading(truck: Pick<LevelTruck, 'wall'>): number {
   return inwardHeading(TRUCK_FACING[truck.wall]);
 }
@@ -54,7 +63,9 @@ export interface TruckColumnRef {
   truck: LevelTruck;
   truckIndex: number;
   column: number;
+  /** Its bed cell, outside the map (truckCellOf). */
   cell: CellPos;
+  /** Its door cell, inside the map (truckFrontOf). */
   front: CellPos;
   facing: Facing;
   /** Levels of the column (1‥MAX_TRUCK_LEVELS): its cues, bottom → top. */
@@ -92,6 +103,7 @@ export interface TruckSlotRef {
   truckIndex: number;
   column: number;
   level: number;
+  /** Bed cell (outside the map) and door cell (inside) of its column. */
   cell: CellPos;
   front: CellPos;
   /** The level's cue (never «libre»). */

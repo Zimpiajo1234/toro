@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, cells, fronts, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -164,12 +164,23 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`. Every «rack level»
   rule here also holds in a level with trucks (below), with or without racks: the gate is `usesTargetRules(level)`.
 - **Loading docks** (spec: `docs/DOCKS.md`, 2026-09-30; only the «Benchmark» has one). `LevelData.trucks?`
-  (`LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: a truck parked in a door of the north or west wall, its
-  bed a straight run of cells along that wall, row z = 0 or column x = 0; cues bottom → top, colour and / or symbol,
-  never «libre», 1‥`MAX_TRUCK_LEVELS` (3) levels and never more than `stackLimit`). Bed cells are solid for the body
-  only (`CollisionWorld` `bodyOnly`): the load and the fork point pass over them and only meet the boxes loaded there.
-  A bed column loads like a floor stack, only from its front cell (`TRUCK_FACING`: south for a north dock, east for a
-  west one), facing it (≤ 30°, held to 45°) and close to it (`TRUCK_REACH` 0.55); forks automatic, F / V do nothing.
+  (`LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: a truck parked OUTSIDE a door of the north or west wall,
+  its rear against the wall's outer face; (x, z) and `w` are its door cells, a straight run of plain floor cells along
+  that wall, row z = 0 or column x = 0, each with one bed column just beyond the wall, outside the map (`core/docks`
+  `truckCellOf`: z = -1 / x = -1; `truckFrontOf` = the door cell); 1‥`MAX_TRUCK_COLUMNS` (3) columns, cues bottom →
+  top, colour and / or symbol, never «libre», 1‥`MAX_TRUCK_LEVELS` (2) levels and never more than `stackLimit`). Door
+  cells start empty (no furniture, zone, box or forklift); a box loaded at the start sits on its bed cell. `LevelGrid`
+  keeps each bed column's stack apart (`truckColumnAt` finds it by its outside cell). The forklift body meets the whole
+  wall (`bounds`), so it stops at the wall line; the carried load and the fork point meet the walls as slabs open at
+  each door between 0.02 jambs onto a 1-cell pocket, the bed column (`CollisionWorld` `loadWalls`, `doorWalls`; only
+  in levels with trucks), and for the load each column's span of the door stays shut like the wall until the rig faces
+  that column (`doorCells`, `setDoorOpen`, `GameState.refreshDoorPassage`: like a rack column; open while the load is
+  in it), so a load turned on a door cell meets it like the wall until the rig faces that column, and never slides
+  along a wide door into the next one. A bed column loads like a floor stack, only from its door cell facing the wall
+  (the body in line with that door cell; `TRUCK_FACING`: south for a north dock, east for a west one; ≤ 30°, held to
+  45°) with the fork point at least `TRUCK_REACH` (0.3) past the wall line; forks automatic, F / V do nothing; while
+  the load is in the door the heading is locked (straight in, straight out, like a rack slot) and nothing drops short
+  of the bed (`RackAim.doorway`).
   Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
   `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
   occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
@@ -213,9 +224,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
 - `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
   search, exact A* for the fewest box moves with a consistent bound — swap cycles, dead-end corridors, fixed sorting
-  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells; a truck bed
-  cell is a solid stack position loaded straight from behind its front and emptied only in reverse; in levels with
-  racks or trucks the exact search adds the destination-cycle bound `MoveSearch.destTerm`).
+  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells, then one
+  stack position per truck bed column (outside the map), loaded with one step forward from the cell behind its door
+  cell and emptied only in reverse; in levels with racks or trucks the exact search adds the destination-cycle bound
+  `MoveSearch.destTerm`).
   `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`, run by `levelsPlayable.test.ts`,
   `racksPlayable.test.ts`, `benchmarkPlayable.test.ts` and `docksPlayable.test.ts`) and the metrics (`metrics.ts`:
   movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos, callejones, huecos, camion)
@@ -229,8 +241,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   have a dead end («callejones», docs/LEVELS.md; `levels.test.ts` checks every state of a shortest plan).
 - Storage racks (docs/RACKS.md) are loaded by driving straight at a column: its front cell and the cell behind it must
   be free floor (validateLevel checks the front cell; the solvability tests catch the rest). Trucks (docs/DOCKS.md) too:
-  keep a zone off a truck's front row and the row behind it, and off the only way out of a pocket beside a truck (a box
-  locked there would close it: a «callejón»). A dock door never shares a wall cell with a window.
+  their door cells start empty (validateLevel) and the cell behind each must stay free floor, so keep zones off the door
+  row and the row behind it (a box locked there would close that column: a «callejón»). A dock door never shares a
+  wall cell with a window.
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (a level whose boxes start on wrong zones needs spare space to
   reorganize).
@@ -272,10 +285,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the page itself is still pinch-zoomed (`visualViewport.scale` > 1.01, e.g. after a pinch over the title) pinches stay
   the browser's even while playing, so the player can pinch it back to 1. As the zoom grows the framing target blends from the level centre to the
   forklift (followed with `zoomFollowSec`), clamped so the visible free area stays over the (padded) level; zooming
-  fully out returns to the centred full view. Q/E turns pivot around that target; the reserved bands (`setInsets`),
-  occlusion ghosting and the truck wall easing all compose with it. Reset to 1 on a level change and on the title (the
-  idle orbit stays unzoomed); kept across a restart of the same level. `zoomRate` (stops / s held) and `zoomStep`
-  (stops per tap) tune the keys. The plain mouse wheel never zooms: it stays with the forks (docs/RACKS.md).
+  fully out returns to the centred full view. Q/E turns pivot around that target; the reserved bands (`setInsets`) and
+  occlusion ghosting compose with it (a dock's truck is static and always framed: it never moves the frame). Reset to
+  1 on a level change and on the title (the idle orbit stays unzoomed); kept across a restart of the same level.
+  `zoomRate` (stops / s held) and `zoomStep` (stops per tap) tune the keys. The plain mouse wheel never zooms: it
+  stays with the forks (docs/RACKS.md).
 - `WebGLRenderer({ antialias: true, alpha: true })`, transparent clear (CSS gradient shows through),
   `outputColorSpace = SRGB`, `toneMapping = NeutralToneMapping`, pixel ratio ≤ 2. Soft shadows from one
   warm directional "window" light (PCFSoft, map 2048, tight shadow camera fitted to the level) + hemisphere.
@@ -330,19 +344,29 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
   brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
   slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
-- Loading docks (docs/DOCKS.md, «Render»): the dock door is an opening in its wall (`builders/walls.ts`, `dims.ts`
-  `DOCK`: slate frame, rolled-up shutter in its head, rubber seals and bumpers outside, baseboard broken). The truck
-  (`builders/truck.ts`, `views/TruckView.ts`, `Theme.truck`: soft cream and slate, never a box colour, never red or
-  black) is a small low-poly rigid truck backed into the door: inside, the rear of its wooden bed on the bed cells,
-  level with the floor (boxes rest at floor stack heights), low rails and a leveller plate; outside, in its wall's local
-  frame, the rest of the bed, cab and wheels and a driveway a step down. The outside sinks and rises with its wall
-  (never in front of the warehouse) and is framed only while that wall stands, its reach easing in and out of the fit
-  with the wall's height (`TruckView` `FIT_REACH_EASE`), so the zoom never snaps. Each bed column has a cue board at the
-  back of its cell, above its full stack: one unlit rack sticker per level (`buildCueFace(look, TRUCK_CUE)`), bottom at
-  the bottom, on both faces, never faded; the board frame ghosts like a rack bay. A truck level lights exactly like a
-  rack slot (`SlotLight`: flash, burst, soft glow, locked box tone, glow band around its box); while carrying, only a
-  `loadable` level whose cue fits pulses, and the drop preview takes the box tone only there. Levels with trucks and no
-  racks switch on the same target feedback (`usesTargetRules`); without trucks nothing changes.
+- Loading docks (docs/DOCKS.md, «Render»): the dock door is an opening in its wall over the door cells
+  (`builders/walls.ts`, `dims.ts` `DOCK`: up to `doorTop` 1.70, over a level-1 load's ≈ 1.62; slate frame on both
+  faces, the shutter's bottom rail at the head and its roll outside above the door, rubber seals and bumpers outside,
+  baseboard broken). The truck (`builders/truck.ts`, `views/TruckView.ts`, `Theme.truck`: soft cream and slate, never
+  a box colour, never red or black) is a small low-poly rigid truck parked entirely outside, its bed's rear 0.012 off
+  the wall's outer face (`TRUCK`, `buildTruckBody`): a low open flatbed level with the floor (`DOCK.bedTop`: boxes rest
+  at floor stack heights), low drop sides only at the ends of the door run and a headboard by the cab (nothing over or
+  between the bed columns: no posts, rails or dividers), the cab facing away, wheels and a driveway a step down; a flat
+  dock plate fills the door (`DOCK_PLATE`, `buildDockPlate`, under the drop preview). It is static: low enough never to
+  hide the warehouse, it never sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state
+  positions) and it is always framed (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
+  on the wall's inner face above the door (`DOCK_SIGN`, `buildSignFrame`, `buildSignPanel`, `buildSignCue`,
+  `SIGN_CUE`): one cell per bed column, right above its door cell, and per level, bottom row = level 0 (the upper cell
+  of a shorter column is a plain panel; with 2 levels the sign rises ≈ 0.3 over the wall cap), each with its unlit rack
+  sticker (`buildCueFace`) on both faces, upright and unmirrored, never faded (its two brackets hide behind the frame's
+  end bars, clear of every sticker). The sign's frame and panels are a rack bay (`RackBay` kind `'sign'`,
+  `TruckView.occluder`) that ghosts over the forklift, a resting box or a zone (never for the boxes on its bed) and
+  softly while its wall is sunk; its stickers never fade. What a standing dock wall hides (a box on the bed, the part of
+  a load through the door) never ghosts a shelf, a rack or a stacked box (`LevelView.clipToRoom`). A truck level lights
+  exactly like a rack slot (`SlotLight` on its sign cell: flash, soft glow, glow band round its sticker, `SIGN_GLOW`),
+  with the success burst and the locked box tone on its box on the bed; while carrying, only a `loadable` level whose
+  cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there. Levels with trucks and
+  no racks switch on the same target feedback (`usesTargetRules`); without trucks nothing changes.
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 

@@ -12,9 +12,13 @@ import {
   usesTargetRules,
 } from './docks';
 import { levelDestinies, targetsOf, usesSymbols, zoneMatchKinds } from './sorting';
-import { forwardOf, type LevelData, type LevelTruck } from './types';
+import { cellToWorld, forwardOf, type LevelData, type LevelTruck } from './types';
+import { columnFrame } from './racks';
 
-/* Loading dock geometry and targets (docs/DOCKS.md): a truck reads like a rack loaded from TRUCK_FACING[wall]. */
+/*
+ * Loading dock geometry and targets (docs/DOCKS.md): the door cells are map cells against the wall; the bed column of
+ * each one lies just beyond the wall, outside the map; a truck reads like a rack loaded from TRUCK_FACING[wall].
+ */
 
 const NORTH: LevelTruck = { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] };
 const WEST: LevelTruck = { id: 't2', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'mint' }], [{ symbol: 'square' }]] };
@@ -23,31 +27,49 @@ const level: Pick<LevelData, 'boxes' | 'zones' | 'trucks'> = {
   boxes: [
     { id: 'b1', color: 'blue', symbol: 'triangle', x: 1, z: 2 },
     { id: 'b2', color: 'coral', symbol: 'diamond', x: 5, z: 2 },
-    { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: 0, level: 0 },
+    { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 0 },
   ],
   zones: [],
   trucks: [NORTH],
 };
 
 describe('core/docks geometry', () => {
-  it('a north dock runs along x on row 0 and is loaded from the south; a west one along z on column 0, from the east', () => {
-    expect([truckCellOf(NORTH, 0), truckCellOf(NORTH, 1)]).toEqual([
+  it('a north dock: door cells along row 0, bed columns just beyond the north wall (z = -1); a west one on column 0 / x = -1', () => {
+    // The door cells (inside, floor) are where the forklift stands; the bed columns lie outside, one per door cell.
+    expect([truckFrontOf(NORTH, 0), truckFrontOf(NORTH, 1)]).toEqual([
       { x: 2, z: 0 },
       { x: 3, z: 0 },
     ]);
-    expect(truckFrontOf(NORTH, 1)).toEqual({ x: 3, z: 1 });
+    expect([truckCellOf(NORTH, 0), truckCellOf(NORTH, 1)]).toEqual([
+      { x: 2, z: -1 },
+      { x: 3, z: -1 },
+    ]);
     expect(truckFacing(NORTH)).toBe('south');
-    expect([truckCellOf(WEST, 0), truckCellOf(WEST, 1)]).toEqual([
+    expect([truckFrontOf(WEST, 0), truckFrontOf(WEST, 1)]).toEqual([
       { x: 0, z: 1 },
       { x: 0, z: 2 },
     ]);
-    expect(truckFrontOf(WEST, 0)).toEqual({ x: 1, z: 1 });
+    expect([truckCellOf(WEST, 0), truckCellOf(WEST, 1)]).toEqual([
+      { x: -1, z: 1 },
+      { x: -1, z: 2 },
+    ]);
     expect(truckFacing(WEST)).toBe('east');
-    // Facing into the truck from the front: north (−z) for a north dock, west (−x) for a west one.
+    // Facing into the truck from a door cell: north (−z) for a north dock, west (−x) for a west one.
     const n = forwardOf(truckInwardHeading(NORTH));
     const w = forwardOf(truckInwardHeading(WEST));
     expect([n.x, n.z].map((v) => Math.round(v) + 0)).toEqual([0, -1]);
     expect([w.x, w.z].map((v) => Math.round(v) + 0)).toEqual([-1, 0]);
+  });
+
+  it('in the column frame of a bed cell, depth 0 is the wall line: the door cell is in front of it, the bed beyond', () => {
+    const size = { width: 6, depth: 5 };
+    const frame = { depth: 0, lateral: 0 };
+    const bed = cellToWorld(truckCellOf(NORTH, 1), size);
+    const door = cellToWorld(truckFrontOf(NORTH, 1), size);
+    // The north wall is at z = -depth / 2.
+    expect(columnFrame(bed, 'south', bed.x, -size.depth / 2, frame).depth).toBeCloseTo(0, 9);
+    expect(columnFrame(bed, 'south', door.x, door.z, frame)).toMatchObject({ depth: -0.5 });
+    expect(columnFrame(bed, 'south', bed.x, bed.z, frame)).toMatchObject({ depth: 0.5, lateral: 0 });
   });
 
   it('flattens columns and slots truck by truck, column by column, bottom → top, with ids «truck:column:level»', () => {
@@ -59,7 +81,8 @@ describe('core/docks geometry', () => {
       ['t2', 1, 1, 4],
     ]);
     expect(truckSlotsOf(both).map((s) => s.id)).toEqual(['t1:0:0', 't1:0:1', 't1:1:0', 't2:0:0', 't2:1:0']);
-    expect(truckSlotsOf(both)[1]).toMatchObject({ truckIndex: 0, column: 0, level: 1, cell: { x: 2, z: 0 }, front: { x: 2, z: 1 }, cue: { symbol: 'triangle' } });
+    expect(truckSlotsOf(both)[1]).toMatchObject({ truckIndex: 0, column: 0, level: 1, cell: { x: 2, z: -1 }, front: { x: 2, z: 0 }, cue: { symbol: 'triangle' } });
+    expect(truckColumnsOf(both)[3]).toMatchObject({ cell: { x: -1, z: 2 }, front: { x: 0, z: 2 }, facing: 'east' });
     expect(truckSlotIdOf('t9', 3, 2)).toBe('t9:3:2');
     expect(trucksOf({})).toEqual([]);
     expect(hasTrucks({})).toBe(false);

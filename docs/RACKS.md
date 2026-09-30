@@ -182,7 +182,7 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
   cotas de corredores y de ciclos de intercambio (zonas del suelo) se apagan con estanterías; en su lugar (2026-09-30)
   va la cota de **ciclos de destinos**: Σ costes de hueco + 1 por ciclo de cajas que descansan cada una en el destino de
   la siguiente (zonas y huecos; `MoveSearch.destTerm` / `targetDestinations`), admisible y consistente (lo comprueba
-  `levels/docks.test.ts`). Con ella el Benchmark sale exacto en 17 estados.
+  `levels/docks.test.ts`). Con ella el Benchmark sale exacto sin búsqueda: la cota ya da 14, lo que hace su primer plan.
 - **Cajas fijas en el modelo**: `lockedAt(grid, stacks, pos)` (su caja destinada, sola en su zona o hueco; siempre
   `false` sin estanterías), `canLift` y `canStackOn` / `validDrop` / `carrySearch`: las búsquedas, la repetición de un
   plan (`applyMove`) y `deadEnds` nunca levantan una caja fija ni dejan nada sobre ella. Sin estanterías todo movimiento
@@ -315,7 +315,7 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
 
 ## Nivel Benchmark (solo Modo prueba)
 
-- Archivo: `src/data/levels/especiales/benchmark.level` (id `benchmark`, orden 100, 10×9, `limit: 2`). El registro lo
+- Archivo: `src/data/levels/especiales/benchmark.level` (id `benchmark`, orden 100, 11×9, `limit: 2`). El registro lo
   carga aparte (`SPECIAL_LEVELS`, `getSpecialLevel(BENCHMARK_ID)`; docs/LEVELS.md): nunca entra en `LEVELS` ni en
   ProgressStore (tiempos y desbloqueos van por los ids de `LEVELS`). Contenido y cadena de deducción: sus líneas
   `nota:`; lo comprueban `benchmark.test.ts` y `benchmarkPlayable.test.ts` (piloto automático a 60 y 20 fps con F / V

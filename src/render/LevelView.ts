@@ -1,14 +1,12 @@
 import { Box3, Color, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
-import { hasTrucks, truckCellOf, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
+import { hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
 import { degToRad } from '../core/math';
 import { hasRacks } from '../core/racks';
 import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
 import {
   COLOR_IDS,
   DEFAULT_SYMBOL,
-  TRUCK_FACING,
-  cellToWorld,
   type BoxState,
   type CellPos,
   type ColorId,
@@ -42,14 +40,19 @@ import {
 } from './builders/rack';
 import { addShelf } from './builders/shelf';
 import {
-  TRUCK_GLOW,
-  buildTruckBed,
-  buildTruckBoardBays,
-  buildTruckCue,
-  buildTruckCuePanel,
-  buildTruckGlowGeometry,
-  buildTruckOutside,
-  truckCueY,
+  TRUCK_BURST,
+  buildDockPlate,
+  buildSignCue,
+  buildSignFrame,
+  buildSignGlowGeometry,
+  buildSignPanel,
+  buildTruckBody,
+  dockColumnX,
+  dockPlacement,
+  dockToWorld,
+  signCell,
+  signMidZ,
+  signRowY,
 } from './builders/truck';
 import { buildWallGeometry, toWallLocal, wallLayouts, type WallLayout } from './builders/walls';
 import { buildHaloGeometry, buildOutlineGeometry, buildRecipeGeometry, buildZoneGeometry, type ZoneMark } from './builders/zone';
@@ -181,14 +184,22 @@ export class LevelView {
   private readonly slotStates = new Map<string, SlotState>();
   private readonly marker: SlotMarker | null = null;
   /**
-   * Loading docks (docs/DOCKS.md): their truck levels light like rack slots, and the truck outside sinks with its wall.
+   * Loading docks (docs/DOCKS.md): their truck levels light like rack slots, on the sign over each dock door.
    * `targetRules` = racks or trucks: destined boxes, locks, the flash and burst, the strong pulse (docs/RACKS.md).
    */
   private readonly trucked: boolean;
   private readonly targetRules: boolean;
   private readonly trucks: TruckView[] = [];
-  /** The wall of each truck (snapshot order of trucks): its outside parts follow that wall's sink. */
+  /** The wall of each truck (order of `trucks`): its sign ghosts softly while that wall is sunk. */
   private readonly truckWalls: WallView[] = [];
+  private readonly truckSides: WallSide[] = [];
+  /**
+   * Levels with trucks: the wall line (world x of the west wall, z of the north one) of each dock wall standing this
+   * frame, −∞ for none. What lies beyond it (a box on a bed, the part of a load through the door) is hidden by that
+   * wall, so it never makes a shelf, a rack or a stack ghost (clipToRoom).
+   */
+  private roomMinX = -Infinity;
+  private roomMinZ = -Infinity;
   private readonly truckOfSlot = new Map<string, TruckView>();
   /** Index of each truck slot in snapshot.truckSlots (the hint names the one a drop would land on). */
   private readonly truckSlotIndex = new Map<string, number>();
@@ -283,10 +294,10 @@ export class LevelView {
       this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone(), heightScale: 1 });
       this.shadowBounds.union(rack.bounds);
     }
-    // …and so do the trucks' cue boards; the truck outside stays in frame while its wall stands (TruckView.fitBox).
+    // …and so do the docks: the truck outside and the sign over its door, always (they never sink).
     for (const truck of this.trucks) {
-      this.fitBoxes.push({ min: truck.bounds.min.clone(), max: truck.bounds.max.clone(), heightScale: 1 }, truck.fitBox);
-      this.shadowBounds.union(truck.bounds).union(truck.outsideBounds);
+      this.fitBoxes.push(truck.fitBox);
+      this.shadowBounds.union(truck.bounds);
     }
 
     this.update(snapshot, 0, 0, cameraYaw, 0);
@@ -389,22 +400,15 @@ export class LevelView {
     this.preview.sync(f.carrying ? dropCell : null, match, dt, topY, intoSlot ? SLOT_PREVIEW_SCALE : 1);
     this.marker?.sync(selected, ready, intoSlot ? match : null, dt);
 
+    if (this.trucked) this.refreshRoomClip();
     this.updateOccluders(snapshot, cameraYaw, dt);
     if (this.stacking) this.updateStackGhosts(snapshot, cameraYaw, dt);
     if (this.racked) this.updateSlotBoxGhosts(snapshot, dt);
 
     const shaftGain = 1 + 0.2 * warmth;
     for (let i = 0; i < this.walls.length; i++) this.walls[i].sync(cameraYaw, dt, false, shaftGain);
-    this.followWalls();
+    for (let i = 0; i < this.trucks.length; i++) this.trucks[i].followWall(this.truckWalls[i].fitBox.heightScale);
     this.glassMaterial.color.setScalar(1 + 0.06 * warmth);
-  }
-
-  /** Each truck outside sinks and rises with its wall (never standing in front of the warehouse). */
-  private followWalls(): void {
-    for (let i = 0; i < this.trucks.length; i++) {
-      const wall = this.truckWalls[i].group;
-      this.trucks[i].follow(wall.scale.y, wall.scale.z, wall.visible);
-    }
   }
 
   /** The truck slot `id` of this frame's snapshot (index kept from load: the list never changes during a level). */
@@ -444,10 +448,33 @@ export class LevelView {
     this.bag.dispose();
   }
 
+  /** Loading docks: the room side of every dock wall that stands (as its truck saw it last frame), for clipToRoom. */
+  private refreshRoomClip(): void {
+    this.roomMinX = -Infinity;
+    this.roomMinZ = -Infinity;
+    for (let i = 0; i < this.trucks.length; i++) {
+      if (!this.trucks[i].wallStands) continue;
+      if (this.truckSides[i] === 'north') this.roomMinZ = -this.size.depth / 2;
+      else this.roomMinX = -this.size.width / 2;
+    }
+  }
+
+  /**
+   * Clip an actor volume to the room side of every standing dock wall: what lies beyond one (on a truck bed, or the part
+   * of the load already through the door) is hidden by the wall itself. False when nothing of it is left. Without
+   * trucks, or with the dock wall sunk, the volume is untouched.
+   */
+  private clipToRoom(min: Vector3, max: Vector3): boolean {
+    if (min.x < this.roomMinX) min.x = this.roomMinX;
+    if (min.z < this.roomMinZ) min.z = this.roomMinZ;
+    return min.x < max.x && min.z < max.z;
+  }
+
   /**
    * Ghost every shelf or rack that stands between the camera and the forklift, a box or a zone, so tall
    * furniture never hides what the player needs to see; back to solid once nothing is behind it. Boxes reaching
-   * into a rack (in its slots, the load going in or out) never count: they ghost with it instead.
+   * into a rack (in its slots, the load going in or out) never count: they ghost with it instead; nor does what a
+   * standing dock wall already hides (clipToRoom).
    */
   private updateOccluders(snapshot: GameSnapshot, cameraYaw: number, dt: number): void {
     const n = this.occluders.length;
@@ -473,7 +500,7 @@ export class LevelView {
         if (holds && reachesInto(holds, p, this.boxHalf + BOX_INSET)) continue;
         _actorMin.set(p.x - this.boxHalf, p.y + this.boxHeight * BOX_VISIBLE_FROM, p.z - this.boxHalf);
         _actorMax.set(p.x + this.boxHalf, p.y + this.boxHeight, p.z + this.boxHalf);
-        if (!hidesBehind(bounds, _actorMin, _actorMax, back)) continue;
+        if (!this.clipToRoom(_actorMin, _actorMax) || !hidesBehind(bounds, _actorMin, _actorMax, back)) continue;
         if (carried) actor = true;
         else resting = true;
       }
@@ -593,8 +620,9 @@ export class LevelView {
   }
 
   /**
-   * A truck level just got its destined box (on right levels below): a ring around the volume it takes and sparkles
-   * out of it, as the box lands, on the face of its column the camera sees (the loading side, or the back from outside).
+   * A truck level just got its destined box (on right levels below): a ring around the box on its bed and sparkles out
+   * of it, as the box lands, on the face of its bed column the camera sees (the door plane from inside, the outer end
+   * of the bed from outside). Its sign cell flashes with it (TruckView).
    */
   private playBurstOnTruck(ts: TruckSlotState, cameraYaw: number): void {
     const tone = ts.destined ? this.sparkleTones.get(ts.destined.color) : undefined;
@@ -603,7 +631,7 @@ export class LevelView {
     const towardCamera = Math.sin(front) * Math.sin(cameraYaw) + Math.cos(front) * Math.cos(cameraYaw);
     const yaw = towardCamera >= 0 ? front : front + Math.PI;
     const h = this.boxHeight;
-    this.takeBurst()?.play('slot', ts.pos.x, ts.level * h, ts.pos.z, yaw, tone, DROP_GLIDE_SEC, TRUCK_GLOW.halfW + 0.02, h / 2);
+    this.takeBurst()?.play('slot', ts.pos.x, ts.level * h, ts.pos.z, yaw, tone, DROP_GLIDE_SEC, TRUCK_BURST.halfW, h / 2);
   }
 
   /** A stack zone was just completed: its boxes glow one after another, bottom → top, once the last has landed. */
@@ -668,7 +696,7 @@ export class LevelView {
       if (hidesBehind(stack, _actorMin, _actorMax, back)) return true;
     }
 
-    // Lids of resting boxes in other cells (same volume the shelves test).
+    // Lids of resting boxes in other cells (same volume the shelves test; a lid a standing dock wall hides never counts).
     const boxes = snapshot.boxes;
     for (let j = 0; j < boxes.length; j++) {
       const other = boxes[j];
@@ -677,7 +705,7 @@ export class LevelView {
       if (!q) continue;
       _actorMin.set(q.x - this.boxHalf, q.y + this.boxHeight * BOX_VISIBLE_FROM, q.z - this.boxHalf);
       _actorMax.set(q.x + this.boxHalf, q.y + this.boxHeight, q.z + this.boxHalf);
-      if (hidesBehind(stack, _actorMin, _actorMax, back)) return true;
+      if (this.clipToRoom(_actorMin, _actorMax) && hidesBehind(stack, _actorMin, _actorMax, back)) return true;
     }
 
     // Zone pads in other cells (the one under this stack is covered by its base box anyway).
@@ -873,61 +901,73 @@ export class LevelView {
   }
 
   /**
-   * Loading docks (docs/DOCKS.md): one TruckView per truck. Inside, its bed and a cue board per bed column (a bay that
-   * fades on its own, like a rack's) carrying one glowing panel and one unlit sticker per level, bottom at the bottom:
-   * the rack sticker (the exact colour of the box it asks for, rimmed in its ink, or the neutral fill for a symbol only,
-   * the same mark in the cue ink), plus a glow band around the level's box. Outside, the rest of the truck, following
-   * its wall. The stickers come from the level data; each level's light reads its TruckSlotState by id every frame.
+   * Loading docks (docs/DOCKS.md): one TruckView per truck, static: the dock plate in its door, the truck parked outside
+   * and the sign over the door (a bay that fades on its own, like a rack's) with one cell per bed column and level,
+   * bottom row = level 0: a glowing panel, the level's unlit sticker on both faces (the rack sticker: the exact colour of
+   * the box it asks for, rimmed in its ink, or the neutral fill for a symbol only, the same mark in the cue ink) and a
+   * glow band round it. The stickers come from the level data; each level's light reads its TruckSlotState by id every
+   * frame. The boxes on a bed are ordinary boxes (buildBoxes) at their state positions, outside the wall.
    */
   private buildTrucks(snapshot: GameSnapshot, theme: Theme, mats: SharedMaterials): void {
     if (!this.trucked) return;
     const level = snapshot.level;
-    const step = this.boxHeight;
     const states = snapshot.truckSlots ?? [];
     states.forEach((s, i) => {
       this.truckSlotIndex.set(s.id, i);
       this.truckWasSatisfied.push(s.satisfied);
     });
-    const frameMaterial = () => {
+    const signMaterial = () => {
       const material = this.bag.track(mats.painted.clone());
       // Painted metal, like the racks.
       material.roughness = 0.72;
       return material;
     };
-    const panel = this.bag.track(buildTruckCuePanel(theme));
-    const band = this.bag.track(buildTruckGlowGeometry(step));
+    const band = this.bag.track(buildSignGlowGeometry());
+    const panelByCell = new Map<string, BufferGeometry>();
     const cueByLook = new Map<string, BufferGeometry>();
+    const origin = new Vector3();
     trucksOf(level).forEach((truck, index) => {
       const wall = this.wallBySide.get(truck.wall);
       if (!wall) return;
+      // The bed columns' volume beyond the wall (dock-local −1 < z < −T over the door run): boxes there never make
+      // the sign ghost.
+      const holds = new Box3();
+      const ends = [dockColumnX(truck, level, 0), dockColumnX(truck, level, truck.columns.length - 1)];
+      holds.expandByPoint(dockToWorld(truck.wall, level, Math.min(...ends) - 0.5, 0, -1, origin));
+      holds.expandByPoint(dockToWorld(truck.wall, level, Math.max(...ends) + 0.5, DIORAMA.wallHeight, -DIORAMA.wallThickness, origin));
       const view = new TruckView(
         truck.id,
-        truck.wall,
-        wall.layout.position,
-        wall.layout.rotationY,
-        this.bag.track(buildTruckBed(truck, level, theme)),
+        this.bag.track(buildDockPlate(truck, level, theme)),
+        this.bag.track(buildTruckBody(truck, level, theme, index)),
         mats.painted,
-        buildTruckBoardBays(truck, level, theme, step).map((g) => this.bag.track(g)),
-        frameMaterial,
+        this.bag.track(buildSignFrame(truck, level, theme)),
+        signMaterial(),
         this.depthOnly,
-        this.bag.track(buildTruckOutside(truck, level, theme, index)),
-        mats.painted,
+        holds,
         DROP_GLIDE_SEC,
       );
-      const yaw = outwardYaw(TRUCK_FACING[truck.wall]);
+      // Sign cells face the warehouse: their local +z is their wall's inward side (dock-local +z).
+      const yaw = dockPlacement(truck.wall, level).ry ?? 0;
       truck.columns.forEach((cues, column) => {
-        const pos = cellToWorld(truckCellOf(truck, column), level.size);
+        const x = dockColumnX(truck, level, column);
         cues.forEach((cue, k) => {
           const id = truckSlotIdOf(truck.id, column, k);
           const i = this.truckSlotIndex.get(id);
           const state = i !== undefined ? states[i] : undefined;
+          const cell = signCell(truck, column, k);
+          const cellKey = `${cell.x0}/${cell.x1}/${cell.y0}/${cell.y1}`;
+          let panel = panelByCell.get(cellKey);
+          if (!panel) {
+            panel = this.bag.track(buildSignPanel(theme, cell));
+            panelByCell.set(cellKey, panel);
+          }
           const r = theme.rack;
           const box = cue.color ? theme.boxes[cue.color] : null;
           const look = { fill: box ? box.base : r.cueFill, rim: box ? box.ink : r.cueRim, ink: r.cueInk, glyph: this.markOf(cue)?.shape ?? null };
           const key = `${look.fill}/${look.glyph ?? 'plain'}`;
           let cueGeometry = cueByLook.get(key);
           if (!cueGeometry) {
-            cueGeometry = this.bag.track(buildTruckCue(look));
+            cueGeometry = this.bag.track(buildSignCue(look));
             cueByLook.set(key, cueGeometry);
           }
           const glow = cue.color ? theme.zones[cue.color].glow : theme.neutralZone.glow;
@@ -935,13 +975,9 @@ export class LevelView {
           const bandMaterial = createOverlayMaterial(this.bag, destined?.band ?? glow, 0, true);
           view.addLevel(
             id,
-            column,
             state?.satisfied ?? false,
-            pos.x,
-            pos.z,
+            dockToWorld(truck.wall, level, x, signRowY(k), signMidZ(), origin),
             yaw,
-            truckCueY(cues.length, k, step),
-            k * step,
             panel,
             createGlowMaterial(this.bag, glow),
             cueGeometry,
@@ -953,12 +989,13 @@ export class LevelView {
           this.truckOfSlot.set(id, view);
         });
       });
-      for (const bay of view.bays) this.addOccluder(bay);
+      view.followWall(wall.view.fitBox.heightScale);
+      this.addOccluder(view.occluder);
       this.trucks.push(view);
       this.truckWalls.push(wall.view);
-      this.root.add(view.group, view.outside);
+      this.truckSides.push(truck.wall);
+      this.root.add(view.group);
     });
-    this.followWalls();
   }
 
   private buildBoxes(snapshot: GameSnapshot, theme: Theme, config: GameConfig): void {

@@ -48,13 +48,18 @@ export const RACK = {
 } as const;
 
 /**
- * Loading docks (docs/DOCKS.md). The truck bed is level with the warehouse floor (the dock pit is outside), so a box
- * on it rests at the heights of a floor stack (level n = n · box height) and the forks need nothing special.
+ * Loading docks (docs/DOCKS.md). The truck waits outside, its bed level with the warehouse floor (the dock pit is
+ * outside), so a box on it rests at the heights of a floor stack (level n = n · box height) and the forks need nothing
+ * special: they reach through the door from the door cell.
  */
 export const DOCK = {
-  /** Top of the dock door opening in its wall (the lintel goes on up to the wall top). Over a full 3-level column. */
-  doorTop: 2.02,
-  /** The wall stays below the door down to here: the trailer deck passes over it. */
+  /**
+   * Top of the dock door opening in its wall (the lintel goes on up to the wall top). A box carried up to level 1
+   * (forks up, one stack step) tops out at ≈ 1.62, the forklift's inner mast at ≈ 1.4: both pass under the shutter's
+   * bottom rail at the head of the opening (1.665). The sign above the door starts over its frame (builders/truck).
+   */
+  doorTop: 1.7,
+  /** The wall stays below the door down to here: the dock plate fills the opening from here up (builders/truck). */
   sillTop: -0.07,
   /** Gap between the door opening and each end of its truck's run of bed cells. */
   doorInset: 0.03,

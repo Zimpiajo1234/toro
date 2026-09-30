@@ -56,7 +56,7 @@ export interface SlotTone {
  * Lights ONLY when the slot holds its destined box (`satisfied`): a flash as the box lands (views/success), then a soft
  * steady glow. While a box that fits its cue is being carried it pulses clearly (panel, cue and band in the carried
  * box's tone); a box that merely fits leaves it neutral (never red, never text). A truck level (views/TruckView) lights
- * the same way: its board panel, its sticker and a band around its box.
+ * the same way: its cell's panel on the dock sign, its stickers and a band round them.
  */
 export class SlotLight {
   private satisfied: boolean;
@@ -158,8 +158,8 @@ export class RackBay {
     geometry: BufferGeometry,
     material: MeshStandardMaterial,
     private readonly depthOnly: Material,
-    /** userData tag of its frame mesh: a rack bay, or the cue board of a truck bed column (views/TruckView). */
-    kind: 'rack' | 'truck' = 'rack',
+    /** userData tag of its frame mesh: a rack bay, or the sign over a dock door (views/TruckView). */
+    kind: 'rack' | 'sign' = 'rack',
   ) {
     this.frame = this.addPart(geometry, material);
     this.frame.userData[kind] = true;

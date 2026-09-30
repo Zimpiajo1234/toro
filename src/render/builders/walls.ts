@@ -8,7 +8,7 @@ import { PartList } from '../paint';
 /**
  * The two low back walls (north, west) with baseboard, top cap, windows (light-wood frames,
  * warm glass, faint additive light shafts) and the door of each loading dock (docs/DOCKS.md: an opening
- * from the floor with a slate frame, the rolled-up door in its head and rubber seals outside).
+ * from the floor with a slate frame, the rolled-up door over it outside and rubber seals around it outside).
  * Each wall is built in a local frame: it runs along +x, its inner face is the plane z = 0 facing +z,
  * thickness goes toward -z. Trucks are built in this same frame (builders/truck: "dock-local").
  */
@@ -56,13 +56,16 @@ const SHAFT_ALPHA = 0.065;
 const PATCH_ALPHA = 0.055;
 const FEATHER = 0.22;
 /**
- * Dock door (docs/DOCKS.md): its slate frame just outside the opening, the rolled-up door in the head of the opening
- * (a soft cream roll and the bottom rail of the shutter under it) and the rubber dock seals on the outer face, down its
- * sides and across its head, with two bumpers at the foot of the jambs.
+ * Dock door (docs/DOCKS.md): its slate frame just outside the opening, the rolled-up door on the outer face over the
+ * opening (a soft cream roll on two slate brackets, above the head seal; the inner face over the door carries the
+ * dock sign, builders/truck), the bottom rail of the shutter at the head of the opening, and the rubber dock seals on
+ * the outer face, down its sides and across its head, with two bumpers at the foot of the jambs.
  */
 export const DOOR = {
   frame: 0.07,
   roll: 0.075,
+  /** Brackets holding the roll at its ends (along the wall). */
+  bracket: 0.03,
   rail: 0.035,
   seal: 0.08,
   sealOut: 0.07,
@@ -148,10 +151,11 @@ export function buildWallGeometry(layout: WallLayout, theme: Theme, toSunLocal: 
   const y1 = DIORAMA.windowTop;
   const body = new PartList();
 
-  // Wall body around the openings: under and over a window, only under (the sill) and over (the lintel) a door.
+  // Wall body around the openings: under and over a window, only under (the sill) and over (the lintel) a door and its
+  // frame (addDoor: the jambs and the head fill the wall's thickness there, so no face of theirs lies on a wall face).
   const gaps = [
     ...layout.openings.map((o) => ({ a: o.a, b: o.b, below: y0, above: y1 })),
-    ...layout.doors.map((o) => ({ a: o.a, b: o.b, below: DOCK.sillTop, above: DOCK.doorTop })),
+    ...layout.doors.map((o) => ({ a: o.a - DOOR.frame, b: o.b + DOOR.frame, below: DOCK.sillTop, above: DOCK.doorTop + DOOR.frame })),
   ].sort((p, q) => p.a - q.a);
   let cursor = layout.start;
   for (const o of gaps) {
@@ -188,10 +192,11 @@ export function buildWallGeometry(layout: WallLayout, theme: Theme, toSunLocal: 
 }
 
 /**
- * A dock door (DOOR): the slate frame around the opening (jambs from the floor, a head under the lintel), both faces;
- * the rolled-up door in the head of the opening with the bottom rail of the shutter under it; outside, the rubber seals
- * down both sides and across the head and a bumper at the foot of each jamb. The opening itself stays clear for the
- * trailer deck (builders/truck).
+ * A dock door (DOOR): the slate frame around the opening (jambs from the sill, a head under the lintel), through the
+ * wall's thickness and a touch proud of both faces; the bottom rail of the rolled-up shutter at the head of the
+ * opening; outside, the rubber seals down both sides and across the head, the roll over the head seal on two brackets,
+ * and a bumper at the foot of each jamb. The opening itself stays clear from the sill to the rail for the load going
+ * through it (builders/truck: the dock plate fills its floor, the truck waits outside).
  */
 function addDoor(parts: PartList, theme: Theme, door: WallDoor): void {
   const T = DIORAMA.wallThickness;
@@ -200,19 +205,25 @@ function addDoor(parts: PartList, theme: Theme, door: WallDoor): void {
   const c = theme.truck;
   const z0 = -T - 0.012;
   const z1 = 0.025;
-  parts.block(c.doorFrame, door.a - D.frame, door.a, 0, top, z0, z1);
-  parts.block(c.doorFrame, door.b, door.b + D.frame, 0, top, z0, z1);
+  parts.block(c.doorFrame, door.a - D.frame, door.a, DOCK.sillTop, top, z0, z1);
+  parts.block(c.doorFrame, door.b, door.b + D.frame, DOCK.sillTop, top, z0, z1);
   parts.block(c.doorFrame, door.a - D.frame, door.b + D.frame, top, top + D.frame, z0, z1);
-  // The roll lies along the opening in its head, inside the wall; the shutter's bottom rail just shows under it.
-  const roll = new CylinderGeometry(D.roll, D.roll, door.b - door.a, 10);
-  parts.add(roll, c.shutter, { x: (door.a + door.b) / 2, y: top - D.roll, z: -T / 2, rz: Math.PI / 2 });
-  const railY = top - 2 * D.roll;
-  parts.block(c.doorFrame, door.a, door.b, railY - D.rail, railY, -T / 2 - 0.02, -T / 2 + 0.02);
+  // The shutter is rolled up: its bottom rail waits at the head of the opening, inside the wall.
+  parts.block(c.doorFrame, door.a, door.b, top - D.rail, top, -T / 2 - 0.02, -T / 2 + 0.02);
   // Dock seals and bumpers on the outer face.
   const s0 = -T - D.sealOut;
+  const sealTop = top + D.seal - 0.02;
   parts.block(c.rubber, door.a - D.seal, door.a + 0.01, DOCK.sillTop, top - 0.02, s0, -T);
   parts.block(c.rubber, door.b - 0.01, door.b + D.seal, DOCK.sillTop, top - 0.02, s0, -T);
-  parts.block(c.rubber, door.a - D.seal, door.b + D.seal, top - 0.02, top + D.seal - 0.02, s0, -T);
+  parts.block(c.rubber, door.a - D.seal, door.b + D.seal, top - 0.02, sealTop, s0, -T);
+  // The roll, outside over the head seal, on a slate bracket at each end.
+  const rollY = sealTop + D.roll + 0.01;
+  const rollZ = z0 - D.roll;
+  const roll = new CylinderGeometry(D.roll, D.roll, door.b - door.a, 10);
+  parts.add(roll, c.shutter, { x: (door.a + door.b) / 2, y: rollY, z: rollZ, rz: Math.PI / 2 });
+  for (const x of [door.a - D.bracket, door.b]) {
+    parts.block(c.doorFrame, x, x + D.bracket, rollY - D.roll - 0.01, rollY + D.roll + 0.01, rollZ - D.roll - 0.01, -T);
+  }
   const [by0, by1] = D.bumperY;
   parts.block(c.rubber, door.a - D.seal - D.bumperW, door.a - D.seal, by0, by1, -T - D.bumperOut, -T);
   parts.block(c.rubber, door.b + D.seal, door.b + D.seal + D.bumperW, by0, by1, -T - D.bumperOut, -T);

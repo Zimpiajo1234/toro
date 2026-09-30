@@ -69,11 +69,31 @@ describe('precomputed level minimums', () => {
     expect(minimumsChanges(stored, fresh)).toEqual(['cambio: 2 (exacto) → 3 (exacto)']);
     expect(minimumsChanges(null, fresh)).toEqual(['cambio: nada → 3 (exacto)']);
     expect(minimumsChanges(fresh, computeMinimums([swap], DEFAULT_MINIMUM_WORK + 1))).toEqual([`presupuesto (--estados): ${DEFAULT_MINIMUM_WORK} → ${DEFAULT_MINIMUM_WORK + 1}`]);
-    // The Benchmark with almost no budget: only the proven lower bound, marked as such.
-    const capped = computeMinimums(SPECIAL_LEVELS, 1).levels[BENCHMARK_ID];
+    // Two such swaps in a stacking level (the classic swap-cycle bound is off there: its bound says 5, the fewest is
+    // 6) with almost no budget: only the proven lower bound, marked as such.
+    const swaps = parseLevel(
+      [
+        '# 1 · Dos cambios',
+        'id: dos-cambios',
+        'limit: 2',
+        '',
+        '  0123456',
+        '0 .......',
+        '1 .1...2.',
+        '2 .......',
+        '3 .3...4.',
+        '4 ...^...',
+        '',
+        '1 = zona azul + caja menta      2 = zona menta + caja azul',
+        '3 = zona coral + caja lavanda   4 = zona lavanda + caja coral',
+        '',
+      ].join('\n'),
+    ).level;
+    expect(computeMinimums([swaps]).levels['dos-cambios']).toEqual({ moves: 6, exact: true });
+    const capped = computeMinimums([swaps], 1).levels['dos-cambios'];
     expect(capped.exact).toBe(false);
-    expect(capped.moves).toBeGreaterThanOrEqual(12);
-    expect(capped.moves).toBeLessThanOrEqual(14);
+    expect(capped.moves).toBeGreaterThanOrEqual(4);
+    expect(capped.moves).toBeLessThan(6);
     expect(formatMinimums({ ...fresh, levels: { cambio: capped } })).toContain('"cambio": { "moves": ' + capped.moves + ', "exact": false }');
   });
 });

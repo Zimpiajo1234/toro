@@ -153,16 +153,19 @@ añade la fila "F V subir / bajar horquilla · rueda · X B mando". Reglas y con
 
 ## Muelles de carga (Benchmark, Modo prueba)
 
-Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión aparcado marcha atrás; su plataforma de
-madera entra en el almacén a ras del suelo, en una fila de casillas pegada al muro. Cada columna del camión se carga
-**solo de frente**, como una pila del suelo: la horquilla sube sola (F / V no hacen nada ahí), las cajas van de abajo
-arriba y cada **nivel** tiene su pista (color, símbolo o las dos), en un cartel detrás de la columna con una pegatina
-por nivel que nunca se tapa ni se atenúa. Los niveles del camión cuentan en el reparto único, igual que zonas y
-huecos: un nivel brilla y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar
-el siguiente nivel encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se
-puede volver a sacar marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja.
-Sin teclas nuevas. Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos:
-[docs/DOCKS.md](docs/DOCKS.md).
+Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión aparcado **fuera**, marcha atrás, con la
+trasera pegada al muro: nada del camión entra en el almacén. Delante de la puerta quedan sus **casillas de puerta** (de
+1 a 3, una por columna del camión), suelo normal. Para cargar una columna, ponte en su casilla de puerta mirando al
+muro: la carretilla se para en el muro y la horquilla y la caja cruzan la puerta hasta la plataforma (entra recta; se
+sale marcha atrás). Se carga **como una pila del suelo**: la horquilla sube sola (F / V no hacen nada ahí), las cajas
+van de abajo arriba, hasta 2 de alto, sin techo ni barras sobre la plataforma. Cada **nivel** tiene su pista (color,
+símbolo o las dos) en el **cartel enmarcado sobre la puerta**: una casilla por columna (justo encima de su casilla de
+puerta) y por nivel (abajo, el de la plataforma), con la pegatina de las estanterías por las dos caras, que nunca se
+atenúa ni sale en espejo. Los niveles del camión cuentan en el reparto único, igual que zonas y huecos: un nivel brilla
+y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar el siguiente nivel
+encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
+marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
 

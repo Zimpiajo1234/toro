@@ -5,9 +5,10 @@ import { LevelFormatError, formatLevel, parseLevel, parseLevelDraft, renderLevel
 import { validateLevel } from './validateLevel';
 
 /*
- * Loading docks in the .level format (docs/DOCKS.md): «T = camión muelle norte: azul / ▲ | coral ◆», the truck bed a
- * straight run of its character against the north (row 0) or west (column 0) wall, one legend column per cell separated
- * by «|», levels bottom → top separated by «/».
+ * Loading docks in the .level format (docs/DOCKS.md): «T = camión muelle norte: azul / ▲ | coral ◆», its character on
+ * the door cells, a straight run against the north (row 0) or west (column 0) wall, one legend column per cell (the bed
+ * column outside, beyond the wall) separated by «|», levels bottom → top separated by «/». A box loaded at the start is
+ * on its bed cell: z = -1 (north) or x = -1 (west).
  *
  * The grammar is tested on the draft (parseLevelDraft: before validateLevel), so it does not depend on the truck rules
  * of validateLevel; the round trips through validateLevel run as soon as validateLevel keeps `trucks`.
@@ -146,15 +147,15 @@ const VALIDATES_TRUCKS = (() => {
 })();
 
 describe('loading docks in .level files (grammar, before validateLevel)', () => {
-  it('parses a north truck: its bed run on row 0, columns of levels bottom → top, cues', () => {
+  it('parses a north truck: its door run on row 0, columns of levels bottom → top, cues', () => {
     expect(levelOf(NORTH)).toStrictEqual(NORTH_LEVEL);
   });
 
-  it('a west truck runs along column 0; a box loaded at the start has its bed cell and level, after the floor boxes', () => {
+  it('a west truck runs along column 0; a box loaded at the start has its bed cell (x = -1) and level, after the floor boxes', () => {
     const level = levelOf(WEST);
     expect(level.trucks).toStrictEqual([{ id: 't1', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'blue' }], [{ symbol: 'triangle' }]] }]);
     expect(level.boxes.map((b) => b.id)).toEqual(['b1', 'b2', 'b3']);
-    expect(level.boxes[2]).toStrictEqual({ id: 'b3', color: 'mint', symbol: 'triangle', x: 0, z: 1, level: 0, kind: 'standard' });
+    expect(level.boxes[2]).toStrictEqual({ id: 'b3', color: 'mint', symbol: 'triangle', x: -1, z: 1, level: 0, kind: 'standard' });
     expect(level.boxes.slice(0, 2).every((b) => b.level === undefined)).toBe(true);
   });
 
@@ -186,7 +187,7 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
     );
     const level = levelOf(lines);
     expect(level.trucks![0].id).toBe('grande');
-    expect(level.boxes.at(-1)).toStrictEqual({ id: 'b9', color: 'mint', symbol: 'triangle', x: 3, z: 0, level: 0, kind: 'standard' });
+    expect(level.boxes.at(-1)).toStrictEqual({ id: 'b9', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 0, kind: 'standard' });
     expect(renderLevel(level)).toBe(text(lines));
   });
 
@@ -231,8 +232,8 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
     expectError(legend('T = camión muelle norte: azul: ▲'), 12, 30, /los dos puntos van una sola vez, tras «camión muelle …»/);
   });
 
-  it('levels: at most three per column, none empty, every one with a cue (no «libre»)', () => {
-    expectError(legend('T = camión muelle norte: azul / ▲ / menta / coral | coral ◆'), 12, 45, /como mucho 3 niveles/);
+  it('levels: at most two per column, none empty, every one with a cue (no «libre»)', () => {
+    expectError(legend('T = camión muelle norte: azul / ▲ / menta | coral ◆'), 12, 37, /una columna del camión lleva como mucho 2 niveles \(2 cajas de alto\)/);
     expectError(legend('T = camión muelle norte: azul // ▲ | coral ◆'), 12, 32, /falta un nivel/);
     expectError(legend('T = camión muelle norte: libre / ▲ | coral ◆'), 12, 26, /no hay niveles «libre»/);
     expectError(legend('T = camión muelle norte: azull / ▲ | coral ◆'), 12, 26, /palabra desconocida «azull» en un nivel del camión.*«azul»/);
@@ -250,8 +251,13 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
   });
 
   it('on the map: a straight run against its wall, one legend column per cell', () => {
-    // Off the wall: a north truck lies on row 0.
-    expectError(replace(replace(NORTH, 6, '0 .......'), 7, '1 ..TT...'), 7, 5, /va pegado al muro norte: su caja ocupa la fila 0 del mapa \(aquí está en la fila 1\)/);
+    // Off the wall: a north truck's door cells lie on row 0.
+    expectError(
+      replace(replace(NORTH, 6, '0 .......'), 7, '1 ..TT...'),
+      7,
+      5,
+      /espera fuera, pegado al muro norte: sus casillas son las de la puerta, en la fila 0 del mapa \(aquí está en la fila 1\)/,
+    );
     // A north truck runs along the row; a west one along the column.
     expectError(replace(replace(NORTH, 6, '0 ..T....'), 7, '1 ..T....'), 6, 5, /no es una fila recta/);
     expectError(legend('T = camión muelle oeste: azul / ▲ | coral ◆'), 6, 5, /no es una columna recta/);

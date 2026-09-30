@@ -263,7 +263,7 @@ export function buildSlotCue(look: CueLook, endSides: readonly (1 | -1)[] = []):
   return parts.build();
 }
 
-/** Measures of a cue sticker (CUE for a rack slot; builders/truck TRUCK_CUE for a truck level, a little smaller). */
+/** Measures of a cue sticker (CUE for a rack slot; builders/truck SIGN_CUE for a cell of a dock sign, smaller). */
 export interface CueDims {
   halfW: number;
   halfH: number;
@@ -275,7 +275,7 @@ export interface CueDims {
 
 /**
  * One cue sticker, in the XY plane facing +Z from z = 0: the rim, the fill over it and the bold glyph on top. Shared by
- * the rack slots and the truck cue boards (docs/DOCKS.md), so both read the same.
+ * the rack slots and the dock signs over the truck doors (docs/DOCKS.md), so both read the same.
  */
 export function buildCueFace(look: Pick<CueLook, 'fill' | 'rim' | 'ink' | 'glyph'>, dims: CueDims = CUE): BufferGeometry {
   const parts = new PartList();
@@ -321,7 +321,7 @@ export function buildSlotGlowGeometry(): BufferGeometry {
   return buildGlowFrameGeometry(SLOT_GLOW, PANEL_HEIGHT / 2, [0.5 + SLOT_GLOW.gap, -0.5 - SLOT_GLOW.gap]);
 }
 
-/** Measures of a glow band (SLOT_GLOW; builders/truck TRUCK_GLOW around a truck level). */
+/** Measures of a glow band (SLOT_GLOW; builders/truck SIGN_GLOW round a dock sign cell's sticker). */
 export interface GlowFrameDims {
   halfW: number;
   solidX: number;

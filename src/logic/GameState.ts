@@ -14,7 +14,7 @@ import {
   type ZoneState,
 } from '../core/types';
 import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from '../core/sorting';
-import { columnFrame, inwardHeading, slotsOf } from '../core/racks';
+import { FACING_X, columnFrame, inwardHeading, slotsOf } from '../core/racks';
 import { hasTrucks, truckSlotsOf, usesTargetRules } from '../core/docks';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
@@ -70,9 +70,11 @@ const RACK_INSIDE_MARGIN = 0.05;
 
 // Loading docks (docs/DOCKS.md). Levels without trucks never use these.
 /**
- * Facing a truck bed column (loaded only from the front): heading within this (rad) of straight into the truck, the
- * fork point within TRUCK_FACE_LATERAL (u) of the column's centre line (half a cell: anywhere in front of it) and
- * between TRUCK_FACE_NEAR in front of the bed's face and TRUCK_FACE_FAR into it.
+ * Facing a truck bed column (loaded only through its door, from its door cell): the body in line with its door cell
+ * (on it or straight behind it), heading within this (rad) of straight into the truck, the fork point within
+ * TRUCK_FACE_LATERAL (u) of the column's centre line (half a cell: anywhere in front of it) and between
+ * TRUCK_FACE_NEAR in front of the wall line (the bed's face) and TRUCK_FACE_FAR past it. Only then does the column's
+ * span of the door open for the carried load (refreshDoorPassage).
  */
 export const TRUCK_FACE_ANGLE = degToRad(30);
 export const TRUCK_FACE_LATERAL = 0.5;
@@ -82,11 +84,12 @@ const TRUCK_FACE_FAR = 1;
 const TRUCK_HOLD_ANGLE = degToRad(45);
 const TRUCK_HOLD_LATERAL = 0.6;
 /**
- * Pick and drop act on the faced column once the fork point is within this (u) of the bed's face (from the column's
- * front cell); from further away the truck is out of reach and the floor rules apply (a bed cell is never a floor
- * drop).
+ * Pick and drop act on the faced column only with the forks through its door: the fork point at least this far (u)
+ * past the wall line, the load mostly on the bed (with the body against the wall it stands 0.5 in, at the bed's
+ * centre; on the door cell's centre, 0.42). Short of it the load is in the doorway at most, where nothing can be
+ * dropped (RackAim.doorway); further back the floor rules apply (a bed cell is never a floor drop).
  */
-export const TRUCK_REACH = 0.55;
+export const TRUCK_REACH = 0.3;
 
 /**
  * Pure simulation of one level: forklift kinematics, collisions, pick-up / drop, zone scoring.
@@ -144,11 +147,15 @@ export class GameState {
   private readonly targetRules: boolean;
   /** Truck slots (docs/DOCKS.md), snapshot.truckSlots order; empty without trucks. */
   private readonly truckSlots: TruckSlotState[] = [];
-  /** Per truck bed column: world centre of its bed cell and the heading that faces into the truck. */
+  /** Per truck bed column: world centre of its bed cell (outside, past the wall) and the heading that faces into it. */
   private readonly truckCenters: Vec2[] = [];
   private readonly truckHeadings: number[] = [];
+  /** Walls with a dock door (the carried load can only cross their line through one): north, west. */
+  private readonly dockWalls = { north: false, west: false };
   /** Truck bed column the rig faces (or is still held at), -1 = none. */
   private truckEngaged = -1;
+  /** Facing `truckEngaged` this frame (not merely held): its span of the door may open for the load. */
+  private truckFacing = false;
   /**
    * Where the carried box was picked up (its cell, height and rack slot): a drop right back there is no move for
    * snapshot.moves (see countMove).
@@ -223,6 +230,7 @@ export class GameState {
       this.truckCenters.push(cellToWorld(column.cell, size));
       this.truckHeadings.push(inwardHeading(column.facing));
     }
+    for (const truck of level.trucks ?? []) this.dockWalls[truck.wall] = true;
     this.openLevels = new Int8Array(this.grid.columns.length).fill(-1);
     const boxes: BoxState[] = level.boxes.map((b, i) => {
       const zi = this.grid.zoneAt(b.x, b.z);
@@ -327,8 +335,9 @@ export class GameState {
     // at all, the rig settles the way it was last driven (each style has its own soft turn release).
     const driving = Math.abs(throttle) > MOVE_EPSILON || Math.abs(steer) > MOVE_EPSILON;
     const moving = moveX * moveX + moveZ * moveZ > MOVE_EPSILON * MOVE_EPSILON;
-    // A load inside a rack slot (seen at the end of last frame): straight in or out only.
-    if (this.grid.columns.length > 0) this.driver.setHeadingLock(this.forksInside);
+    // A load inside a rack slot, or in a dock door (only ever the faced column's: seen at the end of last frame):
+    // straight in or out only.
+    if (this.grid.columns.length > 0 || this.grid.truckColumns.length > 0) this.driver.setHeadingLock(this.forksInside || this.loadInDoor());
     if (driving) this.lastInputWasDrive = true;
     else if (moving) this.lastInputWasDrive = false;
     if (driving || (!moving && this.lastInputWasDrive)) this.driver.stepDrive(step, throttle, steer);
@@ -341,6 +350,7 @@ export class GameState {
     this.stepForkHeight(step);
     this.refreshLoadPassage();
     this.refreshRackPassage();
+    this.refreshDoorPassage();
     return this.flushEvents();
   }
 
@@ -411,8 +421,12 @@ export class GameState {
         if (was && !zone.satisfied) released = zone;
         else if (!was && zone.satisfied) restored = zone; // the wrong box on top came off
       }
-      // Off a truck bed column (its top box, never a locked one): what is left below keeps its state.
-      if (bed >= 0) this.refreshTruckColumn(bed);
+      // Off a truck bed column (its top box, never a locked one): what is left below keeps its state, and its span of
+      // the door opens for the load, which starts on the bed (it stays open while the load backs out through it).
+      if (bed >= 0) {
+        this.refreshTruckColumn(bed);
+        this.world.setDoorOpen(bed, true);
+      }
       // The load was just lifted off what is left of the stack: it stays over it (see refreshLoadPassage).
       this.world.setPassable(this.grid.baseAt(cell.x, cell.z), true);
     }
@@ -550,8 +564,9 @@ export class GameState {
 
   /**
    * The carried box is loaded onto truck bed column `column` (LevelGrid.truckColumns), on top of its stack, like a
-   * floor stack (docs/DOCKS.md): its level is satisfied only with its destined box on satisfied levels below; any other
-   * drop there is a wrong target (soft buzz) and the box stays pickable.
+   * floor stack (docs/DOCKS.md): it lands on the bed cell beyond the door (the forks already stand over it). Its level
+   * is satisfied only with its destined box on satisfied levels below; any other drop there is a wrong target (soft
+   * buzz) and the box stays pickable.
    */
   private dropOnTruck(column: number): void {
     const snap = this.snapshot;
@@ -620,10 +635,13 @@ export class GameState {
   }
 
   /**
-   * Levels with trucks: which truck bed column the rig works at (docs/DOCKS.md: loaded only from the front). Facing
-   * one (heading, fork point in front of it, near its face) engages it; it holds within slightly looser margins so a
-   * small wobble does not flicker the hint. RackAim.truck is that column once the fork point is within TRUCK_REACH of
-   * the bed's face; never while the rig works at a storage rack.
+   * Levels with trucks: which truck bed column the rig works at (docs/DOCKS.md: loaded only through its door, from its
+   * door cell facing the wall). Facing one (the body in line with its door cell, heading, fork point in front of it,
+   * near the wall line) engages it; it holds within slightly looser margins (the body still in line) so a small wobble
+   * does not flicker the hint. RackAim.truck is that column once the forks are through the door (the fork point
+   * TRUCK_REACH past the wall line: the body then stands on its door cell), so a column is never worked from the door
+   * cell beside it; never while the rig works at a storage rack. RackAim.doorway: carrying with the load in a door short
+   * of that, where nothing can be dropped.
    */
   private refreshTruckAim(): void {
     const columns = this.grid.truckColumns;
@@ -636,9 +654,10 @@ export class GameState {
     let best = -1;
     let bestScore = Infinity;
     let bestDepth = 0;
+    let facing = false;
     if (this.engaged < 0) {
       for (let c = 0; c < columns.length; c++) {
-        if (Math.abs(angleDelta(f.heading, this.truckHeadings[c])) > TRUCK_FACE_ANGLE) continue;
+        if (Math.abs(angleDelta(f.heading, this.truckHeadings[c])) > TRUCK_FACE_ANGLE || !this.inLineWith(c)) continue;
         columnFrame(this.truckCenters[c], columns[c].facing, px, pz, frame);
         if (Math.abs(frame.lateral) > TRUCK_FACE_LATERAL || frame.depth < -TRUCK_FACE_NEAR || frame.depth > TRUCK_FACE_FAR) continue;
         const score = Math.abs(frame.lateral) + Math.abs(frame.depth);
@@ -648,8 +667,9 @@ export class GameState {
           bestDepth = frame.depth;
         }
       }
+      facing = best >= 0;
       const was = this.truckEngaged;
-      if (best < 0 && was >= 0 && Math.abs(angleDelta(f.heading, this.truckHeadings[was])) <= TRUCK_HOLD_ANGLE) {
+      if (best < 0 && was >= 0 && Math.abs(angleDelta(f.heading, this.truckHeadings[was])) <= TRUCK_HOLD_ANGLE && this.inLineWith(was)) {
         columnFrame(this.truckCenters[was], columns[was].facing, px, pz, frame);
         if (Math.abs(frame.lateral) <= TRUCK_HOLD_LATERAL && frame.depth >= -TRUCK_FACE_NEAR && frame.depth <= TRUCK_FACE_FAR) {
           best = was;
@@ -658,7 +678,64 @@ export class GameState {
       }
     }
     this.truckEngaged = best;
-    this.aim.truck = best >= 0 && bestDepth >= -TRUCK_REACH ? best : -1;
+    this.truckFacing = facing;
+    this.aim.truck = best >= 0 && bestDepth >= TRUCK_REACH ? best : -1;
+    this.aim.doorway = this.aim.truck < 0 && this.loadInDoor();
+  }
+
+  /**
+   * The body is in line with truck bed column `c`'s door cell: on it or straight behind it (a north dock: the same map
+   * column x; a west dock: the same row z).
+   */
+  private inLineWith(c: number): boolean {
+    const column = this.grid.truckColumns[c];
+    const p = this.snapshot.forklift.pos;
+    return FACING_X[column.facing] === 0
+      ? Math.floor(p.x + this.grid.width / 2) === column.front.x
+      : Math.floor(p.z + this.grid.depth / 2) === column.front.z;
+  }
+
+  /**
+   * Levels with trucks: which bed columns' spans of their doors the carried load may pass (CollisionWorld.setDoorOpen).
+   * The column the rig faces (truckFacing: in line with its door cell, within TRUCK_FACE_ANGLE) opens, like a rack
+   * column, and stays open while the load reaches into its span (it never shuts around the load: the heading holds
+   * once the load is in, so it only ever leaves straight back out); every other span stays shut like the wall. So a
+   * load turned on a door cell meets the door like the wall until the rig faces the column in line with its body, and
+   * it never slides along a wide door into the next column (as in the solver's model: a column is loaded from its own
+   * door cell, facing the wall). Empty tines open nothing (they meet nothing).
+   */
+  private refreshDoorPassage(): void {
+    const columns = this.grid.truckColumns;
+    if (columns.length === 0) return;
+    const world = this.world;
+    const load = this.carriedIndex >= 0 ? this.snapshot.boxes[this.carriedIndex].pos : null;
+    const r = this.config.forklift.carriedBoxRadius;
+    for (let c = 0; c < columns.length; c++) {
+      let open = false;
+      if (load) {
+        open = c === this.truckEngaged && this.truckFacing;
+        if (!open && world.isDoorOpen(c)) {
+          const span = world.doorCell(c);
+          open = pointRectDistance(load.x, load.z, span.minX, span.minZ, span.maxX, span.maxZ) < r;
+        }
+      }
+      world.setDoorOpen(c, open);
+    }
+  }
+
+  /**
+   * Levels with trucks: the carried load has crossed a dock wall's line (by RACK_INSIDE_MARGIN; the walls only let it
+   * through the open span of the door of the column the rig faces, see refreshDoorPassage), so it is in that door or
+   * on the bed beyond: the heading holds and the rig goes in and out straight, as with a load in a rack slot; nothing
+   * is dropped short of the bed (RackAim.doorway). Empty tines never count (they meet nothing).
+   */
+  private loadInDoor(): boolean {
+    if (this.carriedIndex < 0 || this.grid.truckColumns.length === 0) return false;
+    const load = this.snapshot.boxes[this.carriedIndex].pos;
+    const edge = this.config.forklift.carriedBoxRadius - RACK_INSIDE_MARGIN;
+    return (
+      (this.dockWalls.north && load.z - edge < -this.grid.depth / 2) || (this.dockWalls.west && load.x - edge < -this.grid.width / 2)
+    );
   }
 
   /**
