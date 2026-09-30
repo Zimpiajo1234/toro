@@ -14,7 +14,7 @@ import {
 } from '../core/types';
 import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from '../core/sorting';
 import { FACING_X, columnFrame, inwardHeading } from '../core/racks';
-import { facingOf, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
+import { hasStorage, storageSlotsOf } from '../core/storage';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
 import { forkRiseRate } from './forkRise';
@@ -46,10 +46,10 @@ const PRELIFT_MAX_SAMPLES = 8;
 const PRELIFT_MIN_SPEED = 0.05;
 
 // Storage (docs/STORAGE.md). Classic, stacking and sorting levels never use these; how the rig engages a column of each
-// access, how deep it must reach and when its forks go by themselves: logic/storageAccess STORAGE_ACCESS.
+// access and how deep it must reach: logic/storageAccess STORAGE_ACCESS (the forks go by the keys at every one).
 /**
  * The carried load counts as inside a storage opening (the heading holds: it goes in and out straight) once its leading
- * edge is this far (u) past the opening's face: a rack slot's front face, a dock's wall line.
+ * edge is this far (u) past the opening's face: a rack slot's front face, a dock's wall line (loadInOpening).
  */
 const INSIDE_MARGIN = 0.05;
 
@@ -84,24 +84,14 @@ export class GameState {
   /** Levels with storage: the storage column the forks work on (shared with Interaction) and the selection state. */
   private readonly aim: StorageAim = createStorageAim();
   /**
-   * Storage column the rig works at (facing it, or still within its access's hold margins), -1 = none: at a column
-   * whose forks are keyed they follow `forkLevel`.
+   * Storage column the rig works at (facing it, or still within its access's hold margins), -1 = none: its forks follow
+   * `forkLevel` there (every unit: docs/STORAGE.md rule 9).
    */
   private engaged = -1;
   /** Facing `engaged` this frame (not merely held). */
   private facing = false;
-  /** Selected level at the engaged column (F / V, wheel, gamepad X / B; keyed forks only). */
+  /** Selected level at the engaged column (F / V, wheel, gamepad X / B). */
   private forkLevel = 0;
-  /**
-   * Carrying with the load gone into the engaged column's open slot (access `front`): the selection is locked (it
-   * cannot pass a shelf board).
-   */
-  private loadInside = false;
-  /**
-   * The carried load is inside the engaged column's slot: the heading holds (it goes in and out straight). Empty
-   * tines never lock it (they collide with nothing, as against shelves).
-   */
-  private forksInside = false;
   /**
    * Per storage column: world centre of its cell (inside the map, or beyond a wall) and the heading that faces into it
    * from its front.
@@ -114,16 +104,11 @@ export class GameState {
   private openLevels = new Int8Array(0);
   /** The hint's storage object, reused (hint.storage points at it or is null). */
   private readonly storageHint: StorageHint = { unitId: '', skin: 'rack', column: 0, levels: 1, level: 0, slotId: '', ready: false };
-  /** The level follows the target rules of docs/STORAGE.md (it has storage: destinies, locks, soft buzz). */
-  private readonly targetRules: boolean;
-  /** Some storage column has keyed forks (F / V step a level there; elsewhere they do nothing, as before). */
-  private readonly forkKeys: boolean;
   /**
-   * The wall line of every wall with a door unit (its columns' face, depth 0): the carried load can only cross it
-   * through the open span of the door column the rig faces (refreshStoragePassage). Along x (a north wall: the line is
-   * a z) or along z (a west wall: an x).
+   * The level has storage (core/storage hasStorage): it follows the target rules of docs/STORAGE.md (destinies, locks,
+   * soft buzz) and F / V step the forks at its units (elsewhere they do nothing, as before).
    */
-  private readonly doorLines: { alongX: boolean; line: number }[] = [];
+  private readonly targetRules: boolean;
   /**
    * Where the carried box was picked up (its cell, height and storage slot): a drop right back there is no move for
    * snapshot.moves (see countMove).
@@ -136,7 +121,6 @@ export class GameState {
     this.grid = new LevelGrid(level);
     this.targetRules = hasStorage(level);
     const columns = this.grid.columns;
-    this.forkKeys = columns.some((c) => !STORAGE_ACCESS[c.access].autoForks);
 
     // Levels with storage: every zone and storage slot with a cue has the one box kind the level's unique solution
     // gives it.
@@ -177,11 +161,6 @@ export class GameState {
     for (const column of columns) {
       this.columnCenters.push(cellToWorld(column.cell, size));
       this.columnHeadings.push(inwardHeading(column.facing));
-    }
-    for (const unit of storageOf(level)) {
-      if (unit.access.kind !== 'door') continue;
-      const alongX = FACING_X[facingOf(unit)] === 0;
-      if (!this.doorLines.some((d) => d.alongX === alongX)) this.doorLines.push({ alongX, line: alongX ? -size.depth / 2 : -size.width / 2 });
     }
     this.openLevels = new Int8Array(columns.length).fill(-1);
     const boxes: BoxState[] = level.boxes.map((b, i) => {
@@ -257,8 +236,8 @@ export class GameState {
     let moveZ = Number.isFinite(input.move.z) ? input.move.z : 0;
     let throttle = input.drive && Number.isFinite(input.drive.throttle) ? input.drive.throttle : 0;
     let steer = input.drive && Number.isFinite(input.drive.steer) ? input.drive.steer : 0;
-    // Fork level steps only mean something in a level with keyed forks somewhere (elsewhere F / V do nothing, as before).
-    const forkStep = !this.forkKeys ? 0 : input.forkStep === 1 ? 1 : input.forkStep === -1 ? -1 : 0;
+    // Fork level steps only mean something in a level with storage (elsewhere F / V do nothing, as before).
+    const forkStep = !this.targetRules ? 0 : input.forkStep === 1 ? 1 : input.forkStep === -1 ? -1 : 0;
 
     if (!snap.completed) {
       const moving =
@@ -280,8 +259,8 @@ export class GameState {
     // at all, the rig settles the way it was last driven (each style has its own soft turn release).
     const driving = Math.abs(throttle) > MOVE_EPSILON || Math.abs(steer) > MOVE_EPSILON;
     const moving = moveX * moveX + moveZ * moveZ > MOVE_EPSILON * MOVE_EPSILON;
-    // A load inside a storage opening (a rack slot, a dock door: only ever the faced column's, as seen at the end of
-    // last frame): straight in or out only.
+    // A load inside a storage opening (a rack slot, a dock door: only ever the one of the column the rig works at, as
+    // the aim saw it at the end of last frame; a box just lifted out of it counts at once): straight in or out only.
     if (this.grid.columns.length > 0) this.driver.setHeadingLock(this.loadInOpening());
     if (driving) this.lastInputWasDrive = true;
     else if (moving) this.lastInputWasDrive = false;
@@ -537,13 +516,13 @@ export class GameState {
   /**
    * Levels with storage: which storage column the rig works at, by its access (STORAGE_ACCESS). Facing one (heading, fork
    * point beside its centre line and near its face; through a door also the body in line with its door cell) engages it;
-   * an engaged column holds within looser margins so a small wobble does not flicker the hint or drop the forks (a
-   * keyed column keeps its selected level, so the forks stay up); leaving them resets the selection to the bottom level
-   * and the forks go back to automatic. Arriving at another unit starts at its bottom level; sliding along the same unit
-   * keeps it. The accesses are tried in STORAGE_ACCESS order (a rack before a truck), facing a column before holding the
-   * old one. Then StorageAim: the column pick / drop act on (the forks at the selected level where they are keyed, the
-   * fork point deep enough), the level there, and whether nothing may be dropped yet (the forks on their way to a
-   * rack's selected level; the load in a doorway short of the reach).
+   * an engaged column holds within looser margins so a small wobble does not flicker the hint or drop the forks (it
+   * keeps its selected level, so the forks stay up); leaving them resets the selection to the bottom level and the forks
+   * go back to automatic, as on the floor. Arriving at another unit starts at its bottom level; sliding along the same
+   * unit keeps it. The accesses are tried in STORAGE_ACCESS order (a rack before a truck), facing a column before holding
+   * the old one. Then StorageAim: the column pick / drop act on (the forks at the selected level, the fork point deep
+   * enough), that level, and whether nothing may be dropped yet (the forks on their way to the selected level; the load
+   * in a doorway short of the reach or with the forks away from that level).
    */
   private refreshStorageAim(): void {
     const aim = this.aim;
@@ -593,36 +572,18 @@ export class GameState {
     if (engaged >= 0) this.forkLevel = clamp(this.forkLevel, 0, columns[engaged].levels - 1);
     const row = engaged >= 0 ? STORAGE_ACCESS[columns[engaged].access] : null;
     const carrying = this.carriedIndex >= 0;
-    // The load has gone into a rack's open slot (past resting against a closed face).
-    this.loadInside =
-      engaged >= 0 &&
-      columns[engaged].access === 'front' &&
-      carrying &&
-      this.world.isOpen(engaged) &&
-      depth > INSIDE_MARGIN - this.config.forklift.carriedBoxRadius;
-    this.forksInside = this.loadInside;
-    // Keyed forks act on the column only once they stand at its selected level (the tines / the load fit its opening).
+    // The forks act on the column only once they stand at its selected level (the tines / the load fit its opening).
     const atLevel = Math.abs(f.forkHeight - this.forkLevel) <= LOAD_PASS_CLEARANCE;
-    const acting = row !== null && (facing || row.actsHeld) && (row.autoForks || atLevel);
+    const acting = row !== null && (facing || row.actsHeld) && atLevel;
     aim.column = row !== null && acting && depth >= row.pickReach ? engaged : -1;
-    aim.level = row !== null && row.autoForks ? this.autoLevel(engaged, carrying) : this.forkLevel;
+    aim.level = this.forkLevel;
     aim.reach = row !== null && aim.column >= 0 && depth >= row.dropReach;
-    // The load at a rack's face while the forks go to the selected level (not up to a floor stack it is over): no drop.
-    const travel =
-      row !== null && !row.autoForks && facing && depth >= row.dropReach && carrying && !atLevel && this.clearLevel(true) <= this.forkLevel;
-    // The load in a dock door with the forks not yet through it (the column not aimed): no drop either.
-    const doorway = !(row !== null && row.doorway && aim.column >= 0) && this.loadInDoor();
+    // The load at the column's face while the forks go to the selected level (not up to a floor stack it is over): no
+    // drop.
+    const travel = row !== null && facing && depth >= row.dropReach && carrying && !atLevel && this.clearLevel(true) <= this.forkLevel;
+    // The load in a dock door with the forks not through it at the level chosen (the column not aimed): no drop either.
+    const doorway = row !== null && row.doorway && aim.column < 0 && this.loadInOpening();
     aim.blocked = travel || doorway;
-  }
-
-  /**
-   * TEMPORARY (autoForks, until phase 6): the level the forks go to by themselves at column `c`, a stack (the truck):
-   * carrying, the next level up (where the box would land); empty, its top box.
-   */
-  private autoLevel(c: number, carrying: boolean): number {
-    const cell = this.grid.columns[c].cell;
-    const height = this.grid.height(cell.x, cell.z);
-    return carrying ? height : Math.max(0, height - 1);
   }
 
   /** The rig is still at storage column `c` (its access's looser hold margins around facing it). */
@@ -713,26 +674,18 @@ export class GameState {
   }
 
   /**
-   * The heading lock (docs/STORAGE.md «Rumbo fijo»): the carried load is inside a storage opening, so the rig goes in
-   * and out straight. A rack slot: gone into the engaged column's open slot (as the aim last saw it). A dock door: past
-   * the line of a wall with a door (it only passes it through the open span of the column the rig faces).
+   * The carried load is inside the opening of the storage column the rig works at (docs/STORAGE.md «Rumbo fijo»): that
+   * opening is open for it and the load's leading edge is INSIDE_MARGIN past its face (depth 0 of the column's frame: a
+   * rack slot's front face, a dock's wall line). One measure for every access, read live: the heading holds, so the rig
+   * goes in and out straight; a load in a rack slot keeps its level (it cannot pass a board); a load in a dock door short
+   * of the reach drops nothing (the doorway). Empty tines never count (they meet nothing).
    */
   private loadInOpening(): boolean {
-    return this.forksInside || this.loadInDoor();
-  }
-
-  /**
-   * Levels with dock doors: the carried load has crossed a dock wall's line (by INSIDE_MARGIN; the walls only let it
-   * through the open span of the door of the column the rig faces, see refreshStoragePassage), so it is in that door or
-   * on the bed beyond: the heading holds (loadInOpening) and nothing is dropped short of the bed (the doorway). Empty
-   * tines never count (they meet nothing).
-   */
-  private loadInDoor(): boolean {
-    if (this.carriedIndex < 0 || this.doorLines.length === 0) return false;
+    const c = this.engaged;
+    if (this.carriedIndex < 0 || c < 0 || !this.world.isOpen(c)) return false;
     const load = this.snapshot.boxes[this.carriedIndex].pos;
-    const edge = this.config.forklift.carriedBoxRadius - INSIDE_MARGIN;
-    for (const door of this.doorLines) if ((door.alongX ? load.z : load.x) - edge < door.line) return true;
-    return false;
+    const frame = columnFrame(this.columnCenters[c], this.grid.columns[c].facing, load.x, load.z, this.frame);
+    return frame.depth > INSIDE_MARGIN - this.config.forklift.carriedBoxRadius;
   }
 
   /**
@@ -747,22 +700,41 @@ export class GameState {
   }
 
   /**
-   * F / V, wheel, gamepad X / B: one level up or down at the storage column the rig works at, where its forks are keyed
-   * (hint.storage: not while it lifts a floor box there), never through a board.
+   * F / V, wheel, gamepad X / B: one level up or down at the storage column the rig works at, any unit (hint.storage:
+   * not while it lifts a floor box there), never through a board (a load inside a rack slot keeps its level) and never
+   * down into the boxes of a stack (a truck bed) the load is over.
    */
   private stepForkLevel(step: -1 | 1): void {
     const engaged = this.engaged;
-    if (engaged < 0 || !this.forksKeyed() || this.loadInside) return;
+    if (engaged < 0 || !this.atColumn()) return;
+    if (this.grid.columns[engaged].support === 'shelves' && this.loadInOpening()) return;
     const level = clamp(this.forkLevel + step, 0, this.grid.columns[engaged].levels - 1);
-    if (level === this.forkLevel) return;
+    if (level === this.forkLevel || this.sinksIntoStack(engaged, level)) return;
     this.forkLevel = level;
-    // Open for the load at the old level: it closes now, before the rig moves (a load just reaching in is eased out).
-    this.closeOpening(engaged);
+    // A rack slot open for the load at the old level closes now, before the rig moves (a load just reaching in is eased
+    // out). A dock door stays open: it is the way into the whole column, at any level (refreshStoragePassage).
+    if (this.grid.columns[engaged].access === 'front') this.closeOpening(engaged);
   }
 
-  /** The forks follow the level selected at the engaged column: its forks are keyed and it shows in hint.storage. */
-  private forksKeyed(): boolean {
-    return this.engaged >= 0 && this.snapshot.hint.storage !== null && !STORAGE_ACCESS[this.grid.columns[this.engaged].access].autoForks;
+  /** The rig works at a storage column (it shows in hint.storage): the forks follow the level selected there. */
+  private atColumn(): boolean {
+    return this.engaged >= 0 && this.snapshot.hint.storage !== null;
+  }
+
+  /**
+   * Forks set to `level` at stack column `c` (a truck bed) would take the carried load down into the boxes it is over or
+   * against (its drawn square or its collider on the column's stack, lower than its top): lifted off them, or brought
+   * in at their height.
+   */
+  private sinksIntoStack(c: number, level: number): boolean {
+    const column = this.grid.columns[c];
+    if (column.support !== 'stack' || this.carriedIndex < 0) return false;
+    const { x, z } = column.cell;
+    const base = this.grid.baseAt(x, z);
+    if (base < 0 || level >= this.grid.height(x, z)) return false;
+    const { boxes, forklift } = this.snapshot;
+    const load = boxes[this.carriedIndex].pos;
+    return this.loadNear(load.x, load.z, forklift.heading, boxes[base].pos, true);
   }
 
   /**
@@ -859,17 +831,14 @@ export class GameState {
   }
 
   /**
-   * hint.storage while the rig is at a storage column and not lifting a floor box there (null otherwise); `ready` =
-   * the action works on the level chosen there. Where the forks go by themselves (TEMPORARY, autoForks until phase 6)
-   * only a drop that lands in the column shows, at the level it lands at.
+   * hint.storage while the rig is at a storage column (any unit) and not lifting a floor box there (null otherwise):
+   * the level chosen there; `ready` = the action works on it.
    */
   private fillStorageHint(ready: boolean): void {
     const engaged = this.engaged;
     if (engaged < 0) return;
     const column = this.grid.columns[engaged];
-    const auto = STORAGE_ACCESS[column.access].autoForks;
-    if (auto && !(ready && this.carriedIndex >= 0)) return;
-    const level = auto ? this.aim.level : this.forkLevel;
+    const level = this.forkLevel;
     const h = this.storageHint;
     h.unitId = column.unitId;
     h.skin = column.skin;
@@ -915,8 +884,9 @@ export class GameState {
    * opens once the forks are nearly at its top and stays open while the load is over it (the forks hold there, see
    * clearLevel), so it never turns solid under the load: no push-out. Until then it blocks the load like any box.
    * A locked box (levels with storage) has no room: it never opens, only stays open while a load lifted off it is still
-   * over it; in a stack column (a truck bed) a locked box is a stack like any other (the next level loads on it) and
-   * the room is its column's levels. Classic levels: never.
+   * over it; in a stack column (a truck bed) a locked box is a stack like any other (the next level loads on it), the
+   * room is its column's levels and the forks reach its top only when F / V set them there (a load carried lower meets
+   * its boxes, as a rack's face). Classic levels: never.
    */
   private refreshLoadPassage(): void {
     const grid = this.grid;
@@ -946,10 +916,10 @@ export class GameState {
     const f = snap.forklift;
     let target = 0;
     if (!snap.completed) {
-      // At a storage column with keyed forks (hint.storage) the forks go to the selected level, never into a stack the
-      // load or the empty forks are at; a floor box targeted there leaves hint.storage null and is lifted at its level,
-      // as anywhere else (and where the forks go by themselves, a stack's drop or top level, as at a floor stack).
-      if (this.forksKeyed()) target = Math.max(this.forkLevel, this.clearLevel(this.carriedIndex >= 0));
+      // At a storage column (hint.storage) the forks go to the selected level, never into a floor stack the load or the
+      // empty forks are at; a floor box targeted there leaves hint.storage null and is lifted at its level, as anywhere
+      // else.
+      if (this.atColumn()) target = Math.max(this.forkLevel, this.clearLevel(this.carriedIndex >= 0));
       else if (this.carriedIndex >= 0) target = Math.max(snap.hint.dropCell ? snap.hint.dropLevel : 0, this.clearLevel(true));
       else target = snap.hint.targetBoxId ? this.pickLevel : this.clearLevel(false);
     }
@@ -963,11 +933,13 @@ export class GameState {
   }
 
   /**
-   * Stacking levels: the lowest carriage height that meets no stack. Carrying: the height of the tallest stack with
-   * room the load is over (never sink into it), or will run into before the forks could climb to it at the rig's
+   * Stacking levels: the lowest carriage height that meets no floor stack. Carrying: the height of the tallest stack
+   * with room the load is over (never sink into it), or will run into before the forks could climb to it at the rig's
    * current motion and throttle (driving or turning; also when held at its face), so it is lifted in time to clear
    * the stack instead of stopping there (a locked box has no room: the load meets it like a full stack, unless it is
-   * still over it). Empty: the top box of a stack the forks are at or reaching the same way.
+   * still over it). Empty: the top box of a stack the forks are at or reaching the same way. A storage stack (a truck
+   * bed) never lifts the forks ahead of time: its level is chosen with F / V (docs/STORAGE.md rule 9), so a load
+   * carried too low meets its boxes; only a load already over them keeps their height (it never sinks into them).
    */
   private clearLevel(carrying: boolean): number {
     const grid = this.grid;
@@ -977,15 +949,20 @@ export class GameState {
     const m = this.motion;
     const reach = this.config.forklift.forkReach;
     const fork = this.forkProbe;
+    const forkX = forklift.pos.x + Math.sin(forklift.heading) * reach;
+    const forkZ = forklift.pos.z + Math.cos(forklift.heading) * reach;
     let level = 0;
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i];
       const cell = b.cell;
       if (!cell || b.level > 0) continue;
       const h = grid.height(cell.x, cell.z);
+      if (grid.isStackColumn(cell.x, cell.z)) {
+        if (carrying && h > level && this.world.isPassable(i) && this.loadNear(forkX, forkZ, forklift.heading, b.pos, true)) level = h;
+        continue;
+      }
       const room = h < grid.capacity(cell.x, cell.z);
-      const stacked = grid.isStackColumn(cell.x, cell.z);
-      const top = carrying ? (room && (stacked || !b.locked || this.world.isPassable(i)) ? h : 0) : h - 1;
+      const top = carrying ? (room && (!b.locked || this.world.isPassable(i)) ? h : 0) : h - 1;
       if (top <= level) continue;
       // Predicted sweep over the time the forks need to clear this stack (sample 0 = now). The load clears it a
       // little below its top; empty tines slide under the top box, so they go all the way (view easing included).

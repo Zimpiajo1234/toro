@@ -84,9 +84,9 @@ export interface UIState {
    */
   benchmark: boolean;
   /**
-   * The level on screen has storage units whose forks go by the keys (docs/STORAGE.md: logic/storageAccess
-   * hasKeyedForks; today exactly the levels with racks, a truck's forks go by themselves until phase 6): the control
-   * hint (always on screen while playing) adds its fork row, F / V, the wheel and pad X / B.
+   * The level on screen has storage (docs/STORAGE.md: core/storage hasStorage; racks, trucks: the forks go by the keys
+   * at every unit, rule 9): the control hint (always on screen while playing) adds its fork row, F / V, the wheel and
+   * pad X / B.
    */
   storage: boolean;
 }

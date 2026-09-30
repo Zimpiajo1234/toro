@@ -102,7 +102,7 @@ columna     = hueco { "/" hueco }                                         (de ab
 hueco       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]
 camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }   (1 a 3 columnas)
 niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1 o 2 niveles)
-nivel       = (color [símbolo] | símbolo) [ "+" caja ]                    (nunca «libre»)
+nivel       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]          («libre», solo encima de las pistas)
 planta      = "planta" ["variante"] [número]
 id          = "(" texto sin espacios ")"
 ```
@@ -130,6 +130,7 @@ id          = "(" texto sin espacios ")"
 | `P = planta variante 2` | planta con otra forma |
 | `R = estantería frente sur: azul / ▲ + caja coral / libre` | estantería **almacenable** de 1 columna, se carga desde el sur: hueco de abajo «azul», el del medio «▲» con una caja coral dentro, arriba libre |
 | `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** aparcado fuera de una puerta del muro oeste (el carácter marca la casilla de la puerta, en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
+| `T = camión muelle norte: azul \| coral ◆ / libre` | camión de 2 columnas; con `limit: 2` cada columna llega sola a 2 niveles (`min(2, limit)`), así que las dos llevan un «libre» arriba, escrito o no (el formateador no escribe los «libre» de arriba sin caja) |
 | `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
 
 Las **estanterías almacenables** (reglas, lógica y datos: `docs/RACKS.md`) ocupan una fila recta (frente norte o sur)
@@ -146,9 +147,13 @@ columna 0 en el oeste), de 1 a 3 casillas, una columna de la leyenda por casilla
 cada una de 1 o 2 niveles. Esas casillas son **suelo** (la carretilla pasa y aparca ahí) pero empiezan vacías: ni
 muebles, ni zonas, ni cajas, ni la carretilla; `ventanas:` no puede pisar la puerta. La columna de la caja del camión
 queda justo detrás del muro, fuera del mapa (`z = -1` / `x = -1`). Se carga desde la casilla de la puerta, mirando al
-muro, como una pila del suelo, de abajo arriba: la carga y la horquilla cruzan la puerta, la carretilla se para en el
-muro. Cada nivel lleva su pista (en un cartel sobre la puerta) y es un objetivo más del reparto único. Las cajas del
-camión se numeran después de las de las estanterías; los camiones, `t1, t2…` (nunca el id de una estantería).
+muro, como una pila del suelo, de abajo arriba, con la horquilla por teclas (F / V, como en una estantería: se deja en
+el siguiente nivel libre de la columna y se coge la caja de arriba, con la horquilla a su nivel): la carga y la horquilla
+cruzan la puerta, la carretilla se para en el muro. Cada nivel con pista (en un cartel sobre la puerta) es un objetivo
+más del reparto único. Cada columna llega a `min(2, limit)` niveles: los de encima de sus pistas son **«libre»** (se
+pueden escribir `libre` o dejar sin escribir; un «libre» nunca va debajo de un nivel con pista): valen para aparcar
+cualquier caja y nunca son objetivo. Las cajas del camión se numeran después de las de las estanterías; los camiones,
+`t1, t2…` (nunca el id de una estantería).
 
 **Casillas laterales**: cada puerta lleva sola, a cada lado, una barandilla naranja baja de una casilla (no se escribe
 en el mapa). La casilla de al lado de cada extremo de la tirada, a lo largo del muro (en el muelle norte, la de la
@@ -221,7 +226,7 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 | `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). Con estanterías o camiones: repartos por posición (cajas idénticas no cuentan como distintas); siempre 1. En otros niveles no aplica. |
 | `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
-| `camion` | Niveles de camión (alias `camiones`; en el informe: columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
+| `camion` | Niveles de camión, con pista y «libre» (alias `camiones`; en el informe: con pista y libres, columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
 | `cajas`, `zonas` | Cuántas hay. |
 
 Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de

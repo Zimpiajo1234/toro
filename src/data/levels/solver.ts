@@ -25,8 +25,9 @@
  * inside the map (a rack) and off the map beyond the wall otherwise (a truck: its door cell is plain floor). Its boxes
  * rest on positions after the floor cells, unit by unit (rule 12: racks, then trucks), column by column, by the unit's
  * support: on shelves one position per level, holding at most one box (core/storage `storageSlotsOf` order); on a
- * stack one position per column, holding a stack whose steps are the destined kinds of its levels bottom → top (its
- * capacity is its levels, not the level's stack limit). A column is loaded only by one step on from the cell behind its
+ * stack one position per column, holding a stack whose steps are the destined kinds of its levels with a cue bottom →
+ * top (its capacity is all its levels, not the level's stack limit: the «libre» ones on top are parking, never placed
+ * nor locked, docs/STORAGE.md rule 7). A column is loaded only by one step on from the cell behind its
  * front cell, facing into it (into any empty level of a shelves column: the forks choose the level; on top of a stack
  * column with room), and a box lifted out of it starts inside it, where the only way out is straight back. In a level
  * with storage every zone and every storage level with a cue takes exactly its destined kind of box (the level's
@@ -116,7 +117,8 @@ export class LevelGrid {
    * Per position, what each box of its stack must meet, bottom → top: on a zone cell the zone's own criteria (color
    * and / or symbol) for the bottom box, then the colors of its recipe; on a shelf its cue. In a level with storage
    * every zone and storage level with a cue asks for exactly its destined kind instead: a shelf its level's, a stack
-   * column each of its levels', bottom → top. null off targets (a «libre» shelf).
+   * column each of its levels with a cue, bottom → top (its «libre» levels above them are parking: its `capacity`
+   * counts them, its steps never). null off targets (a «libre» shelf, a stack column with no cue).
    */
   readonly steps: (ZoneCriteria[] | null)[];
   readonly stackLimit: number;
@@ -208,10 +210,14 @@ export class LevelGrid {
           this.slotPos.set(slotId(lvl), pos);
         });
       } else {
-        // A stack of its levels (a «libre» one asks for any box: none until phase 6, docs/STORAGE.md «Huecos»).
+        // A stack of all its levels (its capacity), whose steps are its levels with a cue, bottom → top: the «libre»
+        // ones sit above them (validateLevel) and take any box as parking, never part of the stack's correct prefix, so
+        // a box there is never locked and always still has to move (docs/STORAGE.md rule 7). None with a cue: no steps.
         const [pos] = positions;
         this.capacity[pos] = ref.cues.length;
-        this.steps[pos] = ref.cues.map((cue, lvl) => stepOf(ref.firstSlot + lvl, cue) ?? {});
+        const free = ref.cues.indexOf(null);
+        const cued = ref.cues.slice(0, free < 0 ? ref.cues.length : free);
+        this.steps[pos] = cued.length > 0 ? cued.map((cue, lvl) => stepOf(ref.firstSlot + lvl, cue)!) : null;
         ref.cues.forEach((_, lvl) => this.slotPos.set(slotId(lvl), pos));
       }
     });

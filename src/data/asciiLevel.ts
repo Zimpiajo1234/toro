@@ -292,8 +292,8 @@ interface ZoneSpec {
 }
 
 /**
- * One slot of a storage rack, or one level of a truck bed column, in the legend: its cue (none = «libre», racks only)
- * and the box that starts in it.
+ * One slot of a storage rack, or one level of a truck bed column, in the legend: its cue (none = «libre») and the box
+ * that starts in it.
  */
 interface SlotSpec {
   color?: ColorId;
@@ -326,8 +326,8 @@ interface ColumnWords {
   colon: string;
   /** How one level is named: «un hueco» / «un nivel del camión». */
   one: string;
-  /** Whether «libre» (no cue) is allowed. */
-  free: boolean;
+  /** The word for one level alone: «hueco» / «nivel» («falta la pista del nivel», «un nivel libre no pide nada»). */
+  level: string;
 }
 
 const RACK_WORDS: ColumnWords = {
@@ -335,15 +335,15 @@ const RACK_WORDS: ColumnWords = {
   tooMany: `una columna de estantería tiene como mucho ${STORAGE_SKINS.rack.maxLevels} huecos (suelo + 2); para otra columna, sepárala con «|»`,
   colon: 'los dos puntos van una sola vez, tras «frente …»',
   one: 'un hueco',
-  free: true,
+  level: 'hueco',
 };
 
 const TRUCK_WORDS: ColumnWords = {
-  missing: `falta un nivel: su pista (color, símbolo o ambos), de abajo arriba, p. ej. ${TRUCK_EXAMPLE}`,
+  missing: `falta un nivel: su pista (color, símbolo, ambos o «libre»), de abajo arriba, p. ej. ${TRUCK_EXAMPLE}`,
   tooMany: `una columna del camión lleva como mucho ${STORAGE_SKINS.truck.maxLevels} niveles (${STORAGE_SKINS.truck.maxLevels} cajas de alto); para otra columna, sepárala con «|»`,
   colon: 'los dos puntos van una sola vez, tras «camión muelle …»',
   one: 'un nivel del camión',
-  free: false,
+  level: 'nivel',
 };
 
 interface LegendDef {
@@ -1122,9 +1122,9 @@ class LevelParser {
 
   /**
    * «camión muelle norte [(id)]: nivel / nivel | nivel …» (docs/DOCKS.md) — the bed columns along the wall separated
-   * by «|», each one's levels bottom → top separated by «/»; a level is its cue (a colour, a symbol or both; never
-   * «libre») and optionally «+ caja …», the box loaded there at the start. Also «camión en el muelle norte»,
-   * «muelle norte», «truck north».
+   * by «|», each one's levels bottom → top separated by «/»; a level is its cue (a colour, a symbol or both, or «libre»:
+   * validateLevel wants it above the ones with a cue and fills every column up to its levels with more) and optionally
+   * «+ caja …», the box loaded there at the start. Also «camión en el muelle norte», «muelle norte», «truck north».
    */
   private readTruck(toks: Tok[]): UnitSpec {
     let k = 1;
@@ -1216,41 +1216,36 @@ class LevelParser {
     return columns;
   }
 
-  /**
-   * One rack slot («libre», «azul», «▲», «azul ■») or one truck level (the same without «libre»), each optionally
-   * «+ caja …».
-   */
+  /** One rack slot or one truck level («libre», «azul», «▲», «azul ■»), each optionally «+ caja …». */
   private readSlot(toks: Tok[], words: ColumnWords): SlotSpec {
     const plus = toks.findIndex((t) => t.kind === '+');
     const cue = plus >= 0 ? toks.slice(0, plus) : toks;
     const rest = plus >= 0 ? toks.slice(plus + 1) : [];
     const slot: SlotSpec = { pos: toks[0].pos };
     const one = words.one;
-    if (cue.length === 0)
-      this.fail(toks[0].pos, `falta la pista ${words.free ? 'del hueco' : 'del nivel'} antes del «+»: un color, un símbolo${words.free ? ', ambos o «libre»' : ' o ambos'}`);
+    const alone = `«libre» va solo: un ${words.level} libre no pide nada`;
+    if (cue.length === 0) this.fail(toks[0].pos, `falta la pista del ${words.level} antes del «+»: un color, un símbolo, ambos o «libre»`);
     let free = false;
     for (const t of cue) {
       if (t.kind !== 'word') this.fail(t.pos, `«${t.text}» sobra en la pista de ${one}`);
       const c = lookup(COLOR_WORDS, t.key);
       const s = lookup(SYMBOL_WORDS, t.key);
       if (t.key === 'libre' || t.key === 'free') {
-        if (!words.free)
-          this.fail(t.pos, 'en un camión cada nivel pide algo (un color, un símbolo o ambos): no hay niveles «libre»; para aparcar una caja, usa el suelo');
-        if (free || slot.color || slot.symbol) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        if (free || slot.color || slot.symbol) this.fail(t.pos, alone);
         free = true;
       } else if (c) {
-        if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        if (free) this.fail(t.pos, alone);
         if (slot.color) this.fail(t.pos, `${one} pide un solo color`);
         slot.color = c;
       } else if (s) {
-        if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
+        if (free) this.fail(t.pos, alone);
         if (slot.symbol) this.fail(t.pos, `${one} pide un solo símbolo`);
         slot.symbol = s;
       } else if (t.key === 'caja') {
-        this.fail(t.pos, `la caja va después de la pista y un «+»: ${words.free ? '«libre + caja azul»' : '«azul + caja azul»'}, «▲ + caja menta ▲»`);
+        this.fail(t.pos, 'la caja va después de la pista y un «+»: «libre + caja azul», «▲ + caja menta ▲»');
       } else {
-        const options = words.free ? `color (${COLOR_LIST}), símbolo ${SYMBOL_LIST} o «libre»` : `color (${COLOR_LIST}) o símbolo ${SYMBOL_LIST}`;
-        this.fail(t.pos, `palabra desconocida «${t.text}» en ${one}: ${options}${suggest(t.text, words.free ? [...WORDS_FOR_HINTS, 'libre'] : WORDS_FOR_HINTS)}`);
+        const options = `color (${COLOR_LIST}), símbolo ${SYMBOL_LIST} o «libre»`;
+        this.fail(t.pos, `palabra desconocida «${t.text}» en ${one}: ${options}${suggest(t.text, [...WORDS_FOR_HINTS, 'libre'])}`);
       }
     }
     if (plus >= 0) {
@@ -1501,6 +1496,14 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
       reason: `el camión «${truck?.def.char ?? '?'}» tiene ${m[2]} columnas y lleva como mucho ${m[3]}: su puerta mide de 1 a ${m[3]} casillas; quítale columnas o usa dos camiones`,
     };
   }
+  if ((m = /^trucks\[(\d+)\]\.columns\[(\d+)\]\[(\d+)\] has a cue above a free level/.exec(message))) {
+    const truck = ctx.units.truck[Number(m[1])];
+    const column = Number(m[2]);
+    return {
+      pos: truck?.columns[column] ?? truck?.cell ?? ctx.title,
+      reason: `en un camión las cajas van una sobre otra, así que los niveles «libre» van arriba, encima de los que piden algo: aquí ${truckSlotText(truck, column, Number(m[3]))} pide algo y el de debajo es libre`,
+    };
+  }
   if ((m = /^trucks\[(\d+)\]\.columns\[(\d+)\] has (\d+) levels, more than stackLimit (\d+)/.exec(message))) {
     const truck = ctx.units.truck[Number(m[1])];
     return {
@@ -1539,7 +1542,7 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
   if ((m = /^a level with storage racks or trucks needs one box per target \((\d+) boxes, (\d+) zones, (\d+) slots with a cue, (\d+) truck levels\)/.exec(message)))
     return {
       pos: ctx.title,
-      reason: `con estanterías o camiones, cada zona, cada hueco con pista y cada nivel del camión lleva una caja: hay ${m[1]} cajas para ${m[2]} zonas, ${m[3]} huecos con pista y ${m[4]} niveles de camión (los huecos «libre» no cuentan)`,
+      reason: `con estanterías o camiones, cada zona, cada hueco con pista y cada nivel del camión con pista lleva una caja: hay ${m[1]} cajas para ${m[2]} zonas, ${m[3]} huecos con pista y ${m[4]} niveles de camión con pista (los huecos y niveles «libre» no cuentan)`,
     };
   if ((m = /^more than one complete assignment: trucks\[(\d+)\]\.columns\[(\d+)\]\[(\d+)\] may take (\S+) or (\S+)/.exec(message))) {
     const truck = ctx.units.truck[Number(m[1])];
@@ -1638,18 +1641,25 @@ function boxText(box: LevelData['boxes'][number], id: string | null): string {
 /**
  * A storage unit's entry: its skin's word and its access («estantería frente sur», docs/RACKS.md; «camión muelle
  * norte», docs/DOCKS.md), then its columns «azul / ▲ + caja coral / libre | …». `boxAt(column, level)` gives the text
- * of the box that starts on a level («caja …»), or null.
+ * of the box that starts on a level («caja …»), or null. A skin that fills its columns (`fillToMax`, the truck) leaves
+ * out the «libre» levels on top that hold no box (at least one level stays written): parsing the entry fills them in
+ * again, so the text of every level written before phase 6 stays canonical.
  */
 function unitText(unit: LevelStorage, id: string | null, boxAt: (column: number, level: number) => string | null): string {
-  const columns = unit.columns.map((levels, column) =>
-    levels
-      .map((cue, level) => {
-        const words = cue === null ? 'libre' : [cue.color ? COLOR_NAMES[cue.color] : '', cue.symbol ? SYMBOL_GLYPHS[cue.symbol] : ''].filter((w) => w !== '').join(' ');
-        const box = boxAt(column, level);
-        return `${words}${box === null ? '' : ` + ${box}`}`;
-      })
-      .join(' / '),
-  );
+  const implicit = STORAGE_SKINS[unit.skin].fillToMax;
+  const columns = unit.columns.map((levels, column) => {
+    const texts = levels.map((cue, level) => {
+      const words = cue === null ? 'libre' : [cue.color ? COLOR_NAMES[cue.color] : '', cue.symbol ? SYMBOL_GLYPHS[cue.symbol] : ''].filter((w) => w !== '').join(' ');
+      const box = boxAt(column, level);
+      return { text: `${words}${box === null ? '' : ` + ${box}`}`, filled: cue === null && box === null };
+    });
+    let written = texts.length;
+    while (implicit && written > 1 && texts[written - 1].filled) written--;
+    return texts
+      .slice(0, written)
+      .map((t) => t.text)
+      .join(' / ');
+  });
   const { access } = unit;
   const where = access.kind === 'front' ? `frente ${FACING_NAMES[access.facing]}` : `muelle ${WALL_NAMES[access.wall]}`;
   return `${UNIT_WORDS[unit.skin].name} ${where}${id === null ? '' : ` (${id})`}: ${columns.join(' | ')}`;

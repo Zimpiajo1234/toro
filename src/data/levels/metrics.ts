@@ -60,10 +60,11 @@ export interface LevelMetrics {
    */
   slots: { total: number; cued: number; free: number };
   /**
-   * «camion»: the storage of skin `truck` (docs/DOCKS.md): its units, columns and levels (every level is a target;
-   * `loaded` of them start with a box on them). Counted like every skin (storageCounts), reported for this one.
+   * «camion»: the storage of skin `truck` (docs/DOCKS.md): its units, columns and levels (all of them, those with a cue
+   * (targets) and the «libre» ones; `loaded` of them start with a box on them). Counted like every skin
+   * (storageCounts), reported for this one.
    */
-  trucks: { trucks: number; columns: number; levels: number; loaded: number };
+  trucks: { trucks: number; columns: number; levels: number; cued: number; free: number; loaded: number };
   /**
    * «callejones»: states the forklift can reach from which the level can no longer be finished, explored around a
    * shortest plan (solver.deadEnds); null when not measured.
@@ -150,7 +151,7 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     traps: hasStorage(level) ? targetTraps(level) : usesSymbols(level) ? trapPlacements(level) : 0,
     sortings: hasStorage(level) ? targetAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
     slots: { total: rack.levels, cued: rack.cued, free: rack.levels - rack.cued },
-    trucks: { trucks: truck.units, columns: truck.columns, levels: truck.levels, loaded: truck.loaded },
+    trucks: { trucks: truck.units, columns: truck.columns, levels: truck.levels, cued: truck.cued, free: truck.levels - truck.cued, loaded: truck.loaded },
     deadEnds:
       options.deadEndStates === undefined
         ? null
@@ -247,8 +248,11 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
   for (const [cell, boxes] of byCell) if (grid.kind[cell] === POS_STACK) boxes.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
   const covering: string[] = [];
   for (const [cell, boxes] of byCell) {
-    // A box on a «libre» shelf covers nothing (a shelf holds one box); off zones, only boxes above the bottom one do.
-    const firstLoose = grid.steps[cell] ? correctPrefix(grid, stacks, cell) : 1;
+    // A box on a «libre» shelf covers nothing (a shelf holds one box); off zones, only boxes above the bottom one do; on
+    // a stack column whose levels with a cue are all right, the boxes parked on its «libre» levels cover nothing either.
+    const steps = grid.steps[cell];
+    const prefix = steps ? correctPrefix(grid, stacks, cell) : 0;
+    const firstLoose = !steps ? 1 : grid.kind[cell] === POS_STACK && prefix === steps.length ? Infinity : prefix;
     boxes.forEach((b, i) => {
       if (i >= firstLoose) covering.push(b.id);
     });
@@ -267,9 +271,10 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
   const needed: number[] = [];
   for (let c = 0; c < grid.posCount; c++) {
     // A locked box (levels with storage) is never lifted and takes nothing more: no reason to reach it (a stack column
-    // whose satisfied levels are locked still takes its next level: it is reached while it has room).
-    if (lockedAt(grid, stacks, c) && !(grid.kind[c] === POS_STACK && stacks[c].length < grid.capacity[c])) continue;
+    // whose satisfied levels are locked still takes its next level with a cue: it is reached while it has one; its
+    // «libre» levels are only parking).
     const steps = grid.steps[c];
+    if (lockedAt(grid, stacks, c) && !(grid.kind[c] === POS_STACK && stacks[c].length < (steps?.length ?? 0))) continue;
     const open = steps !== null && correctPrefix(grid, stacks, c) === stacks[c].length && stacks[c].length < steps.length;
     if (stacks[c].length > 0 || open) needed.push(c);
   }

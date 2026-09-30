@@ -4,12 +4,12 @@ import type { StorageHint } from '../core/types';
 export type StorageAt = Readonly<Pick<StorageHint, 'unitId' | 'column' | 'level'>>;
 
 /**
- * Levels whose storage has forks that go by the keys (Game: logic/storageAccess hasKeyedForks; today the racks'):
- * turns the interaction hint's storage column and chosen level (docs/STORAGE.md), seen once per frame, into fork-step
- * clicks. Only a step the player asked for (F / V, the wheel, pad X / B) that took effect at the same column clicks:
- * none at the top or bottom level (the level stays), none away from a unit (no column), none when the level changes by
- * itself (arriving at a unit, sliding to a shorter column, leaving it; where the forks go by themselves, a truck until
- * phase 6, the level only changes with a drop, never with a step).
+ * Levels with storage (Game: core/storage hasStorage; the forks go by the keys at every unit, docs/STORAGE.md rule 9):
+ * turns the interaction hint's storage column and chosen level, seen once per frame, into fork-step clicks, at a rack
+ * or a truck alike. Only a step the player asked for (F / V, the wheel, pad X / B) that took effect at the same column
+ * clicks: none at the top or bottom level (the level stays), none refused (a load that would sink into the boxes of a
+ * truck bed), none away from a unit (no column), none when the level changes by itself (arriving at a unit, sliding
+ * to a shorter column, leaving it).
  */
 export class ForkStepWatcher {
   private unitId: string | null = null;

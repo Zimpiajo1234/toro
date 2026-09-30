@@ -1,5 +1,5 @@
 {
-  "$comment": "Storage characterization (docs/STORAGE.md): phases 1-5 of the shared storage model must leave it unchanged; phase 6 regenerates it: TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u. Never edit by hand.",
+  "$comment": "Storage characterization (docs/STORAGE.md): phases 1-5 of the shared storage model left it unchanged, phase 6 regenerated it on purpose (its rule changes), phase 7 must leave it unchanged. Regenerate only for a deliberate rule change: TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u. Never edit by hand.",
   "levels": {
     "benchmark": {
       "storage": {
@@ -32,7 +32,10 @@
             "z": 0,
             "w": 2,
             "access": { "kind": "door", "wall": "north" },
-            "columns": [[{ "color": "blue" }, { "symbol": "square" }], [{ "color": "yellow", "symbol": "cross" }]]
+            "columns": [
+              [{ "color": "blue" }, { "symbol": "square" }],
+              [{ "color": "yellow", "symbol": "cross" }, null]
+            ]
           }
         ],
         "boxes": [
@@ -64,7 +67,8 @@
           "r2:1:2 cell 5,5 front 5,4 north · libre",
           "t1:0:0 cell 1,-1 front 1,0 south · blue/*",
           "t1:0:1 cell 1,-1 front 1,0 south · */square",
-          "t1:1:0 cell 2,-1 front 2,0 south · yellow/cross"
+          "t1:1:0 cell 2,-1 front 2,0 south · yellow/cross",
+          "t1:1:1 cell 2,-1 front 2,0 south · libre"
         ]
       },
       "targets": {
@@ -97,7 +101,7 @@
         "traps": 12,
         "sortings": 1,
         "slots": { "total": 12, "cued": 6, "free": 6 },
-        "trucks": { "trucks": 1, "columns": 2, "levels": 3, "loaded": 1 }
+        "trucks": { "trucks": 1, "columns": 2, "levels": 4, "cued": 3, "free": 1, "loaded": 1 }
       },
       "solver": {
         "lower": 14,
@@ -139,7 +143,8 @@
           "r2:1:2 accepts libre destined - occupiedBy b11 satisfied false",
           "t1:0:0 accepts blue/* destined blue/cross occupiedBy b12 satisfied false loadable false",
           "t1:0:1 accepts */square destined yellow/square occupiedBy - satisfied false loadable false",
-          "t1:1:0 accepts yellow/cross destined yellow/cross occupiedBy - satisfied false loadable true"
+          "t1:1:0 accepts yellow/cross destined yellow/cross occupiedBy - satisfied false loadable true",
+          "t1:1:1 accepts libre destined - occupiedBy - satisfied false loadable false"
         ],
         "boxes": [
           "b1 coral/circle 3,3@0 correct false locked false",
@@ -160,8 +165,9 @@
         "solved": true,
         "moves": 14,
         "counter": 14,
-        "frames": 13644,
-        "forkSteps": 7,
+        "frames": 13842,
+        "forkSteps": 8,
+        "forkStepsAt": { "rack": 7, "truck": 1 },
         "reverseFrames": 2270,
         "log": [
           "b11 r2:1:2 → 9,2@0[z2] ok 1/12",
@@ -184,8 +190,9 @@
         "solved": true,
         "moves": 14,
         "counter": 14,
-        "frames": 4991,
-        "forkSteps": 7,
+        "frames": 5056,
+        "forkSteps": 8,
+        "forkStepsAt": { "rack": 7, "truck": 1 },
         "reverseFrames": 745,
         "log": [
           "b11 r2:1:2 → 9,2@0[z2] ok 1/12",
@@ -233,7 +240,10 @@
             "z": 0,
             "w": 2,
             "access": { "kind": "door", "wall": "north" },
-            "columns": [[{ "color": "blue" }, { "symbol": "triangle" }], [{ "color": "coral", "symbol": "diamond" }]]
+            "columns": [
+              [{ "color": "blue" }, { "symbol": "triangle" }],
+              [{ "color": "coral", "symbol": "diamond" }, null]
+            ]
           },
           {
             "id": "t2",
@@ -242,7 +252,7 @@
             "z": 0,
             "w": 1,
             "access": { "kind": "door", "wall": "north" },
-            "columns": [[{ "color": "mint" }]]
+            "columns": [[{ "color": "mint" }, null]]
           },
           {
             "id": "t3",
@@ -275,7 +285,9 @@
           "t1:0:0 cell 1,-1 front 1,0 south · blue/*",
           "t1:0:1 cell 1,-1 front 1,0 south · */triangle",
           "t1:1:0 cell 2,-1 front 2,0 south · coral/diamond",
+          "t1:1:1 cell 2,-1 front 2,0 south · libre",
           "t2:0:0 cell 4,-1 front 4,0 south · mint/*",
+          "t2:0:1 cell 4,-1 front 4,0 south · libre",
           "t3:0:0 cell -1,4 front 0,4 east · yellow/square",
           "t3:0:1 cell -1,4 front 0,4 east · */cross"
         ]
@@ -308,7 +320,7 @@
         "traps": 6,
         "sortings": 1,
         "slots": { "total": 5, "cued": 3, "free": 2 },
-        "trucks": { "trucks": 3, "columns": 4, "levels": 6, "loaded": 2 }
+        "trucks": { "trucks": 3, "columns": 4, "levels": 8, "cued": 6, "free": 2, "loaded": 2 }
       },
       "solver": {
         "lower": 9,
@@ -339,7 +351,9 @@
           "t1:0:0 accepts blue/* destined blue/square occupiedBy - satisfied false loadable true",
           "t1:0:1 accepts */triangle destined blue/triangle occupiedBy - satisfied false loadable false",
           "t1:1:0 accepts coral/diamond destined coral/diamond occupiedBy - satisfied false loadable true",
+          "t1:1:1 accepts libre destined - occupiedBy - satisfied false loadable false",
           "t2:0:0 accepts mint/* destined mint/circle occupiedBy b9 satisfied false loadable false",
+          "t2:0:1 accepts libre destined - occupiedBy - satisfied false loadable false",
           "t3:0:0 accepts yellow/square destined yellow/square occupiedBy b10 satisfied true loadable false",
           "t3:0:1 accepts */cross destined yellow/cross occupiedBy - satisfied false loadable true"
         ],
@@ -360,8 +374,9 @@
         "solved": true,
         "moves": 9,
         "counter": 9,
-        "frames": 6463,
-        "forkSteps": 3,
+        "frames": 6684,
+        "forkSteps": 5,
+        "forkStepsAt": { "rack": 3, "truck": 2 },
         "reverseFrames": 372,
         "log": [
           "b9 t2:0:0 → r2:0:0 ok 2/10",
@@ -379,8 +394,9 @@
         "solved": true,
         "moves": 9,
         "counter": 9,
-        "frames": 2436,
-        "forkSteps": 3,
+        "frames": 2512,
+        "forkSteps": 5,
+        "forkStepsAt": { "rack": 3, "truck": 2 },
         "reverseFrames": 122,
         "log": [
           "b9 t2:0:0 → r2:0:0 ok 2/10",

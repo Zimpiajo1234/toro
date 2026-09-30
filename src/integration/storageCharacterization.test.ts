@@ -2,9 +2,9 @@
  * The storage safety net (docs/STORAGE.md «Red de seguridad»): today's behaviour of the storage racks and the dock
  * trucks of the Benchmark and of the three-truck fixture, section by section, must be exactly the one frozen in
  * ./storageCharacterization.json (./storageCharacterization.ts says what each section holds). Phases 1–5 of the shared
- * storage model must not change it: when a phase renames an API, it ports storageCharacterization.ts, never the JSON.
- * Phase 6 (the rule changes) regenerates it on purpose, with the command in storageCharacterization.ts, which runs the
- * last test below instead of the comparisons.
+ * storage model left it unchanged and phase 7 must too: when a phase renames an API, it ports storageCharacterization.ts,
+ * never the JSON. Phase 6 (the rule changes) regenerated it on purpose, with the command in storageCharacterization.ts,
+ * which runs the last test below instead of the comparisons.
  */
 import { describe, expect, it } from 'vitest';
 import stored from './storageCharacterization.json';
@@ -19,10 +19,10 @@ import {
   type CharacterizationFile,
 } from './storageCharacterization';
 
-/** Regeneration run (phase 6 only): `TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u`. */
+/** Regeneration run (a deliberate rule change only): `TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u`. */
 const WRITE = import.meta.env.TORO_CARACTERIZAR === '1';
 const FROZEN = stored as unknown as CharacterizationFile;
-const CHANGED = `the storage behaviour changed: phases 1–5 of docs/STORAGE.md must leave ${CHARACTERIZATION_PATH} as it is (port storageCharacterization.ts to a renamed API, never the JSON); only phase 6 regenerates it`;
+const CHANGED = `the storage behaviour changed: phase 7 of docs/STORAGE.md must leave ${CHARACTERIZATION_PATH} as it is (port storageCharacterization.ts to a renamed API, never the JSON); only a deliberate rule change regenerates it, as phase 6 did`;
 /** As the file stores it (JSON has no undefined, no -0). */
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -41,13 +41,17 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
     });
   }
 
-  it('the Benchmark: 14 moves (exact), one complete assignment, 12 targets; the autopilot finishes it at 60 and 20 fps', () => {
+  it('the Benchmark: 14 moves (exact), one complete assignment, 12 targets; the autopilot finishes it at 60 and 20 fps, F / V at the truck too', () => {
     const benchmark = FROZEN.levels.benchmark;
     expect(benchmark.solver).toMatchObject({ lower: 14, upper: 14, exact: true, unsolvable: false });
     expect(benchmark.solver.plan).toHaveLength(14);
     expect(benchmark.targets.counts).toEqual({ zones: 3, slots: 6, truckLevels: 3, assignments: 1 });
-    expect(benchmark.autopilot60).toMatchObject({ solved: true, moves: 14, counter: 14 });
-    expect(benchmark.autopilot20).toMatchObject({ solved: true, moves: 14, counter: 14 });
+    // Its truck's second column: «amarillo ✚» and a «libre» level on top (phase 6, docs/STORAGE.md rule 7).
+    expect(benchmark.storage.slots.filter((s) => s.startsWith('t1:1:'))).toEqual(['t1:1:0 cell 2,-1 front 2,0 south · yellow/cross', 't1:1:1 cell 2,-1 front 2,0 south · libre']);
+    for (const run of [benchmark.autopilot60, benchmark.autopilot20]) {
+      expect(run).toMatchObject({ solved: true, moves: 14, counter: 14 });
+      expect(run.forkStepsAt.truck).toBeGreaterThan(0);
+    }
   });
 });
 

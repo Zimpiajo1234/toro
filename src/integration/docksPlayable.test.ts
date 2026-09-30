@@ -1,11 +1,12 @@
 /**
  * Integration check (loading docks × logic × controls, docs/DOCKS.md): the autopilot (./autopilot.ts) plays small truck
  * levels with the real GameState at 60 fps and at Game's worst dt (1/20): the truck loaded through its door, between
- * the door's guard rails, at the automatic fork height (never F / V), a wrong load taken off and backed out with the
- * reverse gear (S), a box loaded on top of a locked one, every truck level lit once and never lifted again.
+ * the door's guard rails, each level chosen with F / V (docs/STORAGE.md rule 9), a wrong load taken off and backed out
+ * with the reverse gear (S), a box loaded on top of a locked one, every truck level with a cue lit once and never lifted
+ * again (the «libre» ones on top are never targets).
  */
 import { describe, expect, it } from 'vitest';
-import { trucksOf } from '../core/docks';
+import { storageSlotsOf } from '../core/storage';
 import type { GameEvent } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
 import { autopilot } from './autopilot';
@@ -83,9 +84,12 @@ describe('truck levels are playable with the real controls', () => {
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
-    // No fork keys at a truck: the height is automatic, as on a floor stack.
-    expect(out.controls.forkSteps).toBe(0);
-    const truckSlots = trucksOf(lvl).flatMap((t) => t.columns.flatMap((levels, column) => levels.map((_, k) => `${t.id}:${column}:${k}`)));
+    // The fork keys at the truck (no rack here): every press is there, one per level up.
+    expect(out.controls.forkSteps).toBeGreaterThan(0);
+    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: out.controls.forkSteps });
+    const truckSlots = storageSlotsOf(lvl)
+      .filter((s) => s.unit.skin === 'truck' && s.cue !== null)
+      .map((s) => s.id);
     const onTruck = drops(out.events).filter((d) => d.skin === 'truck');
     const correct = onTruck.filter((d) => d.correct);
     const started = lvl.boxes.filter((b) => b.level !== undefined).length;

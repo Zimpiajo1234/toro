@@ -15,13 +15,13 @@
  * controls (S = drive throttle < 0), as a player would. Storage (docs/STORAGE.md): a storage position of the same model
  * (a shelf, a stack column; its cell inside the map or beyond a wall) is worked from its column's front cell, so the
  * plan drives straight up to it, the load going in (through the door of a truck), and a box lifted out of it backs
- * straight out. Where the unit's forks go by the keys (STORAGE_ACCESS[access].autoForks false: the racks), it first
- * picks the level with the fork keys (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for
- * the forks; where they go by themselves (the truck, until phase 6), it just drives in and drops.
+ * straight out. The forks go by the keys at every unit (rule 9): it first picks the level with the fork keys
+ * (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for the forks there (a rack's shelf
+ * or a stack's level: logic counts both in levels), then drives in and drops, or lifts the box there.
  */
 import { angleDelta } from '../core/math';
 import { storageSlotsOf, type StorageSlotRef } from '../core/storage';
-import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
+import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type StorageSkin, type Vec2 } from '../core/types';
 import {
   DIR_X,
   DIR_Z,
@@ -39,7 +39,6 @@ import {
   type Stacks,
 } from '../data/levels/solver';
 import { GameState } from '../logic/GameState';
-import { STORAGE_ACCESS } from '../logic/storageAccess';
 
 const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 
@@ -92,8 +91,11 @@ class Pilot {
   readonly state: GameState;
   readonly events: GameEvent[] = [];
   frames = 0;
-  /** Fork level presses (F / V) and frames driven in reverse (S): what the controls did, for the tests. */
-  readonly controls = { forkSteps: 0, reverseFrames: 0 };
+  /**
+   * Fork level presses (F / V), also by the skin of the unit they were pressed at, and frames driven in reverse (S):
+   * what the controls did, for the tests.
+   */
+  readonly controls = { forkSteps: 0, forkStepsAt: { rack: 0, truck: 0 } as Record<StorageSkin, number>, reverseFrames: 0 };
   constructor(
     readonly level: LevelData,
     readonly dt: number,
@@ -117,13 +119,17 @@ class Pilot {
   /** One frame with a fork level press (F = +1 / V = −1), then one frame released. */
   fork(step: -1 | 1) {
     this.controls.forkSteps++;
+    const at = this.snap.hint.storage;
+    if (at) this.controls.forkStepsAt[at.skin]++;
     for (const e of this.state.update(this.dt, { move: { x: 0, z: 0 }, actionPressed: false, forkStep: step })) this.events.push(e);
     this.frames++;
     this.tick(0, 0);
   }
   /**
-   * At a storage column whose forks go by the keys: press F / V until level `level` is selected (hint.storage), then
-   * wait for the forks to stand at it. False when the rig is not at such a column or it takes too long.
+   * At a storage column (any unit): press F / V until level `level` is selected (hint.storage), then wait for the forks
+   * to stand at it (ForkliftState.forkHeight counts levels in every support: a rack's shelf n and a stack's level n are
+   * both at height n; only the drawing turns them into metres). False when the rig is not at a column or it takes too
+   * long.
    */
   selectLevel(level: number, budgetSec = 6): boolean {
     let t = 0;
@@ -254,8 +260,11 @@ export interface Outcome {
   moves: number;
   note: string;
   events: GameEvent[];
-  /** Fork level presses (InputFrame.forkStep, F / V) and frames driven in reverse (S, drive throttle < 0). */
-  controls: { forkSteps: number; reverseFrames: number };
+  /**
+   * Fork level presses (InputFrame.forkStep, F / V), also by the skin of the unit they were pressed at (hint.storage),
+   * and frames driven in reverse (S, drive throttle < 0).
+   */
+  controls: { forkSteps: number; forkStepsAt: Record<StorageSkin, number>; reverseFrames: number };
   /** The game state where it stopped (e.g. `snapshot.moves`, the move counter the HUD shows). */
   snapshot: GameSnapshot;
 }
@@ -273,8 +282,6 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
    * column, the top box's or the one the box lands at), or null off storage.
    */
   const slotAt = (pos: number, height: number): StorageSlotRef | null => (grid.isStorage(pos) ? slots[grid.slotAt(pos, height)] : null);
-  /** The level to select first with F / V where the unit's forks go by the keys; null where they go by themselves. */
-  const keyed = (slot: StorageSlotRef | null) => (slot && !STORAGE_ACCESS[slot.unit.access.kind].autoForks ? slot : null);
   let moves = 0;
   let queue: Move[] = opening.slice();
   /** Stacks the remaining plan expects; any mismatch with the live state triggers a replan. */
@@ -342,8 +349,9 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     if (!found) return fail(`no executable route for ${box.id}`);
     const bestChain = found.chain;
     const bestEmpty = found.path;
-    const pickSlot = keyed(fromSlot);
-    const toSlot = keyed(slotAt(plan.drop, lifted[plan.drop].length));
+    // The storage levels to select first with F / V (every unit): where the box is lifted from, where it lands.
+    const pickSlot = fromSlot;
+    const toSlot = slotAt(plan.drop, lifted[plan.drop].length);
     const cellText = (c: number) => {
       const column = grid.columnOfPos(c);
       if (column) return column.support === 'shelves' ? `slot ${slots[grid.slotAt(c)].id}` : `stack ${column.ref.unit.id}:${column.ref.column}`;
@@ -361,7 +369,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     if (!pilot.follow(pts)) return fail(`stuck driving to ${box.id}`);
     const dir = bestChain[0] & 3;
     if (!pilot.face(dir)) return fail(`cannot face ${box.id}`);
-    // A stored box where the forks go by the keys: select its level first (the forks must stand at it to reach under it).
+    // A stored box: select its level first (the forks must stand at it to reach under it).
     if (pickSlot && !pilot.selectLevel(pickSlot.level)) return fail(`cannot select slot ${pickSlot.id} for ${box.id}`);
     // 2) nudge forward until the box is targeted, then pick
     let t = 0;
@@ -390,8 +398,8 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
       let j = i;
       while (j + 1 < bestChain.length && (bestChain[j + 1] & 3) === (pose & 3) && bestChain[j + 1] >> 2 !== bestChain[j] >> 2 && backStep(bestChain[j], bestChain[j + 1]) === reverse) j++;
       if (toSlot && !reverse && j === bestChain.length - 1) {
-        // Into storage where the forks go by the keys: stop one cell short (the forks reach the level there), select
-        // it, then drive the load in.
+        // Into storage: stop one cell short (the forks reach the level there, the load still out of the column's
+        // opening), select it, then drive the load in.
         if (j > i) {
           if (!pilot.ahead(grid.center(bestChain[j - 1] >> 2), pose & 3)) return fail(`stuck carrying ${box.id} to the ${toSlot.unit.skin}`);
         }

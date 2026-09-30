@@ -247,9 +247,9 @@ export class AudioEngine {
   }
 
   /**
-   * Soft detent click for one fork step at a storage column whose forks go by the keys (today a rack's). Game calls it
-   * only for a step that took effect (never at the top / bottom level, never away from a unit). `level` = the level
-   * selected now, `direction` +1 up / −1 down.
+   * Soft detent click for one fork step at a storage column (a rack's or a truck's: the forks go by the keys at every
+   * unit). Game calls it only for a step that took effect (never at the top / bottom level, never away from a unit).
+   * `level` = the level selected now, `direction` +1 up / −1 down.
    */
   forkClick(level: number, direction: 1 | -1): void {
     this.guard('forkClick', (rt, now) => rt.sfx.forkClick(now, level, direction));

@@ -31,9 +31,9 @@ import {
 /*
  * One storage model in the solver (docs/STORAGE.md): every storage column of every skin gets its positions after the
  * floor cells, unit by unit (rule 12), by its unit's support — shelves one position per level (capacity 1), a stack one
- * per column (capacity its levels) — with one set of per-position arrays (kind, capacity, front cell, inward direction,
- * steps) and one pose table. The lock and the drops go by support, the way in and out by access (the column's front
- * cell), never by skin.
+ * per column (capacity all its levels, the «libre» ones too; steps only its levels with a cue, rule 7) — with one set
+ * of per-position arrays (kind, capacity, front cell, inward direction, steps) and one pose table. The lock and the
+ * drops go by support, the way in and out by access (the column's front cell), never by skin.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -43,8 +43,8 @@ const kind = (color: 'blue' | 'mint' | 'coral', symbol: 'square' | 'triangle' | 
 /**
  * Shelves and stacks in one level: a rack of 2 levels (a cue below, «libre» on top, where the coral ◆ starts parked)
  * and a north truck of two columns: the first starts with its destined azul ■ (locked) and takes the ▲ on top of it; the
- * second starts with the menta ▲ loaded by mistake on the «menta ●» level. Unique assignment: azul → azul ■, ▲ → menta
- * ▲, menta ● → menta ●, coral ◆ → coral ◆.
+ * second starts with the menta ▲ loaded by mistake on the «menta ●» level, a «libre» level above it (implicit: `limit:
+ * 2`). Unique assignment: azul → azul ■, ▲ → menta ▲, menta ● → menta ●, coral ◆ → coral ◆.
  */
 const MIXED = level(`
 # 1 · Mixto
@@ -82,8 +82,9 @@ describe('the position table (docs/STORAGE.md: one model for every skin)', () =>
     expect(positions).toEqual(Array.from({ length: 9 }, (_, i) => grid.cellCount + i));
     expect(grid.posCount).toBe(grid.cellCount + 9);
     expect([...grid.kind.slice(grid.cellCount)]).toEqual([POS_SHELF, POS_SHELF, POS_SHELF, POS_SHELF, POS_SHELF, POS_STACK, POS_STACK, POS_STACK, POS_STACK]);
-    // Capacity: 1 per shelf; a stack its levels (never the level's stack limit); a floor cell the stack limit.
-    expect([...grid.capacity.slice(grid.cellCount)]).toEqual([1, 1, 1, 1, 1, 2, 1, 1, 2]);
+    // Capacity: 1 per shelf; a stack its levels (never the level's stack limit), its implicit «libre» ones too (T's second
+    // column and C are written with one level: with `limit: 2` they hold two); a floor cell the stack limit.
+    expect([...grid.capacity.slice(grid.cellCount)]).toEqual([1, 1, 1, 1, 1, 2, 2, 2, 2]);
     expect(grid.capacity[0]).toBe(fixture.stackLimit);
     expect(grid.kind[0]).toBe(POS_FLOOR);
     grid.columns.forEach(({ ref, positions: own }, c) => {
@@ -131,8 +132,9 @@ describe('the position table (docs/STORAGE.md: one model for every skin)', () =>
       ['t1', 'stack', [stack0]],
       ['t1', 'stack', [stack1]],
     ]);
-    expect([...grid.capacity.slice(grid.cellCount)]).toEqual([1, 1, 2, 1]);
-    // Steps: a shelf its level's destiny (the «libre» one, none); a stack every level's, bottom → top.
+    expect([...grid.capacity.slice(grid.cellCount)]).toEqual([1, 1, 2, 2]);
+    // Steps: a shelf its level's destiny (the «libre» one, none); a stack every level's with a cue, bottom → top (the
+    // second column's «libre» level on top has none: parking).
     expect(grid.steps.slice(grid.cellCount)).toEqual([
       [{ color: 'coral', symbol: 'diamond' }],
       null,
@@ -199,8 +201,14 @@ describe('lock and drop rules by support', () => {
     // A wrong box on a satisfied level: liftable; a right box on a wrong base: not locked either.
     expect([lockedAt(grid, at({ [stack0]: blue + coral }), stack0), canLift(grid, at({ [stack0]: blue + coral }), stack0)]).toEqual([false, true]);
     expect(lockedAt(grid, at({ [stack0]: tri + blue }), stack0)).toBe(false);
-    // The one-level column: full with its wrong load (no drop), free once it is off.
-    expect(floorDrops(start).has(stack1)).toBe(false);
+    // The second column: its «libre» level over the wrong load takes a box (parking: never locked, the top liftable,
+    // both boxes still to move); then it is full.
+    expect(floorDrops(start).has(stack1)).toBe(true);
+    const parked = at({ [stack1]: tri + circle });
+    expect([lockedAt(grid, parked, stack1), canLift(grid, parked, stack1), floorDrops(parked).has(stack1)]).toEqual([false, true, false]);
+    // Over its right box, a box parked on the «libre» level is never locked either: it lifts, the one below stays.
+    const onTop = at({ [stack1]: circle + coral });
+    expect([lockedAt(grid, onTop, stack1), canLift(grid, onTop, stack1), lockedAt(grid, lift(onTop, stack1), stack1)]).toEqual([false, true, true]);
     expect(floorDrops(at({ [stack1]: '' })).has(stack1)).toBe(true);
   });
 });
@@ -237,7 +245,7 @@ describe('the way in and out: the column front, straight in, straight back out',
     occ[from] = -1;
     const search = carrySearch(grid, occ, lifted, pickupStarts(grid, region, from));
     const into = [...search.drops.keys()].filter((d) => grid.isStorage(d)).sort((a, b) => a - b);
-    expect(into).toEqual([shelf0, stack0]);
+    expect(into).toEqual([shelf0, stack0, stack1]);
     for (const drop of into) {
       const front = grid.front[drop];
       const inward = grid.inward[drop];
@@ -279,7 +287,7 @@ describe('metrics and report by skin, counted the same way', () => {
   it('huecos and camion from one count per skin; the plan names each unit by its skin word and its letter', () => {
     const m = levelMetrics(MIXED, { skipMoves: true });
     expect(m.slots).toEqual({ total: 2, cued: 1, free: 1 });
-    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 3, loaded: 2 });
+    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 4, cued: 3, free: 1, loaded: 2 });
     expect(m.sortings).toBe(1);
     expect(m.mustMove).toBe(3);
     const source = { file: 'x.level', format: 'level' as const, level: MIXED, targets: [], notes: [] };
@@ -289,7 +297,7 @@ describe('metrics and report by skin, counted the same way', () => {
       'caja menta ▲ (2,0), camión T, nivel 1 → camión T (1,0), nivel 2',
       'caja menta ● (2,3) → camión T (2,0), nivel 1',
       'huecos       2 (1 con pista, 1 libre)',
-      'camion       3 (2 columnas, 1 camión; 2 cargados al empezar)',
+      'camion       4 (3 con pista, 1 libre; 2 columnas, 1 camión; 2 cargados al empezar)',
     ])
       expect(report).toContain(part);
   });

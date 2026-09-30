@@ -41,21 +41,21 @@ export function createDropChoice(): DropChoice {
 export interface StorageAim {
   /**
    * Storage column (LevelGrid.columns) pick and drop act on, or -1: the one the rig works at, once it faces it (or also
-   * while held there, by its access) with the forks at the level chosen (where they are keyed) and the fork point deep
-   * enough for a pick (its access's `pickReach`).
+   * while held there, by its access) with the forks at the level chosen and the fork point deep enough for a pick (its
+   * access's `pickReach`).
    */
   column: number;
   /**
-   * The level they act on there: the one selected (keyed forks), or where the forks go by themselves (a stack: its top
-   * box to lift, the next level up to load).
+   * The level they act on there: the one selected with F / V (every unit: docs/STORAGE.md rule 9). A pick lifts the box
+   * there (in a stack only its top box), a drop stores the box there (in a stack only on its next free level).
    */
   level: number;
   /** Carrying: the fork point is deep enough for the drop (its access's `dropReach`). */
   reach: boolean;
   /**
    * Carrying at a storage column while nothing may be dropped, not even on the floor in front or beside it: the load at
-   * a rack's face while the forks are still on their way to the selected level (not held up by a floor stack the load is
-   * over), or in a dock door short of the reach (the doorway).
+   * the column's face while the forks are still on their way to the selected level (not held up by a floor stack the
+   * load is over), or in a dock door short of the reach or with the forks away from that level (the doorway).
    */
   blocked: boolean;
 }
@@ -118,9 +118,9 @@ export class Interaction {
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
    * inside another obstacle, so the load collider can always settle smoothly (a dock door is open for it: its fork
    * point may stand on the bed beyond). A box in storage (any skin) is only a candidate as the one the aim designates
-   * (StorageAim: the aimed column's box at the aimed level: the slot the forks stand at, or the top of a stack the rig
-   * faces with the forks through its door). A locked box (levels with storage: resting on its destined zone or slot)
-   * never is.
+   * (StorageAim: the aimed column's box at the aimed level, the one the forks stand at: a shelf's box, or a stack's top
+   * box, never one under another: LevelGrid.liftableAt). A locked box (levels with storage: resting on its destined
+   * zone or slot) never is.
    */
   findPickTarget(): number {
     const f = this.forklift;
@@ -131,7 +131,7 @@ export class Interaction {
     let best = -1;
     let bestSq = Infinity;
     const aim = this.aim;
-    const aimed = aim.column >= 0 ? this.grid.slotBox(this.grid.slotOf(aim.column, aim.level)) : -1;
+    const aimed = aim.column >= 0 ? this.grid.liftableAt(aim.column, aim.level) : -1;
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
       if (b.carried || b.locked) continue;
@@ -174,9 +174,10 @@ export class Interaction {
    * cell passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
    * is used, so a drop in a snug corner still works. Returns false when nothing fits. At a storage column with the load
    * deep enough (StorageAim.column, `reach`): the aimed level if the column takes the box there now (a free shelf; the
-   * next level up of a stack with room, also on a locked box: the next level loads on it), else nothing (never the
-   * floor in front or beside it); while the aim is blocked (the forks still on their way to a rack's selected level,
-   * the load in a doorway short of the reach), nothing. A dock's door cells are plain floor otherwise.
+   * next level up of a stack with room, also on a locked box: the next level loads on it; with the forks at any other
+   * level of a stack, nothing), else nothing (never the floor in front or beside it); while the aim is blocked (the
+   * forks still on their way to the selected level, the load in a doorway short of the reach or with the forks away
+   * from the level chosen), nothing. A dock's door cells are plain floor otherwise.
    */
   findDrop(box: Sortable, out: DropChoice): boolean {
     const f = this.forklift;

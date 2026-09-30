@@ -62,6 +62,10 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
     // A cue that asks for nothing is «libre», written null (or `{}`, the legacy form).
     const libre = validateLevel(base({ storage: [{ ...RACK, columns: [[{ color: 'blue' }, {}, null]] }, TRUCK] }), 'x');
     expect(storageOf(libre)[0].columns).toEqual([[{ color: 'blue' }, null, null]]);
+    // A skin that fills its columns (`fillToMax`, the truck; docs/STORAGE.md rule 7): min(maxLevels, limit) levels, the
+    // ones past its cues «libre»; a rack keeps the levels it is given.
+    const filled = validateLevel({ ...base({ storage: [RACK, TRUCK] }), stackLimit: 2 }, 'x');
+    expect(storageOf(filled).map((unit) => unit.columns)).toEqual([[[{ color: 'blue' }]], [[{ color: 'mint' }, null]]]);
   });
 
   it('lists the units skin by skin, each skin as given (rule 12), and names them by their skin in its messages', () => {
@@ -99,9 +103,15 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
     expect(fails(base({ storage: [RACK, { ...TRUCK, skin: 'crate' }] }))).toBe('storage[1].skin must be rack or truck');
     expect(fails(base({ storage: [RACK, { ...TRUCK, access: { kind: 'front', facing: 'south' } }] }))).toBe('trucks[0].access.kind must be "door": the access of a truck');
     expect(fails(base({ storage: [{ ...RACK, access: undefined }, TRUCK] }))).toBe('racks[0].access must be an object');
-    // The rules of before, named the same way: ids unique across skins, no «libre» truck level yet (phase 6).
+    // The rules of before, named the same way: ids unique across skins. A «libre» truck level is fine (phase 6: a truck
+    // of «libre» levels only counts no target), but in a stack only on top of the levels with a cue.
     expect(fails(base({ storage: [{ ...RACK, id: 'x1' }, { ...TRUCK, id: 'x1' }] }))).toBe('trucks[0] has the id "x1" of a rack: racks and trucks never share an id');
-    expect(fails(base({ storage: [RACK, { ...TRUCK, columns: [[null]] }] }))).toBe('trucks[0].columns[0][0] must ask for something: a truck level has a color, a symbol or both');
+    expect(fails(base({ storage: [RACK, { ...TRUCK, columns: [[null]] }] }))).toBe(
+      'a level with storage racks or trucks needs one box per target (2 boxes, 0 zones, 1 slots with a cue, 0 truck levels)',
+    );
+    expect(fails({ ...base({ storage: [RACK, { ...TRUCK, columns: [[null, { color: 'mint' }]] }] }), stackLimit: 2 })).toBe(
+      'trucks[0].columns[0][1] has a cue above a free level: in a stack the free levels go on top of the ones with a cue',
+    );
     expect(fails(base({ storage: [{ ...RACK, columns: [[null, null, null, null]] }, TRUCK] }))).toBe('racks[0].columns[0] must have 1 to 3 slots');
   });
 });

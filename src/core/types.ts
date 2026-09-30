@@ -201,8 +201,8 @@ export const TRUCK_FACING: Readonly<Record<WallSide, Facing>> = { north: 'south'
 
 /**
  * What one level of a truck bed column asks for (docs/DOCKS.md), shown as a cell of the framed sign above the dock
- * door (one cell per bed column and level): a colour, a symbol or both, like a zone. At least one is set: a truck has
- * no «libre» levels, every level is a target.
+ * door (one cell per bed column and level): a colour, a symbol or both, like a zone; neither = «libre» (any box, never
+ * a target: docs/STORAGE.md rule 7), which only sits above the levels with a cue.
  */
 export type TruckCue = ZoneCriteria;
 
@@ -211,9 +211,10 @@ export type TruckCue = ZoneCriteria;
  * right against the outer face of the wall at the door. The door is a straight run of `w` map cells along that wall
  * (row z = 0 for a north dock, column x = 0 for a west one): the **door cells**, ordinary floor in front of the door.
  * Each door cell has one **bed column** of the truck just beyond the wall (core/docks `truckCellOf`: z = -1 / x = -1,
- * outside the map). The forklift stands on a door cell facing the wall and loads its bed column through the door
- * exactly like a floor stack (automatic fork height), bottom → top, up to its number of levels; its body never passes
- * the wall line. 1‥MAX_TRUCK_COLUMNS columns of 1‥MAX_TRUCK_LEVELS levels. A box that starts loaded is a LevelBox with
+ * outside the map). The forklift stands on a door cell facing the wall and loads its bed column through the door as a
+ * stack, bottom → top, up to its number of levels, with the forks set by the keys (F / V: docs/STORAGE.md rule 9); its
+ * body never passes the wall line. 1‥MAX_TRUCK_COLUMNS columns of min(MAX_TRUCK_LEVELS, stackLimit) levels each (the
+ * written cues bottom → top, the rest «libre»: docs/STORAGE.md rule 7). A box that starts loaded is a LevelBox with
  * (x, z) = its bed cell (outside) and `level` = its truck level.
  * The view of a LevelStorage of skin `truck` that core/docks `trucksOf` derives (docs/STORAGE.md: until phase 7); a
  * JSON level may still list its trucks this way (`trucks`, turned into `storage` by validateLevel).
@@ -227,7 +228,7 @@ export interface LevelTruck {
   z: number;
   /** Door cells along the wall = bed columns (= columns.length, 1‥MAX_TRUCK_COLUMNS). */
   w: number;
-  /** Per bed column (first cell first), the cue of each level bottom → top (1‥MAX_TRUCK_LEVELS, ≤ stackLimit). */
+  /** Per bed column (first cell first), the cue of each level bottom → top (min(MAX_TRUCK_LEVELS, stackLimit); `{}` = «libre»). */
   columns: TruckCue[][];
 }
 
@@ -258,9 +259,10 @@ export type StorageAccess = { kind: 'front'; facing: Facing } | { kind: 'door'; 
 /**
  * A storage unit of a level (docs/STORAGE.md «Modelo», rules 1–3): a straight run of 1‥maxColumns columns, one per
  * cell, each of 1‥maxLevels levels (its skin's row in core/storage `STORAGE_SKINS`; a stack never taller than
- * `stackLimit`). Level data's one source of truth for storage: core/racks `racksOf` and core/docks `trucksOf` derive
- * the old per-skin views from it until phase 7. The geometry of every unit: core/storage (`cellOf`, `frontOf`,
- * `facingOf`, `storageSlotsOf`).
+ * `stackLimit`; a skin with `fillToMax` gets min(maxLevels, stackLimit) levels in every column, the ones past its
+ * written cues «libre», and in a stack the «libre» levels only sit above the ones with a cue: validateLevel). Level
+ * data's one source of truth for storage: core/racks `racksOf` and core/docks `trucksOf` derive the old per-skin views
+ * from it until phase 7. The geometry of every unit: core/storage (`cellOf`, `frontOf`, `facingOf`, `storageSlotsOf`).
  */
 export interface LevelStorage {
   /** Unique among all the level's units; generated: `idPrefix` + its number within its skin (r1, r2… / t1, t2…). */
@@ -330,10 +332,10 @@ export interface ForkliftState {
   forkLift: number;
   /**
    * Extra carriage height in stack levels (0 = floor, 1 = on top of one box, …), continuous while it moves.
-   * Rises toward the drop height (carrying) or the target box's level (empty), and early enough to clear any stack
-   * the load or the forks are over or about to reach (they never sink into one). At a storage column whose forks are
-   * keyed (a rack) it goes to the level selected there (`hint.storage.level`; level n sits at height n). Animated by
-   * logic; 0 in classic levels.
+   * Rises toward the drop height (carrying) or the target box's level (empty), and early enough to clear any floor
+   * stack the load or the forks are over or about to reach (they never sink into one). At a storage column (any unit:
+   * its forks go by the keys, docs/STORAGE.md rule 9) it goes to the level selected there (`hint.storage.level`; level
+   * n sits at height n, a shelf's or a stack's). Animated by logic; 0 in classic levels.
    */
   forkHeight: number;
   /** Id of the box on the forks, or null. */
@@ -464,7 +466,7 @@ export interface StorageSlotState {
   pos: Vec2;
   /**
    * The level's cue (a rack slot's back panel, a cell of the sign above a dock door): a colour, a symbol or both; null =
-   * «libre» (plain storage, never a target). A truck has no «libre» level until phase 6.
+   * «libre» (plain storage, never a target; in a stack only above the levels with a cue).
    */
   accepts: ZoneCriteria | null;
   /** The kind of box the level's unique solution puts here; null for a «libre» slot. Only it lights the slot. */
@@ -487,10 +489,9 @@ export interface StorageSlotState {
 /**
  * Levels with storage (docs/STORAGE.md): the storage column the forklift works at and the level chosen there, in any
  * skin (`skin`; its support, core/storage `STORAGE_SKINS[skin].support`, says how the forks reach that level: a shelf's
- * height, dims `rackSlotY`, or a stack level). At a column whose forks are keyed (a rack: F / V, the mouse wheel,
- * gamepad X / B) it is there while the forklift faces the column or is still held at it, the level being the one
- * selected. At a column whose forks go by themselves (a truck, until phase 6: logic/storageAccess `autoForks`) it only
- * names where the carried box would land (`ready` true), else it is null.
+ * height, dims `rackSlotY`, or a stack level). The forks go by the keys at every unit (F / V, the mouse wheel, gamepad
+ * X / B: rule 9): it is there while the forklift faces the column or is still held at it (and does not lift a floor
+ * box there), the level being the one selected.
  */
 export interface StorageHint {
   unitId: string;
@@ -498,16 +499,14 @@ export interface StorageHint {
   column: number;
   /** Levels in this column (a rack's 1–3 slots, a truck's 1–2 levels). */
   levels: number;
-  /**
-   * The level chosen (0 = bottom): the one selected with F / V (the forks go there and pick / drop act on it), or where
-   * the carried box would land at a column whose forks go by themselves.
-   */
+  /** The level chosen (0 = bottom): the one selected with F / V (the forks go there and pick / drop act on it). */
   level: number;
   /** The slot at that level. */
   slotId: string;
   /**
-   * Empty forks: that slot holds a box (also `targetBoxId`). Carrying: the action drops the box into it (`dropCell` =
-   * the column's cell, `dropLevel` = the level). Always true where the forks go by themselves.
+   * Empty forks: the action lifts the box at that level (also `targetBoxId`; in a stack only its top box). Carrying:
+   * the action drops the box into it (`dropCell` = the column's cell, `dropLevel` = the level; in a stack only its next
+   * free level).
    */
   ready: boolean;
 }
@@ -564,8 +563,8 @@ export interface InputFrame {
   actionPressed: boolean;
   /**
    * Edge: fork one level up (+1: F, mouse wheel up, gamepad X) or down (−1: V, wheel down, gamepad B). Acts only at a
-   * storage column whose forks are keyed (a rack; elsewhere the fork height is automatic, also at a truck until phase
-   * 6: its bed loads like a floor stack). Optional: omitted = 0.
+   * storage column (every unit: docs/STORAGE.md rule 9); elsewhere the fork height is automatic, as on the floor.
+   * Optional: omitted = 0.
    */
   forkStep?: -1 | 0 | 1;
 }
@@ -605,7 +604,7 @@ export type GameEvent =
       correct: boolean;
       /**
        * Recipe length of that zone (1 = classic zone), 0 when not on a zone. In storage: 1 in a slot with a cue, 0 in a
-       * «libre» one (every truck level has a cue until phase 6).
+       * «libre» one (any skin).
        */
       recipeLength: number;
       /** 1-based count of satisfied zones (and storage slots) after this drop (for rising chimes). */

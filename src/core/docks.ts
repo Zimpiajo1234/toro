@@ -93,14 +93,14 @@ function isTruck(unit: LevelStorage): unit is DoorUnit {
 }
 
 /**
- * A level's trucks (none → an empty list): its storage units of skin `truck`, in storage order, as LevelTruck. A view
- * of `level.storage` until phase 7 (docs/STORAGE.md), derived anew on every call.
+ * A level's trucks (none → an empty list): its storage units of skin `truck`, in storage order, as LevelTruck (a
+ * «libre» level is `{}`). A view of `level.storage` until phase 7 (docs/STORAGE.md), derived anew on every call.
  */
 export function trucksOf(level: Pick<LevelData, 'storage'>): readonly LevelTruck[] {
   const out: LevelTruck[] = [];
   for (const unit of level.storage ?? []) {
     if (!isTruck(unit)) continue;
-    // Every truck level asks for something until phase 6 (no «libre» in a truck yet: docs/STORAGE.md «Huecos» 3).
+    // A «libre» level (docs/STORAGE.md rule 7) is a cue that asks for nothing, as in racksOf.
     const columns = unit.columns.map((levels) => levels.map((cue) => (cue === null ? {} : { ...cue })));
     out.push({ id: unit.id, wall: unit.access.wall, x: unit.x, z: unit.z, w: unit.w, columns });
   }
@@ -164,7 +164,7 @@ export interface TruckColumnRef {
   /** Its door cell, inside the map (truckFrontOf). */
   front: CellPos;
   facing: Facing;
-  /** Levels of the column (1‥MAX_TRUCK_LEVELS): its cues, bottom → top. */
+  /** Levels of the column (1‥MAX_TRUCK_LEVELS): its cues, bottom → top (`{}` = «libre»). */
   cues: readonly TruckCue[];
   /** Index of its bottom level in truckSlotsOf (level n is firstSlot + n). */
   firstSlot: number;
@@ -202,7 +202,7 @@ export interface TruckSlotRef {
   /** Bed cell (outside the map) and door cell (inside) of its column. */
   cell: CellPos;
   front: CellPos;
-  /** The level's cue (never «libre»). */
+  /** The level's cue (`{}` = «libre», as trucksOf gives it). */
   cue: TruckCue;
 }
 

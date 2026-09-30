@@ -8,6 +8,7 @@ import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
 import { buildForkliftGeometry } from '../builders/forklift';
 import { PANEL_HEIGHT, outwardYaw } from '../builders/rack';
+import { DOCK_SIGN, SIGN_MARKER, dockColumnX, dockToWorld, signMidZ, signRowY } from '../builders/truck';
 import { wallLayouts } from '../builders/walls';
 import { RACK, boxDims, rackSlotY } from '../dims';
 import { LevelView } from '../LevelView';
@@ -29,8 +30,8 @@ import {
 
 /*
  * The storage skins registry of the render (docs/STORAGE.md «Contratos por capa», render): one entry per skin, one
- * common interface per unit (a group, a light per level, the chosen-level marker where the forks go by the keys, a
- * static frame, the pieces that ghost, the burst), heights by support. Layouts are inline (no .level files).
+ * common interface per unit (a group, a light per level, the chosen-level marker: the forks go by the keys at every
+ * unit, a static frame, the pieces that ghost, the burst), heights by support. Layouts are inline (no .level files).
  */
 
 const level = (text: string): LevelData => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -107,12 +108,23 @@ const panelOf = (unit: StorageUnitView, id: string) =>
 const stickerOf = (unit: StorageUnitView, id: string) => unit.group.children.find((c) => c.userData.slotCue === id || c.userData.truckCue === id);
 
 describe('render/storage: the registry', () => {
-  it('has one entry per skin of STORAGE_SKINS; only a skin whose forks go by the keys has a marker', () => {
+  it('has one entry per skin of STORAGE_SKINS, each with its chosen-level marker (the forks go by the keys at every unit)', () => {
     expect(Object.keys(STORAGE_RENDER)).toEqual([...STORAGE_SKIN_ORDER]);
     for (const skin of STORAGE_SKIN_ORDER) expect(typeof STORAGE_RENDER[skin].builder).toBe('function');
-    // A rack's shelves go by F / V (the marker frames the chosen one); a truck's forks go by themselves until phase 6.
-    expect(STORAGE_RENDER.rack.markerGeometry).toBeDefined();
-    expect(STORAGE_RENDER.truck.markerGeometry).toBeUndefined();
+    // A rack's marker frames the chosen shelf; a truck's, the chosen level's cell on its sign (docs/STORAGE.md rule 9).
+    for (const skin of STORAGE_SKIN_ORDER) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeDefined();
+    // The truck's is the size of a sign cell: a door cell wide, one row high, on both faces of the sign.
+    const sign = STORAGE_RENDER.truck.markerGeometry!();
+    sign.computeBoundingBox();
+    const size = sign.boundingBox!.getSize(new Vector3());
+    expect(size.x).toBeCloseTo(2 * SIGN_MARKER.halfW, 5);
+    expect(size.x).toBeCloseTo(1, 5);
+    expect(size.y).toBeCloseTo(2 * SIGN_MARKER.halfH, 5);
+    expect(size.y).toBeGreaterThan(DOCK_SIGN.row);
+    expect(size.y).toBeLessThan(DOCK_SIGN.row + 2 * DOCK_SIGN.divider);
+    expect(sign.boundingBox!.min.z).toBeLessThan(-DOCK_SIGN.depth / 2);
+    expect(sign.boundingBox!.max.z).toBeGreaterThan(DOCK_SIGN.depth / 2);
+    sign.dispose();
   });
 
   it('heights go by support, never by skin: shelf floors at rackSlotY, a stack at floor stack heights', () => {
@@ -169,18 +181,33 @@ describe('render/storage: the registry', () => {
     bag.dispose();
   });
 
-  it('places the marker only where the forks go by the keys (a rack shelf, at its floor), the burst on the face the camera sees', () => {
+  it('places the marker at the chosen level of every unit (a rack shelf at its floor, a truck level on its sign cell), the burst on the face the camera sees', () => {
     const { snap, units, bag } = buildAll(MANY);
     const slot = (id: string) => snap.storageSlots.find((s) => s.id === id)!;
     const place: MarkerPlace = { x: 0, y: 0, z: 0, yaw: 0 };
     const burst: BurstPlace = { x: 0, y: 0, z: 0, yaw: 0, halfW: 0, halfH: 0 };
-    const [r1, r2, t1] = units;
+    const [r1, r2, t1, , t3] = units;
     // S (r2) faces north: its marker turns to the north, at the floor of the chosen shelf.
     const top = slot('r2:0:2');
     expect(r2.markerAt(top, place)).toEqual({ x: top.pos.x, y: rackSlotY(2), z: top.pos.z, yaw: outwardYaw('north') });
     expect(r1.markerAt(slot('r1:0:1'), place)).not.toBeNull();
-    // No marker on a truck until phase 6 (its forks go by themselves; then: its sign cell).
-    expect(t1.markerAt(slot('t1:0:1'), place)).toBeNull();
+    // A truck: the cell of the level on the sign over its door (its column's door cell along the wall, its row), turned
+    // like the sign (toward the warehouse); its «libre» level too (the plain cell over «menta ●»).
+    const cell = (wall: 'north' | 'west', x: number, z: number, column: number, row: number) =>
+      dockToWorld(wall, MANY, dockColumnX({ wall, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
+    for (const [id, column, row] of [
+      ['t1:0:1', 0, 1],
+      ['t1:1:0', 1, 0],
+      ['t1:1:1', 1, 1],
+    ] as const) {
+      const at = cell('north', 1, 0, column, row);
+      expect(t1.markerAt(slot(id), place), id).toEqual({ x: at.x, y: at.y, z: at.z, yaw: 0 });
+    }
+    expect(slot('t1:1:1').accepts).toBeNull();
+    const west = cell('west', 0, 3, 0, 1);
+    const onWest = t3.markerAt(slot('t3:0:1'), place)!;
+    expect([onWest.x, onWest.y, onWest.z]).toEqual([west.x, west.y, west.z]);
+    expect(onWest.yaw).toBeCloseTo(Math.PI / 2, 9);
     // A rack's burst hugs the slot opening at its floor; a truck's, the box on its bed, at its stack height. Each on
     // the face the camera sees: R faces south, toward the default camera; from the far side, the other face.
     expect(r1.burstAt(slot('r1:0:0'), YAW, burst)).toMatchObject({ y: rackSlotY(0), yaw: outwardYaw('south'), halfH: PANEL_HEIGHT / 2 });
@@ -224,11 +251,14 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
       ['north', 2],
       ['west', 2],
     ]);
-    // Every truck: its body outside, its sign's stickers (one per level), the rails of its door; bodies apart.
+    // Every truck: its body outside, its sign's stickers (one per level with a cue: none on a «libre» one), the rails
+    // of its door; bodies apart.
     const trucks = groups.filter((g) => g.userData.truckId !== undefined);
     const bodies = trucks.map((g) => {
       const tagged = (tag: string) => g.children.filter((c) => c.userData[tag] !== undefined);
-      expect(tagged('truckCue').map((c) => c.userData.truckCue)).toEqual(snap.storageSlots.filter((s) => s.unitId === g.userData.truckId).map((s) => s.id));
+      expect(tagged('truckCue').map((c) => c.userData.truckCue)).toEqual(
+        snap.storageSlots.filter((s) => s.unitId === g.userData.truckId && s.accepts !== null).map((s) => s.id),
+      );
       expect(tagged('dockRails')).toHaveLength(1);
       return new Box3().setFromObject(tagged('truckBody')[0]);
     });
@@ -252,13 +282,13 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
     }
   });
 
-  it('shows the marker only at a unit whose forks go by the keys: at a rack column, never at a truck', () => {
+  it('shows the chosen-level marker of the unit worked at: a rack shelf, a truck level on its sign cell (one marker per skin)', () => {
     const snap = new GameState(MANY).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
     const markers = view.root.children.filter((c) => c.userData.slotMarker) as Mesh<BufferGeometry, MeshBasicMaterial>[];
-    // One marker for the racks (one skin with keyed forks), shared by both.
-    expect(markers).toHaveLength(1);
-    const [marker] = markers;
+    // One marker per skin, shared by its units: the racks' and the trucks'.
+    expect(markers.map((m) => m.userData.markerSkin)).toEqual(['rack', 'truck']);
+    const [marker, sign] = markers;
     const at = (id: string, ready = false) => {
       const slot = snap.storageSlots.find((s) => s.id === id)!;
       const levels = snap.storageSlots.filter((s) => s.unitId === slot.unitId && s.column === slot.column).length;
@@ -276,15 +306,34 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
     expect(marker.visible).toBe(true);
     expect(marker.material.opacity).toBeGreaterThan(0.7);
     expect(marker.position.y).toBeCloseTo(rackSlotY(0), 3);
-    // At a truck (its forks go by themselves until phase 6): no marker anywhere.
-    for (const id of ['t1:0:0', 't3:0:1']) {
+    expect(sign.visible).toBe(false);
+    // At a truck: its marker frames the chosen level's sign cell (faint while the action would not work there, clear
+    // when it would), turned like the sign; the rack's marker fades away.
+    const cellOf = (wall: 'north' | 'west', x: number, z: number, column: number, row: number) =>
+      dockToWorld(wall, MANY, dockColumnX({ wall, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
+    for (const [id, wall, x, z, column, row, yaw] of [
+      ['t1:0:0', 'north', 1, 0, 0, 0, 0],
+      ['t1:1:1', 'north', 1, 0, 1, 1, 0],
+      ['t3:0:1', 'west', 0, 3, 0, 1, Math.PI / 2],
+    ] as const) {
       at(id, true);
       run();
       expect(marker.visible, id).toBe(false);
+      expect(sign.visible, id).toBe(true);
+      expect(sign.material.opacity, id).toBeGreaterThan(0.7);
+      const want = cellOf(wall, x, z, column, row);
+      expect(sign.position.distanceTo(want), id).toBeLessThan(1e-3);
+      expect(sign.rotation.y, id).toBeCloseTo(yaw, 9);
     }
+    at('t1:0:1');
+    run();
+    expect(sign.visible).toBe(true);
+    expect(sign.material.opacity).toBeGreaterThan(0.2);
+    expect(sign.material.opacity).toBeLessThan(0.4);
+    expect(sign.position.y).toBeCloseTo(signRowY(1), 3);
     snap.hint.storage = null;
     run();
-    expect(marker.visible).toBe(false);
+    expect([marker.visible, sign.visible]).toEqual([false, false]);
     view.dispose();
   });
 });

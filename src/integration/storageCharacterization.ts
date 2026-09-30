@@ -1,7 +1,8 @@
 /**
  * Characterization of the storage units (docs/STORAGE.md, «Red de seguridad»): what the storage racks and the dock
  * trucks of a level are and do today, frozen in ./storageCharacterization.json so that the phases of the shared storage
- * model that must not change the game (1–5) can prove it; phase 6, which changes the rules, regenerates it on purpose.
+ * model that must not change the game (1–5, and 7) can prove it; phase 6, which changed the rules (keyed forks at the
+ * truck, «libre» truck levels), regenerated it on purpose (docs/STORAGE.md «Fase 6: lo entregado»).
  *
  * Everything is written in terms that survive the refactor: unit ids, slot ids (`unit:column:level`), map cells
  * (`x,z`, floor stacks `x,z@height`, a zone's id in brackets) and box kinds (`colour/symbol`; a cue that asks nothing of
@@ -16,16 +17,16 @@
  *   it);
  * - solver: the exact search's result and its plan, replayed move by move;
  * - start: the live state after load (GameState): progress, every slot and every box;
- * - autopilot60 / autopilot20: the autopilot's game at 60 and 20 fps (moves, frames, controls, every box move).
+ * - autopilot60 / autopilot20: the autopilot's game at 60 and 20 fps (moves, frames, controls: F / V presses in all
+ *   and at each skin's units, frames in reverse; every box move).
  *
- * Regenerate (phase 6 only; never by hand):
+ * Regenerate (only for a deliberate rule change, as phase 6 did; never by hand):
  *   TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u
  *   (PowerShell: $env:TORO_CARACTERIZAR = '1'; npx vitest run src/integration/storageCharacterization.test.ts -u;
  *   Remove-Item Env:TORO_CARACTERIZAR)
  * With the variable set the test only rewrites the file; `-u` alone never touches it.
  */
 import type { BoxState, Facing, LevelData, WallSide, ZoneCriteria } from '../core/types';
-import { hasRacks } from '../core/racks';
 import { STORAGE_SKINS, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
 import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
@@ -47,7 +48,7 @@ export const THREE_TRUCKS = parseLevel(threeTrucksText, THREE_TRUCKS_FILE);
 export const CHARACTERIZED_LEVELS: readonly LevelData[] = [getSpecialLevel(BENCHMARK_ID)!, THREE_TRUCKS.level];
 
 const COMMENT =
-  'Storage characterization (docs/STORAGE.md): phases 1-5 of the shared storage model must leave it unchanged; phase 6 regenerates it: TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u. Never edit by hand.';
+  'Storage characterization (docs/STORAGE.md): phases 1-5 of the shared storage model left it unchanged, phase 6 regenerated it on purpose (its rule changes), phase 7 must leave it unchanged. Regenerate only for a deliberate rule change: TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u. Never edit by hand.';
 
 /** A storage unit as the planned LevelStorage (docs/STORAGE.md «Modelo»). */
 export interface StorageUnitView {
@@ -69,6 +70,8 @@ export interface AutopilotView {
   /** Frames until the level completed (the autopilot stops there). */
   frames: number;
   forkSteps: number;
+  /** Of those, the presses at each skin's units (docs/STORAGE.md rule 9: at a truck too, since phase 6). */
+  forkStepsAt: { rack: number; truck: number };
   reverseFrames: number;
   /** Every box move, in order: `box from → to`, then ` ok n/total` (its target lit) or ` wrong` (the soft buzz). */
   log: string[];
@@ -170,7 +173,7 @@ export function targetsSection(level: LevelData): LevelCharacterization['targets
   const destinyOf = (t: (typeof targets)[number]): Sortable | null | undefined =>
     t.kind === 'zone' ? destinies?.zones[t.index] : destinies?.slots[t.index];
   return {
-    rules: { targetRules: hasStorage(level), symbols: usesSymbols(level), forkRow: hasRacks(level) },
+    rules: { targetRules: hasStorage(level), symbols: usesSymbols(level), forkRow: hasStorage(level) },
     counts: {
       zones: targets.filter((t) => t.kind === 'zone').length,
       slots: targets.filter((t) => t.skin === 'rack').length,
@@ -269,6 +272,7 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
     counter: out.snapshot.moves,
     frames: Math.round(out.seconds / dt),
     forkSteps: out.controls.forkSteps,
+    forkStepsAt: { rack: out.controls.forkStepsAt.rack, truck: out.controls.forkStepsAt.truck },
     reverseFrames: out.controls.reverseFrames,
     log,
   };

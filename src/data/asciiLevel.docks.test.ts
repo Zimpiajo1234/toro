@@ -244,10 +244,15 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
     expectError(legend('T = camión muelle norte: azul: ▲'), 12, 30, /los dos puntos van una sola vez, tras «camión muelle …»/);
   });
 
-  it('levels: at most two per column, none empty, every one with a cue (no «libre»)', () => {
+  it('levels: at most two per column, none empty, a cue or «libre» (alone)', () => {
     expectError(legend('T = camión muelle norte: azul / ▲ / menta | coral ◆'), 12, 37, /una columna del camión lleva como mucho 2 niveles \(2 cajas de alto\)/);
-    expectError(legend('T = camión muelle norte: azul // ▲ | coral ◆'), 12, 32, /falta un nivel/);
-    expectError(legend('T = camión muelle norte: libre / ▲ | coral ◆'), 12, 26, /no hay niveles «libre»/);
+    expectError(legend('T = camión muelle norte: azul // ▲ | coral ◆'), 12, 32, /falta un nivel: su pista \(color, símbolo, ambos o «libre»\)/);
+    expectError(legend('T = camión muelle norte: libre azul / ▲ | coral ◆'), 12, 32, /«libre» va solo: un nivel libre no pide nada/);
+    // «libre» is a level of its own (docs/STORAGE.md rule 7): the grammar reads it anywhere; validateLevel wants it on top.
+    expect(levelOf(legend('T = camión muelle norte: azul / ▲ | coral ◆ / libre')).storage![0].columns).toEqual([
+      [{ color: 'blue' }, { symbol: 'triangle' }],
+      [{ color: 'coral', symbol: 'diamond' }, null],
+    ]);
     expectError(legend('T = camión muelle norte: azull / ▲ | coral ◆'), 12, 26, /palabra desconocida «azull» en un nivel del camión.*«azul»/);
     expectError(legend('T = camión muelle norte: azul menta / ▲ | coral ◆'), 12, 31, /un nivel del camión pide un solo color/);
     expectError(legend('T = camión muelle norte: caja azul / ▲ | coral ◆'), 12, 26, /la caja va después de la pista/);
@@ -299,9 +304,48 @@ describe('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
       expect(parseLevel(renderLevel(parsed.level)).level).toStrictEqual(parsed.level);
       expect(formatLevel(text(lines))).toBe(text(lines));
     }
-    expect(parseLevel(text(NORTH)).level).toStrictEqual(NORTH_LEVEL);
+    // validateLevel fills the second column up to limit 2 (its level on top «libre»); the canonical text leaves it out.
+    const [dock] = NORTH_LEVEL.storage!;
+    expect(parseLevel(text(NORTH)).level).toStrictEqual({ ...NORTH_LEVEL, storage: [{ ...dock, columns: [dock.columns[0], [...dock.columns[1], null]] }] });
     const twin = parseLevel(text(TWIN)).level;
     expect(parseLevel(renderLevel(twin)).level).toStrictEqual(twin);
+  });
+
+  it('«libre» in a truck (docs/STORAGE.md rule 7): implicit up to the limit, left out of the canonical text unless it holds a box', () => {
+    const level = (lines: readonly string[]) => parseLevel(text(lines)).level;
+    // Written or implicit, the same level; the formatter leaves a «libre» on top without a box out (idempotent).
+    const written = replace(NORTH, 12, 'T = camión muelle norte: azul / ▲ | coral ◆ / libre');
+    expect(level(written)).toStrictEqual(level(NORTH));
+    expect(formatLevel(text(written))).toBe(text(NORTH));
+    expect(formatLevel(formatLevel(text(written)))).toBe(text(NORTH));
+    // With a box parked on it at the start it is written; a column all «libre» keeps one level written.
+    const parked = replace(
+      replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^...'), 11, 'a = caja azul ▲'),
+      12,
+      'T = camión muelle norte: azul / ▲ | coral ◆ + caja menta ▲ / libre + caja coral ◆',
+    );
+    expect(level(parked).storage![0].columns[1]).toEqual([{ color: 'coral', symbol: 'diamond' }, null]);
+    expect(level(parked).boxes.at(-1)).toMatchObject({ color: 'coral', x: 3, z: -1, level: 1 });
+    expect(formatLevel(text(parked))).toBe(text(parked));
+    const free = replace(replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^...'), 11, 'a = caja azul ▲'), 12, 'T = camión muelle norte: azul / ▲ | libre + caja menta ▲');
+    expect(level(free).storage![0].columns[1]).toEqual([null, null]);
+    expect(formatLevel(text(free))).toBe(text(free));
+    const bare = replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^.b.'), 11, 'a = caja azul ▲     b = caja menta ▲').map((l, i) =>
+      i === 11 ? 'T = camión muelle norte: azul / ▲ | libre' : l,
+    );
+    expect(level(bare).storage![0].columns[1]).toEqual([null, null]);
+    expect(formatLevel(text(bare))).toBe(text(bare));
+    // «libre» under a level with a cue: the level to fix, in Spanish, at the column.
+    const under = replace(NORTH, 12, 'T = camión muelle norte: azul / ▲ | libre / coral ◆');
+    let error: LevelFormatError | null = null;
+    try {
+      parseLevel(text(under), 'x.level');
+    } catch (e) {
+      error = e as LevelFormatError;
+    }
+    expect(error).toBeInstanceOf(LevelFormatError);
+    expect({ line: error!.line, column: error!.column }).toEqual({ line: 6, column: 6 });
+    expect(error!.reason).toMatch(/^en un camión las cajas van una sobre otra, así que los niveles «libre» van arriba.*el nivel de arriba de la columna 2 del camión «T» pide algo y el de debajo es libre$/);
   });
 
   it('keeps the key order: `storage` right after `shelves`, its trucks right after its racks', () => {

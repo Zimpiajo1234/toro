@@ -1,13 +1,12 @@
 import { degToRad } from '../core/math';
-import { storageOf } from '../core/storage';
-import type { LevelData, StorageAccess } from '../core/types';
+import type { StorageAccess } from '../core/types';
 
 /**
  * How the rig works at a storage column, by the access of its unit (docs/STORAGE.md «Acceso»): one row per access
- * kind, read by GameState (refreshStorageAim, the passage of the load, the fork height) for every unit, whatever its
- * skin; no case per wall or per skin outside it. Distances in world units along the column's own frame (core/racks
- * `columnFrame`): `depth` 0 = the column's face (a rack's front face, a dock's wall line), negative = in front of it;
- * `lateral` = off its centre line.
+ * kind, read by GameState (refreshStorageAim, the passage of the load) for every unit, whatever its skin; no case per
+ * wall or per skin outside it. The forks go by the keys at every access (rule 9: F / V choose the level). Distances in
+ * world units along the column's own frame (core/racks `columnFrame`): `depth` 0 = the column's face (a rack's front
+ * face, a dock's wall line), negative = in front of it; `lateral` = off its centre line.
  */
 export interface StorageAccessRow {
   /**
@@ -40,15 +39,10 @@ export interface StorageAccessRow {
   readonly dropReach: number;
   /**
    * The doorway: carrying with the load already past the column's face (a wall line) while pick and drop do not act
-   * there yet (short of the reach), nothing can be dropped, not even on the floor beside it.
+   * there yet (short of the reach, or the forks away from the level chosen), nothing can be dropped, not even on the
+   * floor beside it.
    */
   readonly doorway: boolean;
-  /**
-   * TEMPORARY, until phase 6 of docs/STORAGE.md (rule 9: «Horquilla por teclas» in every unit) removes it: the forks go
-   * by themselves at the column, as at a floor stack (the drop height, the top box's level), F / V do nothing there,
-   * and the hint only names where the carried box would land. Phase 6 deletes this field and every branch on it.
-   */
-  readonly autoForks: boolean;
 }
 
 /**
@@ -72,7 +66,6 @@ export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAcc
     pickReach: -0.8,
     dropReach: -0.55,
     doorway: false,
-    autoForks: false,
   },
   /**
    * A dock truck: loaded through its door from the door cell of each column; the column's cell lies beyond the wall,
@@ -93,18 +86,8 @@ export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAcc
     pickReach: 0.3,
     dropReach: 0.3,
     doorway: true,
-    autoForks: true,
   },
 };
 
 /** The access kinds in engagement priority (STORAGE_ACCESS key order). */
 export const STORAGE_ACCESS_ORDER = Object.keys(STORAGE_ACCESS) as readonly StorageAccess['kind'][];
-
-/**
- * The level has storage units whose forks go by the keys (F / V, the mouse wheel, pad X / B: every access that is not
- * `autoForks`): Game shows the fork row for it (UIState.storage) and clicks the fork steps that take effect there. Today
- * exactly the levels with racks; once phase 6 removes `autoForks`, every level with storage.
- */
-export function hasKeyedForks(level: Pick<LevelData, 'storage'>): boolean {
-  return storageOf(level).some((unit) => !STORAGE_ACCESS[unit.access.kind].autoForks);
-}

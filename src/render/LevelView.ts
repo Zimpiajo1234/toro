@@ -359,7 +359,8 @@ export class LevelView {
 
     // The preview takes the carried box's zone tone when it would land on a zone that takes that box, on a shelf whose
     // cue fits it, or on a stack level (a truck bed's) that would take it now: loadable, its cue fitting (hint.storage
-    // there names where the drop lands). Onto a shelf it floats on the shelf floor; the marker frames the chosen level.
+    // there is ready: the drop lands at the level chosen). Onto a shelf it floats on the shelf floor; the marker frames
+    // the chosen level (a rack's shelf, a truck's sign cell) in that same tone.
     const chosen = at !== null && !snapshot.completed ? this.slotAt(snapshot, at.slotId) : null;
     // A locked box is done: its level never reads as ready to pick, and nothing previews on top of it.
     const lockedPick = carried === null && chosen !== null && chosen.occupiedBy !== null && isLocked(boxes, chosen.occupiedBy);
@@ -378,12 +379,13 @@ export class LevelView {
     }
     const topY = intoShelf && look ? look.levelY(hint.dropLevel, this.boxHeight) - ZONE.padHeight : hint.dropLevel * this.boxHeight;
     this.preview.sync(f.carrying ? dropCell : null, match, dt, topY, intoShelf ? SLOT_PREVIEW_SCALE : 1);
-    // The marker of the chosen level's skin, where its unit frames it (only where the forks go by the keys).
+    // The marker of the chosen level's skin, where its unit frames it (every unit: the forks go by the keys).
     const worked = at !== null ? this.unitById.get(at.unitId) : undefined;
     const place = chosen !== null && worked ? worked.markerAt(chosen, this.markerPlace) : null;
+    const tone = intoShelf || onStack !== null ? match : null;
     for (let i = 0; i < this.markers.length; i++) {
       const { skin, marker } = this.markers[i];
-      marker.sync(at !== null && at.skin === skin ? place : null, ready, intoShelf ? match : null, dt);
+      marker.sync(at !== null && at.skin === skin ? place : null, ready, tone, dt);
     }
 
     if (this.beyond.length > 0) this.refreshRoomClip();
@@ -888,8 +890,9 @@ export class LevelView {
   }
 
   /**
-   * The chosen-level marker of each skin on screen that has one (render/storage `markerGeometry`: today a rack's), in
-   * the warm light of the forklift's own lamps: where it is pointing its forks. Reads on boxes and shaded slots.
+   * The chosen-level marker of each skin on screen (render/storage `markerGeometry`: a rack's shelf frame, a truck's
+   * sign cell frame), in the warm light of the forklift's own lamps: where it is pointing its forks. Reads on boxes,
+   * shaded slots and the dock sign.
    */
   private buildMarkers(level: LevelData, theme: Theme): void {
     for (const skin of new Set(storageOf(level).map((unit) => unit.skin))) {
@@ -897,6 +900,7 @@ export class LevelView {
       if (!entry.markerGeometry) continue;
       const material = createOverlayMaterial(this.bag, theme.forklift.light, 0);
       const marker = new SlotMarker(this.bag.track(entry.markerGeometry()), material, new Color(theme.forklift.light));
+      marker.mesh.userData.markerSkin = skin;
       this.markers.push({ skin, marker });
       this.root.add(marker.mesh);
     }

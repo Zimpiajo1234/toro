@@ -30,9 +30,9 @@ import {
 /*
  * The grid model with loading docks (docs/DOCKS.md, docs/STORAGE.md): the truck waits outside, so each bed column is a
  * storage position of support `stack` (after the cells and any rack's shelves; off the map, beyond its door cell, which
- * is floor) holding a stack whose steps are the destined kinds of its levels; it is loaded by one step on from behind
- * its door cell (through the door) and a box lifted off it backs straight out; its satisfied levels are locked, but the
- * next level still loads on top.
+ * is floor) holding a stack of all its levels whose steps are the destined kinds of its levels with a cue (the «libre»
+ * ones on top are parking: rule 7); it is loaded by one step on from behind its door cell (through the door) and a box
+ * lifted off it backs straight out; its satisfied levels are locked, but the next level still loads on top.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -118,8 +118,9 @@ describe('grid model with trucks', () => {
     expect(grid.inward[bed1]).toBe(DIR.N);
     expect(grid.columnAtPose[grid.index(3, 0) * 4 + DIR.N]).toBe(1);
     expect(grid.columnAtPose[grid.index(3, 0) * 4 + DIR.E]).toBe(-1);
-    // A column holds its levels (not the level's stack limit); a floor cell, the stack limit.
-    expect([grid.capacity[bed0], grid.capacity[bed1], grid.capacity[grid.index(0, 0)]]).toEqual([2, 1, 2]);
+    // A column holds its levels (not the level's stack limit), its implicit «libre» one too (the second column is written
+    // with one level: with `limit: 2` it holds two); a floor cell, the stack limit. Its steps: its levels with a cue.
+    expect([grid.capacity[bed0], grid.capacity[bed1], grid.capacity[grid.index(0, 0)]]).toEqual([2, 2, 2]);
     expect(grid.steps[bed0]).toEqual([
       { color: 'blue', symbol: 'triangle' },
       { color: 'mint', symbol: 'triangle' },
@@ -203,12 +204,17 @@ a = caja azul
     // The forward-only model cannot take it off the truck.
     const forward = new LevelGrid(EXAMPLE, { reverse: false });
     expect(carrySearch(forward, occupancy, lift(stacks, bed), starts).drops.size).toBe(0);
-    // A full column (1 level, loaded) is never a drop; the side of a bed never either.
+    // A column with room takes the box on top (its «libre» level over the wrong load: parking, never locked); a full
+    // column is never a drop; the side of a bed never either.
     const from = grid.index(1, 3);
     const lifted = lift(stacks, from);
     occupancy[from] = -1;
     const floor = carrySearch(grid, occupancy, lifted, pickupStarts(grid, region, from)).drops;
-    expect(floor.has(bed)).toBe(false);
+    expect(floor.get(bed)).toEqual([grid.index(3, 0)]);
+    const parked = lifted.slice();
+    parked[bed] += boxCode({ color: 'blue', symbol: 'triangle' });
+    expect([lockedAt(grid, parked, bed), canLift(grid, parked, bed), misplacedCount(grid, parked, EXAMPLE.boxes.length)]).toEqual([false, true, 4]);
+    expect(carrySearch(grid, occupancy, parked, pickupStarts(grid, region, from)).drops.has(bed)).toBe(false);
     expect(floor.get(other)).toEqual([grid.index(2, 0)]);
     // The door cells are floor: a box may be parked on one (it then closes that column until it moves).
     expect(floor.has(grid.index(2, 0))).toBe(true);
@@ -291,17 +297,17 @@ describe('searches on truck levels', () => {
 });
 
 describe('metrics and report on truck levels', () => {
-  it('repartos 1, camion counts truck levels, trampas and ambiguas see the truck cues', () => {
+  it('repartos 1, camion counts truck levels (with a cue and «libre»), trampas and ambiguas see the truck cues', () => {
     const m = levelMetrics(EXAMPLE, { skipMoves: true });
     expect(m.sortings).toBe(1);
-    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 3, loaded: 1 });
+    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 4, cued: 3, free: 1, loaded: 1 });
     expect(m.slots).toEqual({ total: 0, cued: 0, free: 0 });
     // azul ▲ fits «azul» (its destiny) and «▲» (the mint's): a trap, and a box with two destinations.
     expect(m.traps).toBe(1);
     expect(m.ambiguous).toBe(1);
     // The wrong load covers its level.
     expect(m.blockers.covering).toEqual(['b4']);
-    const checks = checkLevelTargets(EXAMPLE, parseTargets('camion=3, camiones>=3, repartos=1, movimientos=4'));
+    const checks = checkLevelTargets(EXAMPLE, parseTargets('camion=4, camiones>=3, repartos=1, movimientos=4'));
     expect(checks.map((c) => c.ok)).toEqual([true, true, true, true]);
     expect(levelMetrics(level(`
 # 5 · Sin camión
@@ -314,20 +320,20 @@ id: sin-camion
 
 1 = zona azul
 a = caja azul
-`), { skipMoves: true }).trucks).toEqual({ trucks: 0, columns: 0, levels: 0, loaded: 0 });
+`), { skipMoves: true }).trucks).toEqual({ trucks: 0, columns: 0, levels: 0, cued: 0, free: 0, loaded: 0 });
   });
 
   it('the report names the truck in the metrics, the plan and the summary', () => {
     const source = { file: 'x.level', format: 'level' as const, level: EXAMPLE, targets: [], notes: [] };
     const report = levelsReport([source], ['muelle-ejemplo'], { deadEndStates: 5 });
     for (const part of [
-      'camion       3 (2 columnas, 1 camión; 1 cargado al empezar)',
+      'camion       4 (3 con pista, 1 libre; 2 columnas, 1 camión; 1 cargado al empezar)',
       'repartos     1',
       'caja menta ▲ (3,0), camión T, nivel 1 → camión T (2,0), nivel 2',
       '→ camión T (3,0), nivel 1',
     ])
       expect(report).toContain(part);
-    expect(report).toMatch(/muelle-ejemplo .* — +2\/3 +—/);
-    expect(levelsReport([source], [], { deadEndStates: 5 })).toMatch(/camión 3 \(2 columnas, 1 camión; 1 cargado al empezar\)/);
+    expect(report).toMatch(/muelle-ejemplo .* — +2\/4 +—/);
+    expect(levelsReport([source], [], { deadEndStates: 5 })).toMatch(/camión 4 \(3 con pista, 1 libre; 2 columnas, 1 camión; 1 cargado al empezar\)/);
   });
 });

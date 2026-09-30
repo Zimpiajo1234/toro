@@ -94,12 +94,16 @@ function slotsText(m: LevelMetrics): string {
   return `${m.slots.total} (${m.slots.cued} con pista, ${m.slots.free} ${m.slots.free === 1 ? 'libre' : 'libres'})`;
 }
 
-/** «5 (2 columnas, 1 camión; 1 cargado al empezar)»: truck levels (docs/DOCKS.md). */
+/**
+ * «4 (3 con pista, 1 libre; 2 columnas, 1 camión; 1 cargado al empezar)»: truck levels (docs/DOCKS.md), all of them,
+ * those with a cue and the «libre» ones (none: no count of them).
+ */
 function trucksText(m: LevelMetrics): string {
   const t = m.trucks;
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const free = t.free > 0 ? `${t.cued} con pista, ${t.free} ${t.free === 1 ? 'libre' : 'libres'}; ` : '';
   const loaded = t.loaded > 0 ? `; ${plural(t.loaded, 'cargado', 'cargados')} al empezar` : '';
-  return `${t.levels} (${plural(t.columns, 'columna', 'columnas')}, ${plural(t.trucks, 'camión', 'camiones')}${loaded})`;
+  return `${t.levels} (${free}${plural(t.columns, 'columna', 'columnas')}, ${plural(t.trucks, 'camión', 'camiones')}${loaded})`;
 }
 
 function heading(source: LevelSource): string {
@@ -151,7 +155,7 @@ function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]
     ['callejones', deadEndDetail(m), 'estados desde los que ya no se puede terminar (desde un plan mínimo; --callejones N)'],
   ];
   if (m.slots.total > 0) rows.push(['huecos', slotsText(m), 'huecos de estantería almacenable (docs/RACKS.md)']);
-  if (m.trucks.levels > 0) rows.push(['camion', trucksText(m), 'niveles de camión en los muelles de carga, cada uno un objetivo (docs/DOCKS.md)']);
+  if (m.trucks.levels > 0) rows.push(['camion', trucksText(m), 'niveles de camión en los muelles de carga: con pista, un objetivo; libre, para aparcar (docs/DOCKS.md)']);
   const w0 = Math.max(...rows.map((r) => r[0].length));
   const w1 = Math.max(...rows.map((r) => r[1].length));
   lines.push('Métricas', ...rows.map(([name, value, what]) => `  ${name.padEnd(w0)}  ${value.padEnd(w1)}  ${what}`), '');

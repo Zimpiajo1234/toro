@@ -2,15 +2,15 @@
  * Integration check (Benchmark × logic × controls): the autopilot (./autopilot.ts) plays the test-mode «Benchmark»
  * (src/data/levels/especiales/benchmark.level) with the real GameState and the real controls — slot levels with
  * InputFrame.forkStep (one press per slot, like F / V), loads backed out of slots, off the truck and out of the 1-cell
- * corridor with the reverse gear (S), the truck loaded through its door at the automatic fork height — at 60 fps and at
- * Game's worst dt (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
+ * corridor with the reverse gear (S), the truck loaded through its door with its levels chosen by F / V too
+ * (docs/STORAGE.md rule 9) — at 60 fps and at Game's worst dt (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
  * the destined one leaves its slot or truck level dark (a soft `wrongTarget`, never anything negative), and a box put
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
  */
 import { describe, expect, it } from 'vitest';
 import { racksOf, slotsOf } from '../core/racks';
-import { truckSlotsOf } from '../core/docks';
 import { cueFits, isDestined } from '../core/sorting';
+import { storageSlotsOf } from '../core/storage';
 import type { GameEvent, GameSnapshot } from '../core/types';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
 import { LevelGrid, misplacedCount } from '../data/levels/solver';
@@ -52,11 +52,14 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(inSlots.every((d) => d.zoneId === null)).toBe(true);
     const fromSlots = picks(out.events).filter((p) => p.skin === 'rack');
     expect(fromSlots.some((p) => p.level === 2)).toBe(true);
-    // The truck: its wrong load taken off from the front, every level loaded, one on top of a locked box, at the
-    // automatic fork height (no F / V there: the presses above are all at the racks).
+    // The truck: its wrong load taken off from the front, every level with a cue loaded, one on top of a locked box,
+    // with F / V there too (the forks go by the keys at every unit: the level-2 drop needs a press at the truck).
     expect(picks(out.events).filter((p) => p.skin === 'truck').map((p) => p.fromSlotId)).toEqual(['t1:0:0']);
     const onTruck = drops(out.events).filter((d) => d.skin === 'truck');
-    expect(onTruck.filter((d) => d.correct).map((d) => d.slotId).sort()).toEqual(truckSlotsOf(level).map((s) => s.id).sort());
+    const truckTargets = storageSlotsOf(level).filter((s) => s.unit.skin === 'truck' && s.cue !== null);
+    expect(onTruck.filter((d) => d.correct).map((d) => d.slotId).sort()).toEqual(truckTargets.map((s) => s.id).sort());
+    expect(out.controls.forkStepsAt.truck).toBeGreaterThan(0);
+    expect(out.controls.forkStepsAt.rack + out.controls.forkStepsAt.truck).toBe(out.controls.forkSteps);
     expect(onTruck.every((d) => d.zoneId === null && d.recipeLength === 1)).toBe(true);
     expect(onTruck.some((d) => d.level === 1 && d.correct)).toBe(true);
     // Everything lit at the end: the last drop completes the last target.
@@ -95,8 +98,10 @@ describe('the Benchmark in the live game state', () => {
 
   it('starts with a wrong truck load: yellow ■ on the «azul» level, whose destiny is the «■» level right above it', () => {
     const snap = new GameState(level).getSnapshot();
-    const [azul, square, exact] = truckSlots(snap);
+    const [azul, square, exact, free] = truckSlots(snap);
     expect([azul.accepts, square.accepts, exact.accepts]).toEqual([{ color: 'blue' }, { symbol: 'square' }, { color: 'yellow', symbol: 'cross' }]);
+    // Over «amarillo ✚», its column's «libre» level (docs/STORAGE.md rule 7): parking, never a target.
+    expect(free).toMatchObject({ id: 't1:1:1', accepts: null, destined: null, satisfied: false, loadable: false });
     const load = snap.boxes.find((b) => b.id === azul.occupiedBy)!;
     expect(load).toMatchObject({ color: 'yellow', symbol: 'square', slotId: azul.id, correct: false, locked: false });
     expect(cueFits(azul, load)).toBe(false);

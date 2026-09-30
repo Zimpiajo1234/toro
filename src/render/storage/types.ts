@@ -91,8 +91,8 @@ export interface StorageUnitView {
   /** Where the burst of level `slot` plays, on the face the camera at `cameraYaw` sees (written into `out`). */
   burstAt(slot: StorageSlotState, cameraYaw: number, out: BurstPlace): BurstPlace;
   /**
-   * Where the chosen-level marker frames level `slot` (written into `out`): only on a unit whose forks go by the keys
-   * (a rack's shelves; phase 6 adds the cell of a dock sign), else null (no marker there).
+   * Where the chosen-level marker frames level `slot` (written into `out`): a rack's shelf, a truck level's cell on its
+   * dock sign (every unit: the forks go by the keys), or null (no marker there).
    */
   markerAt(slot: StorageSlotState, out: MarkerPlace): MarkerPlace | null;
   /**

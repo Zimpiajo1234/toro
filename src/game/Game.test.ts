@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent } from '../core/types';
 import { GAME_CONFIG } from '../config';
+import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
-import { hasKeyedForks } from '../logic/storageAccess';
+import { hasStorage } from '../core/storage';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
 import { ZOOM_KEY_RATE, ZOOM_TAP_STOPS } from './Input';
@@ -24,6 +25,8 @@ const fakes = vi.hoisted(() => {
     }[],
     /** Minimums a test overrides (by level id); every other id reads the real precomputed file. */
     minimums: new Map<string, { moves: number; exact: boolean } | null>(),
+    /** The level test mode's special button starts instead of the real Benchmark (null: the real one). */
+    special: null as unknown,
     /** Events the current simulation emits on its next update. */
     queue: [] as unknown[],
     /** Next GameRenderer construction throws (no WebGL context). */
@@ -133,6 +136,13 @@ const fakes = vi.hoisted(() => {
 vi.mock('../logic/GameState', () => ({ GameState: fakes.FakeGameState }));
 vi.mock('../render/GameRenderer', () => ({ GameRenderer: fakes.FakeRenderer }));
 vi.mock('../audio/AudioEngine', () => ({ AudioEngine: fakes.FakeAudio }));
+vi.mock('../data/levels', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../data/levels')>();
+  return {
+    ...real,
+    getSpecialLevel: (id: string) => (fakes.sim.special as ReturnType<typeof real.getSpecialLevel> | null) ?? real.getSpecialLevel(id),
+  };
+});
 vi.mock('../data/levels/minimums', async (importOriginal) => {
   const real = await importOriginal<typeof import('../data/levels/minimums')>();
   return {
@@ -200,6 +210,7 @@ beforeEach(() => {
   sim.yaw = Math.PI / 4;
   sim.storage = null;
   sim.minimums.clear();
+  sim.special = null;
   sim.zooms.length = 0;
   sim.zoomSteps.length = 0;
   sim.zoomResets = 0;
@@ -1218,12 +1229,12 @@ describe('Game: control hint', () => {
     total: 1,
   };
 
-  it('publishes the level on screen having storage with keyed forks (the fork row); nothing takes the hint away while playing', () => {
+  it('publishes the level on screen having storage (the fork row: the forks go by the keys at every unit); nothing takes the hint away while playing', () => {
     const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
     const { game, store } = setup();
     game.start(0);
     advance(0.2);
-    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasKeyedForks(LEVELS[0]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasStorage(LEVELS[0]) });
     game.toTitle();
     game.toggleTestMode();
     game.startBenchmark();
@@ -1236,6 +1247,12 @@ describe('Game: control hint', () => {
     advance(1 / 60);
     tap('KeyV', 'v');
     expect(click).toHaveBeenCalledExactlyOnceWith(1, -1);
+    // At a truck too (docs/STORAGE.md rule 9): its forks go by the keys, a step that takes effect clicks the same way.
+    sim.storage = { ...rackAt(2, 1), unitId: 't1', skin: 'truck', slotId: 't1:0:1' };
+    advance(1 / 60);
+    tap('KeyV', 'v');
+    expect(click).toHaveBeenLastCalledWith(0, -1);
+    expect(click).toHaveBeenCalledTimes(2);
     emit(dropped);
     expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
     sim.storage = null;
@@ -1247,7 +1264,40 @@ describe('Game: control hint', () => {
     tap('Escape', 'Escape');
     expect(store.get()).toMatchObject({ screen: 'title', storage: true });
     game.start(1);
-    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasKeyedForks(LEVELS[1]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasStorage(LEVELS[1]) });
+    click.mockRestore();
+  });
+
+  it('a level with trucks only has the fork row too: a step at its truck clicks, and it restarts a paused clock', () => {
+    // docs/STORAGE.md rule 9: the forks go by the keys at every unit, so storage of any skin brings the fork keys.
+    const TRUCK_ONLY = parseLevel(
+      ['# 101 · Solo camión', 'id: solo-camion', 'limit: 2', '', '  0123', '0 pTp.', '1 ....', '2 .a..', '3 .^..', '', 'a = caja azul', 'T = camión muelle norte: azul', ''].join(
+        '\n',
+      ),
+    ).level;
+    expect(hasStorage(TRUCK_ONLY)).toBe(true);
+    const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
+    sim.special = TRUCK_ONLY;
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    advance(1 / 60);
+    expect(current().level).toBe(TRUCK_ONLY);
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
+    sim.storage = { unitId: 't1', skin: 'truck', column: 0, levels: 2, level: 0, slotId: 't1:0:0', ready: false };
+    advance(1 / 60);
+    tap('KeyF', 'f');
+    expect(click).toHaveBeenCalledExactlyOnceWith(1, 1);
+    // Paused behind the title and resumed: a fork step is an input that restarts the clock there.
+    emit({ type: 'firstInput' });
+    advance(0.5);
+    tap('Escape', 'Escape');
+    game.start();
+    const paused = store.get().elapsedMs;
+    tap('KeyV', 'v');
+    advance(1);
+    expect(store.get().elapsedMs).toBeGreaterThan(paused + 800);
+    expect(click).toHaveBeenLastCalledWith(0, -1);
     click.mockRestore();
   });
 });

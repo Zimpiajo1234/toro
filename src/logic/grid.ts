@@ -241,6 +241,18 @@ export class LevelGrid {
     return this.columns[column].support === 'shelves' ? this.slotBoxes[slot] < 0 : level === this.columnStacks[column].length;
   }
 
+  /**
+   * The box a pick at `level` of `column` would lift, or -1: on shelves the box on that shelf; in a stack only its top
+   * box, at its own level (docs/STORAGE.md rule 9: never one from under another).
+   */
+  liftableAt(column: number, level: number): number {
+    const slot = this.slotOf(column, level);
+    if (slot < 0) return -1;
+    if (this.columns[column].support === 'shelves') return this.slotBoxes[slot];
+    const stack = this.columnStacks[column];
+    return level === stack.length - 1 ? stack[level] : -1;
+  }
+
   /** Store a box at `level` of `column` (shelves: that shelf; a stack: on top, which is that level). Returns its level. */
   putBox(column: number, level: number, boxIndex: number): number {
     const c = this.columns[column];

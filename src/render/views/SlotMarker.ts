@@ -2,17 +2,18 @@ import { Color, Mesh, type BufferGeometry, type MeshBasicMaterial } from 'three'
 import { damp } from '../../core/math';
 import type { MarkerPlace } from '../storage/types';
 
-/** Working at a storage column whose forks go by the keys: the level F / V selected, faintly. */
+/** Working at a storage column (the forks go by the keys at every unit): the level F / V selected, faintly. */
 const SELECTED_OPACITY = 0.3;
 /** The action works on that level now (a box to pick, or room for the load). */
 const READY_OPACITY = 0.8;
 
 /**
- * Soft frame around the level the forks are set to while the forklift works at a storage column whose forks go by the
- * keys (hint.storage; today a rack's shelves: the frame on the front face and around the back panel, builders/rack),
- * so the player sees what F / V (or the wheel) selected, even before the action would work. One per skin that has one,
- * shared by its units: where it goes on a unit is that unit's (render/storage StorageUnitView.markerAt). Glides between
- * levels with the forks; neutral tone, or the carried box's zone tone when its cue fits the box.
+ * Soft frame around the level the forks are set to while the forklift works at a storage column (hint.storage: a
+ * rack's shelf, framed on the front face and around the back panel, builders/rack; a truck level, its cell of the sign
+ * over the dock door, builders/truck), so the player sees what F / V (or the wheel) selected, even before the action
+ * would work. One per skin, shared by its units: where it goes on a unit is that unit's (render/storage
+ * StorageUnitView.markerAt). Glides between levels with the forks; neutral tone, or the carried box's zone tone when the
+ * drop there would take it (its cue fits the box; in a stack, also its next level on right levels).
  */
 export class SlotMarker {
   readonly mesh: Mesh;

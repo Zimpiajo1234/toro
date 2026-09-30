@@ -145,11 +145,12 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
 
   // Storage units (docs/STORAGE.md): `storage`, or a legacy JSON level's `racks` (docs/RACKS.md) and `trucks`
   // (docs/DOCKS.md). Skin by skin (rule 12: racks, then trucks), each skin in the order given. What every unit shares
-  // comes from its skin's row (STORAGE_SKINS: levels per column, columns, the id prefix; a stack within stackLimit,
-  // below); then its access places it on the map: `front` — its own cells, solid, loaded from the floor cell in front
-  // of each column (checked once every obstacle is known); `door` — its door cells, a straight run of floor against the
-  // north (row z = 0) or west (column x = 0) wall, free of furniture and other doors (and of zones, boxes and the
-  // forklift at the start: checked below), its columns' cells just beyond the wall, outside the map.
+  // comes from its skin's row (STORAGE_SKINS: levels per column, columns, the id prefix; in a stack the «libre» levels
+  // on top; a stack within stackLimit and the `fillToMax` levels, below); then its access places it on the map: `front`
+  // — its own cells, solid, loaded from the floor cell in front of each column (checked once every obstacle is known);
+  // `door` — its door cells, a straight run of floor against the north (row z = 0) or west (column x = 0) wall, free of
+  // furniture and other doors (and of zones, boxes and the forklift at the start: checked below), its columns' cells
+  // just beyond the wall, outside the map.
   const sources: { skin: StorageSkin; raw: unknown; path: string }[] = [];
   if (r.storage !== undefined) {
     if (r.racks !== undefined || r.trucks !== undefined) fail('storage and the legacy racks / trucks lists do not mix: give every storage unit in storage');
@@ -208,13 +209,13 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     const columns = columnsRaw.map((c, j) => {
       const levels = arr(c, `${name}.columns[${j}]`);
       if (levels.length < 1 || levels.length > row.maxLevels) fail(`${name}.columns[${j}] must have 1 to ${row.maxLevels} ${words.level}s`);
-      return levels.map((s, k) => {
-        const what = `${name}.columns[${j}][${k}]`;
-        const cue = readCue(s, what);
-        // Until phase 6 a truck has no «libre» level (docs/STORAGE.md «Huecos» 3): every one is a target.
-        if (cue === null && skin === 'truck') fail(`${what} must ask for something: a truck level has a color, a symbol or both`);
-        return cue;
-      });
+      const cues = levels.map((s, k) => readCue(s, `${name}.columns[${j}][${k}]`));
+      // In a stack (docs/STORAGE.md rule 7) the «libre» levels only sit above the ones with a cue: a level is satisfied
+      // on satisfied levels, so no level with a cue ever stands on a «libre» one.
+      const free = cues.indexOf(null);
+      const above = free < 0 || row.support !== 'stack' ? -1 : cues.findIndex((cue, k) => k > free && cue !== null);
+      if (above >= 0) fail(`${name}.columns[${j}][${above}] has a cue above a free level: in a stack the free levels go on top of the ones with a cue`);
+      return cues;
     });
     const unit: LevelStorage = {
       id: o.id === undefined ? `${row.idPrefix}${inSkin[skin] + 1}` : str(o.id, `${name}.id`),
@@ -360,8 +361,11 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   const stacks = new Map<string, Sortable[]>();
   /** Stored boxes by storage slot: "x,z@level" → box (a front unit's cell inside the map, a door unit's outside). */
   const storedBoxes = new Map<string, Sortable>();
-  /** The stored boxes of stack columns (a truck bed), to check each one has a box under it. */
-  const stackBoxes: { id: string; key: string; unit: number; column: number; level: number }[] = [];
+  /**
+   * Every stored box, to check its level once the columns hold all their levels (a skin's `fillToMax` levels come with
+   * the stack limit, below) and, in a stack column (a truck bed), that it has a box under it.
+   */
+  const storedList: { id: string; key: string; unit: number; column: number; level: number }[] = [];
   const boxes: LevelBox[] = arr(r.boxes, 'boxes').map((b, i) => {
     const o = obj(b, `boxes[${i}]`);
     const kind: BoxKind =
@@ -386,17 +390,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     const stored = unitCells.get(k);
     if (!inBounds(box.x, box.z) && !stored) fail(`box "${box.id}" out of bounds`);
     if (stored) {
-      // A box stored at the start (docs/STORAGE.md): on a level of its column, one box per level.
+      // A box stored at the start (docs/STORAGE.md): on a level of its column (checked below), one box per level.
       const [u, column] = stored;
       const words = SKIN_WORDS[units[u].skin];
       if (box.level === undefined) fail(`box "${box.id}" is ${words.at} ${words.cell}: give it ${words.itsLevel}`);
-      const levels = units[u].columns[column].length;
-      if (box.level! < 0 || box.level! >= levels)
-        fail(`box "${box.id}" is ${words.at} ${words.level} ${box.level} of ${names[u]} column ${column}, which has ${levels} ${words.level}s`);
       const slotKey = `${k}@${box.level}`;
       if (storedBoxes.has(slotKey)) fail(`two boxes share ${words.level} ${box.level} of ${names[u]} column ${column}`);
       storedBoxes.set(slotKey, sortableOf(box));
-      if (STORAGE_SKINS[units[u].skin].support === 'stack') stackBoxes.push({ id: box.id, key: k, unit: u, column, level: box.level! });
+      storedList.push({ id: box.id, key: k, unit: u, column, level: box.level! });
       return box;
     }
     if (box.level !== undefined) fail(`box "${box.id}" has a level but is not in a rack slot (floor stacks go by list order)`);
@@ -410,15 +411,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     else stacks.set(k, [sortableOf(box)]);
     return box;
   });
-  // Support `stack` (a truck bed): the boxes sit on each other, so a box stored at the start is on the bottom or on
-  // another box.
-  for (const sb of stackBoxes) {
-    if (sb.level > 0 && !storedBoxes.has(`${sb.key}@${sb.level - 1}`))
-      fail(`box "${sb.id}" is ${SKIN_WORDS[units[sb.unit].skin].at} ${names[sb.unit]} column ${sb.column} at level ${sb.level} with no box below it`);
-  }
-
   // Stack limit: explicit, else the global max when the level uses stacking at all, else 1 (classic levels). A stack
-  // column of more than one level (a truck bed) is loaded like a floor stack: it counts as stacking.
+  // column of more than one level written (a truck bed) is loaded like a floor stack: it counts as stacking.
   const recipeOf = (zone: LevelZone): readonly (ColorId | undefined)[] => zone.recipe ?? [zone.color];
   const tallestRecipe = Math.max(1, ...zones.map((zone) => recipeOf(zone).length));
   const tallestStart = Math.max(0, ...[...stacks.values()].map((st) => st.length));
@@ -438,6 +432,27 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     units[u].columns.forEach((levels, j) => {
       if (levels.length > stackLimit) fail(`${names[u]}.columns[${j}] has ${levels.length} levels, more than stackLimit ${stackLimit}`);
     });
+  }
+  // A skin with `fillToMax` (docs/STORAGE.md rule 7: the truck): every column holds min(maxLevels, stackLimit) levels,
+  // its written cues bottom → top and the rest «libre» (on top of them, as a stack wants them).
+  for (const unit of units) {
+    const row = STORAGE_SKINS[unit.skin];
+    if (!row.fillToMax) continue;
+    const height = Math.min(row.maxLevels, stackLimit);
+    for (const levels of unit.columns) while (levels.length < height) levels.push(null);
+  }
+  // Every stored box on a level of its column; in a stack (a truck bed) the boxes sit on each other, so a box stored at
+  // the start is on the bottom or on another box.
+  for (const sb of storedList) {
+    const words = SKIN_WORDS[units[sb.unit].skin];
+    const levels = units[sb.unit].columns[sb.column].length;
+    if (sb.level < 0 || sb.level >= levels)
+      fail(`box "${sb.id}" is ${words.at} ${words.level} ${sb.level} of ${names[sb.unit]} column ${sb.column}, which has ${levels} ${words.level}s`);
+  }
+  for (const sb of storedList) {
+    if (STORAGE_SKINS[units[sb.unit].skin].support !== 'stack') continue;
+    if (sb.level > 0 && !storedBoxes.has(`${sb.key}@${sb.level - 1}`))
+      fail(`box "${sb.id}" is ${SKIN_WORDS[units[sb.unit].skin].at} ${names[sb.unit]} column ${sb.column} at level ${sb.level} with no box below it`);
   }
 
   // The storage as the target helpers (core/sorting) read it.

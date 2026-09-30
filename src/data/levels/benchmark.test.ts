@@ -83,28 +83,37 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     const cues = slots.map((s) => cueOf(s.rack.columns[s.column][s.level]));
     expect(new Set(cues.filter((c) => c !== null).map((c) => matchKind(c!)))).toEqual(new Set(['color', 'symbol', 'exact']));
     expect(cues.some((c) => c === null)).toBe(true);
-    // The truck's levels too (docs/DOCKS.md: no «libre» there).
-    expect(new Set(truckSlotsOf(level).map((s) => matchKind(s.cue)))).toEqual(new Set(['color', 'symbol', 'exact']));
+    // The truck's levels too, and one «libre» (docs/STORAGE.md rule 7: the one on top of the second column, implicit).
+    const truckCues = storageSlotsOf(level).filter((s) => s.unit.skin === 'truck').map((s) => s.cue);
+    expect(new Set(truckCues.filter((c) => c !== null).map((c) => matchKind(c!)))).toEqual(new Set(['color', 'symbol', 'exact']));
+    expect(truckCues.filter((c) => c === null)).toHaveLength(1);
   });
 
-  it('has one loading dock: a truck of 2 bed columns at its door, one column 2 levels high, clear of the windows', () => {
+  it('has one loading dock: a truck of 2 bed columns at its door, both 2 levels high (the upper level of the second «libre»), clear of the windows', () => {
     const trucks = trucksOf(level);
     expect(trucks).toHaveLength(1);
     const [truck] = trucks;
     expect(truck.columns).toHaveLength(2);
     expect(truck.columns.length).toBeLessThanOrEqual(MAX_TRUCK_COLUMNS);
-    expect(Math.max(...truck.columns.map((c) => c.length))).toBe(MAX_TRUCK_LEVELS);
+    // Every column holds min(2, limit) levels (docs/STORAGE.md rule 7): the second is written with one, its cue.
+    expect(truck.columns.map((c) => c.length)).toEqual([MAX_TRUCK_LEVELS, MAX_TRUCK_LEVELS]);
     expect(Math.max(...truck.columns.map((c) => c.length))).toBeLessThanOrEqual(level.stackLimit!);
+    expect(truck.columns.map((c) => c.map((cue) => cueOf(cue) === null))).toEqual([
+      [false, false],
+      [false, true],
+    ]);
     const along = (x: number, z: number) => (truck.wall === 'north' ? x : z);
     for (const win of level.decor.windows) {
       if (win.wall !== truck.wall) continue;
       for (const bed of beds) expect(along(bed.front.x, bed.front.z) < win.at || along(bed.front.x, bed.front.z) >= win.at + win.width).toBe(true);
     }
-    // Each bed column is a position of the model off the map (a stack), asking for its destined kinds, bottom → top.
+    // Each bed column is a position of the model off the map (a stack) of all its levels, asking for the destined kinds
+    // of its levels with a cue, bottom → top (the «libre» one on top is parking).
     for (const bed of beds) {
       const pos = grid.posOf(bed.cell.x, bed.cell.z);
       expect(grid.kind[pos]).toBe(POS_STACK);
-      expect(grid.steps[pos]).toHaveLength(bed.cues.length);
+      expect(grid.capacity[pos]).toBe(bed.cues.length);
+      expect(grid.steps[pos]).toHaveLength(bed.cues.filter((cue) => cueOf(cue) !== null).length);
     }
   });
 
@@ -200,7 +209,9 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     const destinyOf = (t: (typeof targets)[number]) =>
       t.kind === 'zone' ? destinies.zones[t.index] : destinies.slots[t.index]!;
     targets.forEach((t, i) => expect(sameKind(got[i]!, destinyOf(t)), t.id).toBe(true));
-    expect(targets.filter((t) => t.skin === 'truck')).toHaveLength(truckSlotsOf(level).length);
+    // Every truck level with a cue is a target; the «libre» one never.
+    expect(targets.filter((t) => t.skin === 'truck')).toHaveLength(truckSlotsOf(level).filter((s) => cueOf(s.cue) !== null).length);
+    expect(truckSlotsOf(level)).toHaveLength(4);
     // The deduction is written down for whoever designs or tests with it.
     expect(source.notes.join('\n')).toMatch(/deducción/i);
     expect(source.notes.length).toBeGreaterThanOrEqual(4);
@@ -320,11 +331,11 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(stacks.every((_, pos) => grid.steps[pos] === null || lockedAt(grid, stacks, pos))).toBe(true);
   });
 
-  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 3, traps; its «dificultad:» targets all hold', () => {
+  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 4 (3 with a cue, 1 «libre»), traps; its «dificultad:» targets all hold', () => {
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 12, cued: 6, free: 6 });
-    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 3, loaded: 1 });
+    expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 4, cued: 3, free: 1, loaded: 1 });
     expect(m.traps).toBeGreaterThan(0);
     expect(source.targets.map((t) => t.metric)).toEqual(expect.arrayContaining(['movimientos', 'repartos', 'huecos', 'camion', 'trampas', 'libre']));
     const failed = checkLevelTargets(level, source.targets).filter((c) => !c.ok);

@@ -64,8 +64,17 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     ]);
     // Between the two north doors, one cell with a plant: the side cell of both doors (their rails on either side of it).
     expect(plantAt(3, 0)).toBe(true);
-    // 1 to 2 levels per column, never more than the level's stack limit.
-    expect(trucks.map((t) => t.columns.map((c) => c.length))).toEqual([[2, 1], [1], [2]]);
+    // min(2, limit) = 2 levels per column (docs/STORAGE.md rule 7): T's second column and C are written with one, the
+    // one on top «libre»; never more than the level's stack limit.
+    expect(trucks.map((t) => t.columns.map((c) => c.length))).toEqual([[2, 2], [2], [2]]);
+    expect(trucks.map((t) => t.columns.map((c) => c.map((cue) => cueOf(cue) === null)))).toEqual([
+      [
+        [false, false],
+        [false, true],
+      ],
+      [[false, true]],
+      [[false, false]],
+    ]);
     expect(Math.max(...trucks.flatMap((t) => t.columns.map((c) => c.length)))).toBeLessThanOrEqual(level.stackLimit!);
     // A guard rail at both ends of every door (none reaches a corner), a static obstacle behind each: a plant.
     const rails = dockRailsOf(level);
@@ -128,7 +137,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 5, cued: 3, free: 2 });
-    expect(m.trucks).toEqual({ trucks: 3, columns: 4, levels: 6, loaded: 2 });
+    expect(m.trucks).toEqual({ trucks: 3, columns: 4, levels: 8, cued: 6, free: 2, loaded: 2 });
     expect(THREE_TRUCKS.targets.map((t) => t.metric)).toEqual(['movimientos', 'extra', 'repartos', 'camion', 'huecos']);
     const failed = checkLevelTargets(level, THREE_TRUCKS.targets).filter((c) => !c.ok);
     expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`)).toEqual([]);
@@ -166,8 +175,10 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     expect(out.moves).toBe(9);
     expect(out.snapshot.moves).toBe(out.moves); // the move counter agrees with the box moves driven
     expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
-    // F / V at the racks (the parked box out of the top slot of r1, into the top slot of r2), S out of the trucks.
-    expect(out.controls.forkSteps).toBeGreaterThan(0);
+    // F / V at the racks (the parked box out of the top slot of r1, into the top slot of r2) and at the trucks (the
+    // level-2 loads of T and U: docs/STORAGE.md rule 9), S out of the trucks.
+    expect(out.controls.forkStepsAt.rack).toBeGreaterThan(0);
+    expect(out.controls.forkStepsAt.truck).toBeGreaterThan(0);
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
     // The wrong load comes off the second truck through its door; the third truck's locked box never moves.
     expect(picks(out.events).filter((p) => p.skin === 'truck').map((p) => p.fromSlotId)).toEqual(['t2:0:0']);
@@ -195,9 +206,11 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     expect(groups.map((g) => g.userData.truckId)).toEqual(['t1', 't2', 't3']);
     const bodies = groups.map((g) => {
       const tagged = (tag: string) => g.children.filter((c) => c.userData[tag] !== undefined);
-      // One sign sticker per truck level, and the door's guard rails.
+      // One sign sticker per truck level with a cue (a «libre» one keeps a plain cell), and the door's guard rails.
       expect(tagged('truckCue').map((c) => c.userData.truckCue), g.userData.truckId).toEqual(
-        truckSlotsOf(level).filter((s) => s.truck.id === g.userData.truckId).map((s) => s.id),
+        truckSlotsOf(level)
+          .filter((s) => s.truck.id === g.userData.truckId && cueOf(s.cue) !== null)
+          .map((s) => s.id),
       );
       expect(tagged('dockRails'), g.userData.truckId).toHaveLength(1);
       return new Box3().setFromObject(tagged('truckBody')[0]);

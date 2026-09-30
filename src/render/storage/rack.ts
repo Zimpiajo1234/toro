@@ -79,7 +79,7 @@ class RackUnit implements StorageUnitView {
     return out;
   }
 
-  /** The forks go by the keys on every shelf: the marker frames the slot's bay at its floor, turned to its front. */
+  /** The marker frames the slot's bay at its floor, turned to its front. */
   markerAt(slot: StorageSlotState, out: MarkerPlace): MarkerPlace {
     out.x = slot.pos.x;
     out.y = rackSlotY(slot.level);

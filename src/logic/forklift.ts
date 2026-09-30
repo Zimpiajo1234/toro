@@ -117,7 +117,7 @@ export class ForkliftController {
   private assistRate = 0;
   /** Vehicle control: turn rate actually applied last sub-step (steering + assist), for the visual steer. */
   private driveRate = 0;
-  /** The carried load is inside a storage rack slot: the heading holds, the rig only goes straight in or out. */
+  /** The carried load is inside a storage opening (a rack slot, a dock door): the heading holds (straight in or out). */
   private headingLocked = false;
   private readonly probe: Vec2 = { x: 0, z: 0 };
 
@@ -141,9 +141,9 @@ export class ForkliftController {
   }
 
   /**
-   * Storage racks (docs/RACKS.md): while the carried load is inside a rack slot the heading holds, so the rig goes in
-   * and out straight; steering does nothing and a move vector drives along the heading (pulling away from the rack
-   * backs out, like S). GameState sets it every frame.
+   * Storage (docs/STORAGE.md «Rumbo fijo»): while the carried load is inside a storage opening (a rack slot, a dock door)
+   * the heading holds, so the rig goes in and out straight; steering does nothing and a move vector drives along the
+   * heading (pulling away from the unit backs out, like S). GameState sets it every frame.
    */
   setHeadingLock(locked: boolean): void {
     if (locked && !this.headingLocked) {

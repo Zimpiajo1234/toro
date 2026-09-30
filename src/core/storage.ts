@@ -38,7 +38,10 @@ export interface StorageSkinRow {
   readonly idPrefix: string;
   /** Map letters the canonical `.level` form hands the skin's units, one each, in this order (data/asciiLevel). */
   readonly chars: string;
-  /** Phase 6: every column holds min(maxLevels, stackLimit) levels, the ones past its cues «libre». Unread until then. */
+  /**
+   * Every column holds min(maxLevels, stackLimit) levels: its written cues bottom → top, the rest «libre» (docs/STORAGE.md
+   * rule 7; validateLevel fills them, the canonical `.level` form leaves those implicit ones out: data/asciiLevel).
+   */
   readonly fillToMax: boolean;
   /** How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup): the audio reads it (phase 3). */
   readonly sound: 'metal' | 'wood';
@@ -82,7 +85,8 @@ export function storageOf(level: Pick<LevelData, 'storage'>): readonly LevelStor
 
 /**
  * The level has storage, so the target rules apply (docs/STORAGE.md rules 4–6: destined boxes, locks, soft buzz, strong
- * pulse; core/docks `usesTargetRules` is its old name). Levels without storage play exactly as before.
+ * pulse; core/docks `usesTargetRules` is its old name) and the forks go by the keys at its units (rule 9: F / V step
+ * there, the control hint's fork row, their click). Levels without storage play exactly as before.
  */
 export function hasStorage(level: Pick<LevelData, 'storage'>): boolean {
   return (level.storage?.length ?? 0) > 0;

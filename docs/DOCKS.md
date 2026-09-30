@@ -4,9 +4,10 @@ Petición (2026-09-30): «hagamos unos muelles de carga donde pueda cargarse dir
 pertoquen, ahí no deja de ser un sistema igual que el de amontonarlas en el suelo, pero estéticamente es diferente».
 
 Decisiones (2026-09-30): un **muelle** es una puerta en el muro norte u oeste (como las ventanas) con un **camión**
-aparcado en ella. Se carga **como una pila del suelo** (horquilla automática, de abajo arriba), pero cada nivel de cada
-columna tiene su **pista** (como un hueco de estantería) y es un **objetivo** del reparto único. Hoy solo el Benchmark
-(docs/RACKS.md) puede llevar camiones; los niveles 1–3 no cambian.
+aparcado en ella. Se carga **como una pila del suelo** (de abajo arriba; la horquilla, por teclas desde la decisión H),
+pero cada nivel de cada columna tiene su **pista** (como un hueco de estantería) y es un **objetivo** del reparto único
+(un nivel sin pista es «libre»: decisión I). Hoy solo el Benchmark (docs/RACKS.md) puede llevar camiones; los niveles
+1–3 no cambian.
 
 Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se quedan justo pegados por fuera»; «solo hasta
 2 alturas, sin hierros de por medio»; leyenda en un cartel enmarcado sobre la puerta):
@@ -15,8 +16,9 @@ Decisiones (2026-09-30, «el camión nunca sobrepasa la puerta del gate, se qued
 - **B. Puerta = suelo**: las casillas del mapa que marca el camión son las **casillas de la puerta**, suelo normal
   delante de ella. La carretilla se pone en una mirando al muro; la horquilla y la carga cruzan la puerta hasta la
   columna de la caja del camión, justo detrás del muro; el cuerpo se para en la línea del muro.
-- **C. Como una pila**: de abajo arriba, horquilla automática, **como mucho 2 niveles**, de **1 a 3 columnas** (la
-  puerta mide de 1 a 3 casillas). Nada encima ni entre las columnas (ni postes, ni barras).
+- **C. Como una pila**: de abajo arriba, **como mucho 2 niveles**, de **1 a 3 columnas** (la puerta mide de 1 a 3
+  casillas). Nada encima ni entre las columnas (ni postes, ni barras). (La horquilla era automática, como en una pila
+  del suelo; desde la decisión H va por teclas.)
 - **D. Cartel sobre la puerta**: enmarcado, una casilla por columna (de izquierda a derecha como las casillas de la
   puerta) y por nivel (la fila de abajo = nivel 0), pegatinas en las dos caras (las de las estanterías), nunca atenuadas
   ni en espejo.
@@ -32,6 +34,17 @@ bloquear con assets, las flores con maceta que tienes»):
 - **G. Casilla lateral ocupada**: la casilla de al lado de cada extremo de la puerta, detrás de su barandilla, lleva un
   obstáculo fijo del mapa, una planta con maceta `p` (u otro obstáculo fijo). Sin trampilla en el suelo. Una puerta que
   llega a un rincón no tiene barandilla ni casilla lateral en ese lado: ya guía el otro muro.
+
+Decisiones (2026-09-30, almacenaje común, docs/STORAGE.md decisiones B y C; hechas en su fase 6):
+- **H. Horquilla por teclas** («para subir y bajar que sea con las teclas, nada automático»): F / V, la rueda y X / B
+  eligen el nivel también delante del camión, como en una estantería. Se deja solo con la horquilla en el nivel
+  elegido y si es el siguiente libre de la columna; se coge solo la caja de arriba, con la horquilla a su nivel. Con la
+  horquilla en otro nivel no hay vista previa ni se suelta; si va baja, la carga choca con la caja de la plataforma. El
+  nivel elegido se enmarca en su casilla del cartel (el marco de las estanterías).
+- **I. Niveles «libre»**: cada columna del camión llega a `min(2, limit)` niveles; sus pistas van de abajo arriba y el
+  resto es «libre» (se puede escribir `libre`, o dejarlo sin escribir: el camión llena solo la columna). Un «libre» solo
+  va encima de los niveles con pista; vale para cualquier caja (aparcar, también encima de una caja fija) y nunca es
+  objetivo: nunca brilla, se bloquea, zumba ni late con las pistas (P). En el cartel, casilla lisa.
 
 > **Fase 3 de docs/STORAGE.md** (2026-09-30): el estado y la lógica del almacenaje son comunes a estanterías y
 > camiones: `snapshot.storageSlots` (`StorageSlotState`), un solo `box.slotId`, `hint.storage`, eventos con `slotId` /
@@ -51,23 +64,29 @@ bloquear con assets, las flores con maceta que tienes»):
 2. **Se carga por la puerta**: desde la casilla de puerta de cada columna, mirando al muro (`TRUCK_FACING`: el camión se
    carga desde el sur en el muro norte y desde el este en el oeste). El cuerpo de la carretilla nunca pasa la línea del
    muro; la horquilla y la carga, solo por la puerta y **rectas** (con la carga en la puerta el rumbo no cambia, como en
-   un hueco de estantería). Exactamente como dejar en el suelo o sobre una pila: **horquilla automática** por altura de
-   pila, las cajas una sobre otra **de abajo arriba**, hasta los **niveles** de la columna (1–2, nunca más que
-   `limit`). F / V, la rueda y X / B no hacen nada delante de un camión. Con la carga en la puerta pero sin llegar a la
-   caja del camión no se deja nada (tampoco en el suelo de al lado).
-3. **Pista de cada nivel**: color = pide ese color; símbolo = pide ese símbolo; color + símbolo = esa caja exacta.
-   **No hay niveles «libre»** (decisión: el camión solo lleva las cajas que le tocan; para aparcar está el suelo o un
-   hueco libre de estantería): todo nivel del camión es un objetivo.
-4. **Solución única**: objetivos = zonas + huecos con pista + **niveles de camión**. Cada uno tiene **una** caja
-   destinada y existe exactamente un reparto completo (cajas idénticas son intercambiables): lo comprueba
+   un hueco de estantería). Las cajas van una sobre otra **de abajo arriba**, hasta los **niveles** de la columna, con
+   la **horquilla por teclas** (decisión H: F / V, la rueda y X / B, como en una estantería): se deja solo con la
+   horquilla en el nivel elegido y si es el **siguiente nivel libre** de la columna; se coge solo la **caja de arriba**,
+   con la horquilla a su nivel. Con la horquilla en otro nivel no hay vista previa y Espacio no hace nada (el
+   `actionIdle` suave); si va baja, la carga choca con la caja de la plataforma, como con la cara de una estantería (F
+   ahí la sube por encima), y con la carga sobre las cajas de la columna V no baja. Con la carga en la puerta pero sin
+   llegar a la caja del camión (o con la horquilla en otro nivel) no se deja nada (tampoco en el suelo de al lado).
+3. **Pista de cada nivel**: color = pide ese color; símbolo = pide ese símbolo; color + símbolo = esa caja exacta. Sin
+   pista = **«libre»** (decisión I): cada columna llega a `min(2, limit)` niveles y los de encima de sus pistas son
+   libres (escritos `libre` o sin escribir); un «libre» solo va encima de los que tienen pista. Vale cualquier caja
+   (para aparcar, también encima de una caja fija), nunca es objetivo, nunca brilla, se bloquea, zumba ni late.
+4. **Solución única**: objetivos = zonas + huecos con pista + **niveles de camión con pista**. Cada uno tiene **una**
+   caja destinada y existe exactamente un reparto completo (cajas idénticas son intercambiables): lo comprueba
    `validateLevel`, lo da `levelDestinies`, como con las estanterías.
 5. **Nivel cumplido** = tiene su caja destinada **y** todos los niveles de debajo de su columna están cumplidos (la
    columna está bien desde la plataforma). Solo entonces brilla.
 6. **Caja fija**: la caja de un nivel cumplido queda **fija** (`locked`): no se coge (la acción da el `actionIdle` suave),
    **pero sí se carga el nivel de encima** de su columna (a diferencia de zonas y huecos, donde nada va encima de una
    caja fija). Como las cumplidas siempre están abajo, una columna solo se descarga desde arriba hasta la primera caja
-   fija. Una caja que empieza cargada en su destino (con todo lo de debajo bien) ya empieza fija.
-7. **Objetivo equivocado**: toda caja que queda en un nivel del camión **sin cumplirlo** suena con el **zumbido suave**
+   fija. Una caja que empieza cargada en su destino (con todo lo de debajo bien) ya empieza fija. Una caja en un nivel
+   «libre» nunca queda fija: se coge siempre que sea la de arriba.
+7. **Objetivo equivocado**: toda caja que queda en un nivel del camión con pista **sin cumplirlo** (en un «libre», nunca)
+   suena con el **zumbido suave**
    de docs/RACKS.md (regla 12) y sigue cogible: la que no es su destino (también la «trampa» que encaja en la pista) y
    la destinada puesta encima de un nivel sin cumplir (decisión: la columna está mal desde abajo; es la misma regla que
    en zonas y huecos, «el objetivo no quedó cumplido»). Nada visual: ni rojo ni texto.
@@ -84,6 +103,8 @@ bloquear con assets, las flores con maceta que tienes»):
     encima de la puerta, con una casilla por columna (justo encima de su casilla de puerta) y por nivel (abajo, el nivel
     0). Cada casilla lleva la pegatina de su nivel en las dos caras, a pleno color, nunca atenuada ni en espejo,
     legible desde dentro del almacén con la cámara por defecto y girándola. Nunca sobre la carga ni entre las columnas.
+    La casilla de un nivel «libre» queda lisa. El nivel elegido con F / V se enmarca en su casilla (el marco de las
+    estanterías: tenue al elegir, claro cuando la acción funciona, del tono de la caja si la descarga la tomaría).
 12. **Barandillas** (decisiones F y G; `core/docks` `dockRailsOf`): a cada extremo de la tirada de la puerta, una
     barandilla fija sobre la línea de su jamba, desde la cara de dentro del muro hasta el final de las casillas de puerta
     (una casilla; nunca en la fila de detrás, donde se alinea la carretilla), gruesa hacia fuera, hacia la **casilla
@@ -106,7 +127,7 @@ cabeza   = "camión" ["muelle"] | "camión en el muelle" | "muelle"      (tambi�
 muro     = "norte" | "oeste"                                            (también north / west)
 columna  = nivel { "/" nivel }                                          (de abajo arriba, 1 o 2 niveles)
 nivel    = pista [ "+" caja ]                                           (la caja cargada al empezar)
-pista    = color [símbolo] | símbolo                                    (nunca «libre»)
+pista    = "libre" | color [símbolo] | símbolo                          («libre», solo encima de las pistas)
 caja     = "caja" color [símbolo] ["tipo" tipo] [id]
 ```
 
@@ -114,6 +135,10 @@ caja     = "caja" color [símbolo] ["tipo" tipo] [id]
   orden, separadas por `|`, como mucho 3. Los niveles de cada columna, de abajo arriba, separados por `/`.
 - Una caja cargada al empezar va sobre otra (o sobre la plataforma): en una columna, un nivel con caja lleva caja en
   todos los de debajo. En los datos está en su casilla de caja, fuera del mapa.
+- Cada columna llega sola a `min(2, limit)` niveles: los que no se escriben encima de sus pistas son «libre»
+  (`validateLevel`). `libre` también se puede escribir (con una caja al empezar: `libre + caja …`), siempre encima de
+  los niveles con pista. La forma canónica no escribe los «libre» de arriba sin caja (así una columna `coral ◆` con
+  `limit: 2` sigue escribiéndose `coral ◆`) y deja al menos un nivel escrito (una columna toda libre es `libre`).
 - La puerta del muro es la tirada del camión: no hay clave de cabecera. `ventanas:` no puede pisarla.
 - Ids: camiones `t1, t2…` en orden de leyenda (y de lectura si un carácter se usa en varios); las cajas del camión se
   numeran **después** de las de las estanterías, camión a camión, columna a columna, de abajo arriba. Un camión y una
@@ -144,12 +169,14 @@ T = camión muelle norte: azul / ▲ | coral ◆ + caja menta ▲
 Un camión fuera de la puerta norte (casillas de puerta 2–3 de la fila 0; su caja, en (2,-1) y (3,-1)), de 2 columnas
 que se cargan desde esas casillas mirando al norte, con una barandilla a cada lado de la puerta y una planta detrás de
 cada una, en (1,0) y (4,0). Columna 1: abajo «azul», encima «cualquier ▲». Columna 2: «coral
-◆» exacto, con la menta ▲ cargada por error. Único reparto: la única azul (la azul ▲) abajo en la columna 1, así que el
+◆» exacto, con la menta ▲ cargada por error, y encima un nivel «libre» (sin escribir: `limit: 2`). Único reparto: la única azul (la azul ▲) abajo en la columna 1, así que el
 «▲» de encima es de la menta ▲; el coral ◆ a su nivel y el amarillo ■ a la zona. La azul ▲ encaja en el «▲» pero no
 es su destino (una «trampa» amable), y la menta ▲ hay que descargarla antes de poner el coral ◆.
 
 Errores (en español, `archivo:línea:columna`): muro que falta o que no es norte / oeste, dos puntos que faltan o
-repetidos, más de 2 niveles, nivel vacío, «libre», pista desconocida, caja mal escrita tras el `+`, caja sin nada
+repetidos, más de 2 niveles, nivel vacío, «libre» con otra cosa, «libre» debajo de un nivel con pista («en un camión las
+cajas van una sobre otra, así que los niveles «libre» van arriba…», en su columna), pista desconocida, caja mal escrita
+tras el `+`, caja sin nada
 debajo, `/ | :` fuera de una estantería o un camión, camión que no es recto, que no está pegado a su muro o cuyas
 columnas no cuadran con sus casillas, id propio en un carácter usado por varios camiones, id repetido con una
 estantería. Los de `validateLevel` (abajo) se señalan en la columna o la caja que hay que arreglar: entre ellos, más de
@@ -169,7 +196,8 @@ valores por defecto): los tests de la gramática lo usan para no depender de la 
   `LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: `wall` = `'north' | 'west'` (`WallSide`); (x, z) es la
   primera **casilla de puerta** (muelle norte: `z = 0`, la más al oeste; oeste: `x = 0`, la más al norte); `w` = casillas
   de puerta = columnas; `columns[col][nivel]`, nivel 0 = sobre la plataforma; `TruckCue = ZoneCriteria` (color y / o
-  símbolo, al menos uno). `MAX_TRUCK_LEVELS` = 2, `MAX_TRUCK_COLUMNS` = 3.
+  símbolo; `{}` = «libre», `null` en `level.storage`). `MAX_TRUCK_LEVELS` = 2, `MAX_TRUCK_COLUMNS` = 3; cada columna
+  lleva `min(MAX_TRUCK_LEVELS, stackLimit)` niveles (fase 6 de docs/STORAGE.md).
 - `TRUCK_FACING = { north: 'south', west: 'east' }`: el lado desde el que se carga. Con él un camión se lee como una
   estantería cuyas casillas están un paso más allá del muro: `truckCellOf(truck, col)` = casilla de caja (fuera del mapa),
   `truckFrontOf(truck, col)` = casilla de puerta (la de delante), `inwardHeading` el rumbo hacia el camión y
@@ -178,8 +206,8 @@ valores por defecto): los tests de la gramática lo usan para no depender de la 
 - Estado: `GameSnapshot.truckSlots?: TruckSlotState[]` (camión a camión, columna a columna, de abajo arriba; **ausente**
   en niveles sin camiones: se lee `snapshot.truckSlots ?? []`). `TruckSlotState { id, truckId, column, level, cell,
   front, wall, facing, pos, accepts, destined, occupiedBy, satisfied, loadable }`: id `t1:columna:nivel` (desde 0);
-  `cell` = casilla de caja (fuera), `front` = casilla de puerta, `pos` = centro de la casilla de caja; `accepts` nunca
-  es `null`; `satisfied` = regla 5; `loadable` = vacío, el siguiente de su columna y todo lo de debajo cumplido (regla
+  `cell` = casilla de caja (fuera), `front` = casilla de puerta, `pos` = centro de la casilla de caja; `accepts` es
+  `null` solo en un nivel «libre» (decisión I; antes, nunca); `satisfied` = regla 5; `loadable` = vacío, el siguiente de su columna y todo lo de debajo cumplido (regla
   8). Los campos que comparte con `SlotState` significan lo mismo: `cueFits`, `isDestined` y `satisfiesTarget` sirven
   para los dos.
 - `BoxState.truckSlotId?: string | null`: el nivel de camión donde descansa (entonces `cell` = su casilla de caja,
@@ -188,14 +216,15 @@ valores por defecto): los tests de la gramática lo usan para no depender de la 
   regla 6 (no se coge; sí se carga encima). `correct` = su nivel `satisfied`.
 - `InteractionHint.dropTruckSlotId?: string | null`: llevando una caja, el nivel de camión donde caería (`dropCell` =
   casilla de caja, fuera; `dropLevel` = el nivel, `dropZoneId` `null`); sin definir en niveles sin camiones.
-  `hint.rack` es siempre `null` delante de un camión. Con la horquilla vacía, `targetBoxId` es la caja de arriba de la
-  columna si no está fija.
+  `hint.rack` es siempre `null` delante de un camión; desde la fase 6 de docs/STORAGE.md, `hint.storage` sí está (la
+  columna y el nivel elegido con F / V, como en una estantería). Con la horquilla vacía, `targetBoxId` es la caja de
+  arriba de la columna si no está fija y la horquilla está a su nivel.
 - Eventos (la misma forma; campos opcionales solo cuando tocan un camión, así que sin camiones son idénticos):
   `boxPicked.fromTruckSlotId` (`fromZoneId: null`, `level` = su nivel); `boxDropped.truckSlotId` (`zoneId: null`,
   `cell` = casilla de caja, `level` = su nivel, `recipeLength` 1, `correct` = el nivel quedó cumplido, `wrongTarget:
   true` si no, regla 7; `satisfiedCount` / `total` cuentan los niveles de camión). `zoneReleased.truckSlotId` existe por
   simetría pero hoy no ocurre (las cumplidas están fijas y cargar encima no descumple nada).
-- `progress`: zonas + huecos con pista + todos los niveles de camión.
+- `progress`: zonas + huecos con pista + los niveles de camión con pista (un «libre» no cuenta).
 
 ## Solución única y destinos (`src/core/sorting.ts`, `src/core/docks.ts`)
 
@@ -229,7 +258,10 @@ resto cae en «nivel no válido: …»). Lo comprueba `validateLevel.docks.test.
 - `trucks[i]`: `wall` norte u oeste; `id` por defecto `t${i + 1}`, `w` por defecto = columnas y si no, igual; de 1 a
   `MAX_TRUCK_LEVELS` niveles por columna (`trucks[i].columns[j] must have 1 to 2 levels`); como mucho
   `MAX_TRUCK_COLUMNS` columnas (`trucks[${i}] has ${n} columns, more than 3: its dock door is 1 to 3 cells wide`); cada
-  nivel con color o símbolo (colores y símbolos conocidos). Muelle norte: `z = 0`; oeste: `x = 0` (`trucks[i] is in the
+  nivel con color o símbolo (colores y símbolos conocidos), o «libre» (`null` / `{}`) solo encima de los que tienen
+  pista (`trucks[i].columns[j][k] has a cue above a free level: in a stack the free levels go on top of the ones with a
+  cue`); después, cada columna se llena con «libre» hasta `min(2, stackLimit)` (el `limit` por defecto se calcula con
+  los niveles escritos). Muelle norte: `z = 0`; oeste: `x = 0` (`trucks[i] is in the
   north wall: its door cells run along row z = 0`, u oeste / `x = 0`). Casillas de puerta dentro del mapa
   (`trucks[i] leaves the warehouse at x,z`).
 - **Casillas de puerta = suelo**: sin estantería, planta, estantería almacenable ni la puerta de otro camión
@@ -303,7 +335,8 @@ Hecho (2026-09-30; `GameState.docks.test.ts`, `collision.test.ts`):
   en el centro de la caja; en el centro de la casilla de puerta, a 0,42), así que el cuerpo está entonces en su casilla
   de puerta: una columna nunca se trabaja desde la casilla de puerta de al lado. Mientras se trabaja en una estantería,
   nunca hay camión encarado.
-- **Rumbo fijo**: con la carga al otro lado de la línea de un muro con puerta (`loadInDoor`: su borde a
+- **Rumbo fijo**: con la carga al otro lado de la línea de un muro con puerta (`loadInDoor`, desde la fase 6 de
+  docs/STORAGE.md la misma medida que en un hueco, `loadInOpening`: su borde a
   `RACK_INSIDE_MARGIN` más allá; solo puede ser por el tramo abierto de la columna encarada), el rumbo no cambia
   (`ForkliftController.setHeadingLock`, como con una carga en un hueco): entra y sale recta; de lado nunca se carga. La
   horquilla vacía no lo fija (no choca con nada). Girando en una casilla de puerta con carga, la puerta cerrada la para
@@ -314,16 +347,22 @@ Hecho (2026-09-30; `GameState.docks.test.ts`, `collision.test.ts`):
   alineada, entra recta.
 - **En la puerta** (`RackAim.doorway`): llevando una caja con la carga en la puerta pero sin llegar a `TRUCK_REACH`, no
   se deja nada (`actionIdle`), tampoco en el suelo de al lado (sería teletransportarla).
-- **Dejar** (`Interaction.findDrop`): encarando una columna con la horquilla dentro, encima de su pila mientras quepa
-  (`dropLevel` = cajas de la columna, **aunque la de arriba esté fija**) y si está llena, nada (`actionIdle`; decisión:
-  nunca el suelo de al lado mientras se mira el camión de cerca; con la columna llena la carga se queda en la puerta
-  contra su caja). La caja aterriza en el centro de la casilla de caja, justo bajo la horquilla. `hint.dropTruckSlotId`
-  = el nivel donde caería.
+- **Dejar** (`Interaction.findDrop`): encarando una columna con la horquilla dentro y en el nivel elegido, si ese nivel
+  es el siguiente libre de su pila (`LevelGrid.canStore`: `dropLevel` = cajas de la columna, **aunque la de arriba esté
+  fija**); en otro nivel, o con la columna llena, nada (`actionIdle`; decisión: nunca el suelo de al lado mientras se
+  mira el camión de cerca; con la columna llena la carga se queda en la puerta contra su caja). La caja aterriza en el
+  centro de la casilla de caja, justo bajo la horquilla. `hint.storage` = la columna y el nivel elegido, `ready` si la
+  descarga cae ahí (desde la fase 6 de docs/STORAGE.md; antes, `hint.dropTruckSlotId`).
 - **Coger** (`Interaction.findPickTarget`): una caja de camión solo es objetivo en la columna encarada con la horquilla
-  dentro, la de arriba y si no está fija. `boxPicked.fromTruckSlotId`. Sale marcha atrás, recta.
-- **Altura automática**: la de las pilas del suelo (`clearLevel`, `refreshLoadPassage`): para la carga, una caja fija
-  del camión es una pila normal (la horquilla sube sobre ella), con tope = los niveles de la columna. F / V no hacen nada
-  (sin estanterías ni se leen; con estanterías, `hint.rack` es `null` delante del camión).
+  dentro, la de arriba (`LevelGrid.liftableAt`: nunca una de debajo), con la horquilla a su nivel y si no está fija.
+  `boxPicked.fromSlotId`. Sale marcha atrás, recta.
+- **Horquilla por teclas** (decisión H; fase 6 de docs/STORAGE.md; antes, «altura automática», la de las pilas del
+  suelo): F / V, la rueda y X / B eligen el nivel de la columna encarada (`forkLevel`) y la horquilla va a él, como en
+  una estantería; al llegar a otro camión empieza abajo. Una pila del camión nunca sube la horquilla por adelantado
+  (`clearLevel` la salta), así que la carga llevada más baja que el siguiente nivel libre choca con la caja de la
+  plataforma (la base de su pila, `refreshLoadPassage`: solo se abre con la horquilla a su altura) y F ahí la sube por
+  encima; con la carga sobre las cajas de la columna, V no baja (`sinksIntoStack`). Un paso de nivel no cierra la
+  puerta (es el paso de toda la columna). Fuera del camión, la horquilla sigue sola, como en el suelo.
 - `refreshTruckColumn` (al empezar y tras cada coger / dejar en el camión): `satisfied` de abajo arriba (regla 5),
   `locked` y `correct` de sus cajas = su nivel cumplido, `loadable` = el nivel vacío más bajo con todo lo de debajo
   cumplido, `box.truckSlotId`.
@@ -353,6 +392,12 @@ Medido (2026-09-30; por modo y fps, las dos columnas: 54 aproximaciones a ≤ 5�
 
 («A la otra columna»: torcida, la carretilla deriva hasta la casilla de puerta de al lado y deja o coge allí, como
 dice la regla; nunca en una columna que no sea la de su cuerpo.)
+
+Con la horquilla por teclas (decisión H; 2026-10-01) el test, con carga, pulsa F en cuanto la carretilla está en una
+columna cuyo siguiente nivel libre queda por encima de la horquilla (la columna 1, con su caja en la plataforma): la
+carga espera a la horquilla junto a esa caja y la entrada alineada tarda unas décimas más, 1,33–3,07 s a 60 fps y
+1,35–3,15 s a 20 fps (medianas 1,52 y 1,60 s; límites del test `ENTRY_SEC` 3,2 y `ENTRY_MEDIAN_SEC` 1,65, antes 3 y
+1,5). La horquilla vacía, 1,33–1,6 s, como antes. Los recuentos de la tabla no cambian.
 
 **Pendiente (decisión de diseño, sin hacer)**: con una barandilla de una casilla, su boca solo frena el cuerpo cuando la
 carga ya ha cruzado la línea del muro (con el cuerpo a un lado, su costado toca el extremo de la barandilla después), y
@@ -394,14 +439,18 @@ Hecho (2026-09-30; `levels/docks.test.ts`, `integration/docksPlayable.test.ts`):
   de detrás que barrería una casilla lateral ya lo prohíbe su obstáculo (un giro de 90° pide libre la diagonal); el que
   barre una casilla de puerta pasa a 0,37 de la barandilla con la carga.
 - **Métricas**: `repartos` y `trampas` como con estanterías (las pistas del camión cuentan: `trampas` por tipo de
-  pista, `ambiguas` por pista y nivel), `bloqueos` (la caja equivocada de un camión tapa su nivel; un camión se alcanza
-  desde su casilla de puerta), `libre` (las casillas de puerta son suelo) y **`camion`** = niveles de camión (alias
-  `camiones`; en el informe «3 (2 columnas, 1 camión; 1 cargado al empezar)» y columna «camión» = columnas / niveles).
+  pista, `ambiguas` por pista y nivel), `bloqueos` (la caja equivocada de un camión tapa su nivel; una caja aparcada en
+  un «libre» sobre niveles bien no tapa nada; un camión se alcanza desde su casilla de puerta), `libre` (las casillas de
+  puerta son suelo) y **`camion`** = todos los niveles de camión, con pista y «libre», como `huecos` (alias `camiones`;
+  en el informe «4 (3 con pista, 1 libre; 2 columnas, 1 camión; 1 cargado al empezar)» y columna «camión» = columnas /
+  niveles). En el solver una columna de camión tiene de capacidad todos sus niveles y de pasos solo los que tienen
+  pista: un «libre» es aparcamiento (docs/STORAGE.md «Fase 6»).
 - **Informe**: el plan nombra el camión por su letra y su **casilla de puerta**: «→ camión T (x,0), nivel n» al cargar y
   «(x,0), camión T, nivel n → …» al sacar.
 - **Piloto automático**: `liveStacks` pone cada caja en su posición (`posOf` reconoce la casilla de fuera), por nivel;
-  para cargar va recto hasta la casilla de puerta (la carga cruza la puerta, el rumbo fijo) y deja; para descargar,
-  desde la casilla de puerta mirando al muro coge y sale marcha atrás. Sin F / V. A 60 y 20 fps (tests).
+  para cargar se para en la fila de detrás de la puerta, elige el nivel con F / V (fase 6), va recto hasta la casilla de
+  puerta (la carga cruza la puerta, el rumbo fijo) y deja; para descargar, desde la casilla de puerta mirando al muro
+  elige el nivel de la caja de arriba, la coge y sale marcha atrás. A 60 y 20 fps (tests).
 
 ## Render (`src/render`)
 
@@ -436,7 +485,12 @@ Diseño (2026-09-30, plan del render; medidas y constructores en `builders/truck
 - **Luz por nivel** (`SlotLight`): panel, pegatina y banda de la casilla del cartel (latido fuerte solo `loadable` y
   `cueFits`, destello al aterrizar, brillo en reposo); efecto de acierto y tono hondo en la caja de la plataforma; vista
   previa en la casilla de caja, a `hint.dropLevel` (tono de la caja solo si `loadable` y su pista encaja: una pista,
-  nunca la solución).
+  nunca la solución). Un nivel «libre» no tiene luz: su casilla, lisa (`buildSignFrame`).
+- **Marcador del nivel elegido** (fase 6 de docs/STORAGE.md; `SIGN_MARKER`, `buildSignMarkerGeometry`,
+  `render/storage/truck` `markerAt`): el marco suave de las estanterías (`views/SlotMarker`), del tamaño de una casilla
+  del cartel (una casilla de puerta de ancho, una fila de alto), sobre las barras de alrededor de la casilla del nivel
+  elegido (`dockColumnX`, `signRowY`, `signMidZ`), en las dos caras: tenue al elegir, claro con `ready`, del tono de la
+  caja cuando la descarga la tomaría (el de la vista previa).
 - Sin camiones todo se dibuja exactamente como antes.
 
 ## Audio (`src/audio`)
@@ -453,8 +507,10 @@ Hecho (2026-09-30; `audio.test.ts`):
   pista de `snapshot.truckSlots` si faltara) suena **solo** con `correct`; el último objetivo lleva el segundo golpe y el
   arpegio de siempre. `wrongTarget` → `SfxPlayer.wrongBuzz`, como en los huecos (docs/RACKS.md).
 - `boxPicked.fromTruckSlotId` → el `pickup` del suelo (golpe de madera). Nada al pasar por delante.
-- La horquilla delante del camión es automática: su subida y bajada suenan con la bomba y el tono suave de bajada, y el
-  «clonc» de fin de recorrido calla cerca de coger o dejar (docs/ARCHITECTURE.md, «Audio direction»).
+- La horquilla delante del camión va por teclas (fase 6 de docs/STORAGE.md): cada paso de F / V que surte efecto suena
+  con el clic de retén de las estanterías (`ForkStepWatcher`, `AudioEngine.forkClick`); su subida y bajada, con la bomba
+  y el tono suave de bajada, y el «clonc» de fin de recorrido calla cerca de coger o dejar (docs/ARCHITECTURE.md, «Audio
+  direction»).
 
 ## Nivel Benchmark (solo Modo prueba)
 
@@ -462,26 +518,31 @@ Hecho (2026-09-30; `audio.test.ts`):
   espera fuera de la puerta norte, con las casillas de puerta (1,0) y (2,0) (su caja, en (1,-1) y (2,-1)), a la
   izquierda de R, y una barandilla a cada lado de la puerta con una planta detrás, en (0,0) y (3,0). Se carga desde esas
   casillas mirando al norte; la fila 1 (detrás de la puerta) queda libre. Columna 1:
-  «azul» abajo y «■» encima; columna 2: «amarillo ✚» (color, símbolo y exacta). La zona ▲ en (2,3), fuera de las filas
-  de carga (la de la puerta y la de detrás). El cartel va sobre la puerta.
+  «azul» abajo y «■» encima; columna 2: «amarillo ✚» (color, símbolo y exacta) y encima un nivel «libre» (sin escribir:
+  `limit: 2`). La zona ▲ en (2,3), fuera de las filas de carga (la de la puerta y la de detrás). El cartel va sobre la
+  puerta.
 - Cajas del muelle: azul ✚ (6,1), amarillo ✚ (6,7) y el amarillo ■ cargado **abajo** en la columna 1 (su destino es el
-  nivel de encima: se aparca, entra el azul ✚, queda fijo, y el amarillo ■ va encima de él). 12 cajas, 12 objetivos (3
-  zonas + 6 huecos con pista + 3 niveles de camión), un solo reparto; cadena de deducción en sus `nota:`.
-- Medido (`npm run levels -- benchmark`, 2026-09-30, camión fuera, con las barandillas): movimientos 14 (exacto), extra
-  2 (el cambio de las mentas y la carga equivocada), bloqueos 4, trampas 12, repartos 1, huecos 12, camion 3, estrechas
-  8, libre 78 % (las dos plantas junto a la puerta: antes 80; el objetivo pasa a `libre<=78`), callejones 0 en 60
-  estados. Piloto automático a 60 y 20 fps con F / V y marcha atrás (`benchmarkPlayable.test.ts`); mínimo del contador
-  de movimientos 14 (`levelMinimums.json`, sin cambios).
+  nivel de encima: se aparca, en el suelo o en el nivel libre de la columna 2 una vez cargado su amarillo ✚, entra el
+  azul ✚, queda fijo, y el amarillo ■ va encima de él). 12 cajas, 12 objetivos (3 zonas + 6 huecos con pista + 3
+  niveles de camión con pista), un solo reparto; cadena de deducción en sus `nota:`.
+- Medido (`npm run levels -- benchmark`, 2026-10-01, fase 6: horquilla por teclas y el nivel libre): movimientos 14
+  (exacto, el mismo plan: aparcar en el nivel libre o en el suelo es un movimiento igual), extra 2 (el cambio de las
+  mentas y la carga equivocada), bloqueos 4, trampas 12, repartos 1, huecos 12, camion 4 (3 con pista, 1 libre; antes
+  3: el objetivo pasa a `camion=4`), estrechas 8, libre 78 %, callejones 0 en 60 estados. Piloto automático a 60 y 20
+  fps con F / V (7 pulsaciones en las estanterías y 1 en el camión) y marcha atrás (`benchmarkPlayable.test.ts`);
+  mínimo del contador de movimientos 14 (`levelMinimums.json`, sin cambios).
 
 ## Ajustes
 
 - Gramática y datos: `MAX_TRUCK_LEVELS` y `MAX_TRUCK_COLUMNS` (types.ts), letras `TRUCK_CHARS` y ejemplo
   `TRUCK_EXAMPLE` (asciiLevel.ts); las casillas de caja y de puerta, `truckCellOf` / `truckFrontOf` (core/docks.ts).
-- Reglas con decisión propia, fáciles de cambiar en un solo sitio de la lógica: sin «libre» (regla 3), zumbido también
+- Reglas con decisión propia, fáciles de cambiar en un solo sitio de la lógica: «libre» solo encima (regla 3,
+  `validateLevel`), relleno a `min(2, limit)` (`STORAGE_SKINS.truck.fillToMax`), zumbido también
   con la destinada sobre una base mal (regla 7: `GameState.dropOnTruck`, `!state.satisfied`), latido solo en los
   `loadable` (regla 8), columna llena = nada (`Interaction.findDrop`, rama `aim.truck`), nada en la puerta
   (`RackAim.doorway`), puerta abierta solo para la columna encarada desde su casilla de puerta
-  (`GameState.refreshDoorPassage`, `inLineWith`).
+  (`GameState.refreshDoorPassage`, `inLineWith`), V que no baja con la carga sobre las cajas de la columna
+  (`GameState.sinksIntoStack`).
 - Lógica (`GameState.ts`): `TRUCK_FACE_ANGLE` 30°, `TRUCK_FACE_LATERAL` 0,5, `TRUCK_FACE_NEAR` 0,8, `TRUCK_FACE_FAR` 1,
   `TRUCK_HOLD_ANGLE` 45°, `TRUCK_HOLD_LATERAL` 0,6, `TRUCK_REACH` 0,3 (más allá de la línea del muro), margen de «carga
   en la puerta» `RACK_INSIDE_MARGIN` 0,05. Colisión (`collision.ts`): `DOOR_JAMB` 0,02 (core/docks), `DOOR_POCKET` 1.

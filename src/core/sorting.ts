@@ -228,8 +228,8 @@ export function assignmentsOf(boxes: readonly Sortable[], targets: readonly Zone
 }
 
 /**
- * A target of a level with storage (docs/STORAGE.md rule 4): a floor zone, or a storage slot with a cue in any skin («libre»
- * slots are never targets): a rack slot, a truck level (every one has a cue until phase 6).
+ * A target of a level with storage (docs/STORAGE.md rule 4): a floor zone, or a storage slot with a cue in any skin (a
+ * rack slot, a truck level); «libre» slots are never targets (rule 7).
  */
 export interface LevelTarget {
   kind: 'zone' | 'slot';

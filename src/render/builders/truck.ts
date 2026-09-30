@@ -1,11 +1,11 @@
-import { CylinderGeometry, type BufferGeometry, type Vector3 } from 'three';
+import { CylinderGeometry, ShapeGeometry, type BufferGeometry, type Vector3 } from 'three';
 import type { DockRail } from '../../core/docks';
 import { clamp } from '../../core/math';
 import type { LevelData, LevelTruck, TruckCue, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { DIORAMA, DOCK } from '../dims';
 import { PartList, type Placement } from '../paint';
-import { buildCueFace, buildGlowFrameGeometry, type CueDims, type CueLook, type GlowFrameDims } from './rack';
+import { buildCueFace, buildGlowFrameGeometry, rectRingShape, type CueDims, type CueLook, type GlowFrameDims } from './rack';
 import { DOOR, dockSpan } from './walls';
 
 /*
@@ -31,7 +31,9 @@ import { DOOR, dockSpan } from './walls';
  *   buildSignGlowGeometry): a framed grid with one cell per bed column (right above its door cell, so left to right it
  *   reads as the door cells from either face) and per level (bottom row = level 0), each cell a lit cream panel with
  *   the rack sticker of its level's cue on both faces, upright and unmirrored for whoever looks at that face. The cell
- *   of a column with fewer levels than the tallest one (or of a «libre» level) stays a plain panel.
+ *   of a «libre» level (or of a column with fewer levels than the tallest one: never in a level, whose truck columns
+ *   all hold the same levels, docs/STORAGE.md rule 7) stays a plain panel. The chosen level's cell gets the marker of
+ *   views/SlotMarker (buildSignMarkerGeometry).
  */
 
 export const TRUCK = {
@@ -113,6 +115,14 @@ export const SIGN_GLOW: GlowFrameDims & { halfH: number; gap: number } = {
   radius: 0.05,
   gap: 0.004,
 };
+
+/**
+ * Chosen-level marker on a sign cell (views/SlotMarker; render/storage truck `markerAt`), like a rack slot's: a thin
+ * rounded frame over the bars around the cell's opening, `gap` off both faces of the sign. The size of a cell: out to
+ * the middle of the bars between cells along the wall (one door cell wide, `halfW`) and just past the row's height up
+ * and down (`halfH`); `width` its band, `radius` its corners.
+ */
+export const SIGN_MARKER = { halfW: 0.5, halfH: DOCK_SIGN.row / 2 + 0.012, width: 0.03, radius: 0.05, gap: 0.008 } as const;
 
 /** Success burst of a truck level (render/storage truck `burstAt`): its ring hugs the box's face on the door plane. */
 export const TRUCK_BURST = { halfW: 0.44 } as const;
@@ -482,4 +492,20 @@ export function buildSignGlowGeometry(): BufferGeometry {
   geo.translate(0, -G.halfH, 0);
   geo.computeBoundingSphere();
   return geo;
+}
+
+/**
+ * Marker of the chosen truck level (views/SlotMarker, SIGN_MARKER), in the space of buildSignPanel (origin at the cell's
+ * centre on the sign's mid-plane, +z toward the warehouse, x along the wall): on each face of the sign, facing out, a
+ * thin rounded frame over the bars around the cell (so it reads from inside the warehouse and, with the wall sunk,
+ * from outside). One geometry for every cell. Unlit white: the marker's material gives it its tone.
+ */
+export function buildSignMarkerGeometry(): BufferGeometry {
+  const M = SIGN_MARKER;
+  const parts = new PartList();
+  const z = DOCK_SIGN.depth / 2 + M.gap;
+  const ring = () => new ShapeGeometry(rectRingShape(M.halfW, M.halfH, M.width, M.radius), 4);
+  parts.add(ring(), '#ffffff', { z });
+  parts.add(ring(), '#ffffff', { z: -z, ry: Math.PI });
+  return parts.build();
 }

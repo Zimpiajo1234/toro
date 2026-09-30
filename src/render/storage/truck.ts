@@ -8,6 +8,7 @@ import {
   buildSignCue,
   buildSignFrame,
   buildSignGlowGeometry,
+  buildSignMarkerGeometry,
   buildSignPanel,
   buildTruckBody,
   dockColumnX,
@@ -23,15 +24,17 @@ import { DIORAMA } from '../dims';
 import type { SlotTone } from '../views/RackView';
 import { TruckView } from '../views/TruckView';
 import { cueLookOf, levelLightOf, metalMaterial, yawTowardCamera } from './common';
-import type { BeyondWall, BurstPlace, Occluder, StorageSkinRender, StorageUnitView } from './types';
+import type { BeyondWall, BurstPlace, MarkerPlace, Occluder, StorageSkinRender, StorageUnitView } from './types';
 
 /*
  * The `truck` skin (docs/DOCKS.md): an adapter over builders/truck and views/TruckView, static, outside its dock door
  * (builders/walls draws the door itself in its wall, for every unit of the `door` access): the dock plate in the door,
  * the truck parked outside (its bed level with the floor: the boxes on it are ordinary boxes, a stack like the floor's)
  * and the sign over the door, a piece that fades on its own like a rack bay, with one cell per bed column and level
- * (bottom row = level 0): a glowing panel, the level's unlit sticker on both faces and a glow band round it. The guard
- * rails beside the door (core/docks dockRailsOf) stand in its group, low static props like the plants.
+ * (bottom row = level 0): a glowing panel, the level's unlit sticker on both faces and a glow band round it (none on a
+ * «libre» level: a plain panel of the frame). Its forks go by the keys (docs/STORAGE.md rule 9), so the chosen-level
+ * marker (views/SlotMarker) frames the sign cell of the level F / V selected. The guard rails beside the door
+ * (core/docks dockRailsOf) stand in its group, low static props like the plants.
  */
 
 /** A truck as its builders read it (builders/truck DockShape): its wall, its first door cell, its bed columns' cues. */
@@ -40,7 +43,7 @@ function dockShapeOf(unit: LevelStorage): DockShape {
   return { wall: unit.access.wall, x: unit.x, z: unit.z, columns: unit.columns };
 }
 
-/** One dock on screen: its sign lights its levels and ghosts; nothing of it follows the forks (no keys there yet). */
+/** One dock on screen: its sign lights its levels and ghosts, and the marker frames the cell of the chosen level. */
 class TruckUnit implements StorageUnitView {
   readonly id: string;
   readonly group: Group;
@@ -54,6 +57,8 @@ class TruckUnit implements StorageUnitView {
     side: WallSide,
     /** One stack level (the box height): a box on the bed rests at floor stack heights. */
     private readonly boxHeight: number,
+    /** Where the marker frames each of its levels (by slot id): its sign cell, facing the warehouse. */
+    private readonly signCells: ReadonlyMap<string, Readonly<MarkerPlace>>,
   ) {
     this.id = view.id;
     this.group = view.group;
@@ -92,9 +97,18 @@ class TruckUnit implements StorageUnitView {
     return out;
   }
 
-  /** Its forks go by themselves until phase 6 (logic/storageAccess autoForks): no marker (phase 6: its sign cell). */
-  markerAt(): null {
-    return null;
+  /**
+   * The forks go by the keys at the truck too (docs/STORAGE.md rule 9): the marker frames the level's cell on the sign
+   * over the door (dockColumnX, signRowY, signMidZ), turned like the sign.
+   */
+  markerAt(slot: StorageSlotState, out: MarkerPlace): MarkerPlace | null {
+    const cell = this.signCells.get(slot.id);
+    if (!cell) return null;
+    out.x = cell.x;
+    out.y = cell.y;
+    out.z = cell.z;
+    out.yaw = cell.yaw;
+    return out;
   }
 
   /** Its boxes are a stack like the floor's: they ghost as a stack, never with the sign. */
@@ -104,6 +118,7 @@ class TruckUnit implements StorageUnitView {
 }
 
 export const TRUCK_RENDER: StorageSkinRender = {
+  markerGeometry: buildSignMarkerGeometry,
   builder(ctx) {
     const { level, theme, bag, mats } = ctx;
     // Shared by every dock of the level: one glow band, one panel per cell opening, one sticker per look.
@@ -146,9 +161,12 @@ export const TRUCK_RENDER: StorageSkinRender = {
         }
         // Sign cells face the warehouse: their local +z is their wall's inward side (dock-local +z).
         const yaw = dockPlacement(truck.wall, level).ry ?? 0;
+        const signCells = new Map<string, MarkerPlace>();
         for (const slot of slots) {
+          const at = dockToWorld(truck.wall, level, dockColumnX(truck, level, slot.column), signRowY(slot.level), signMidZ(), origin);
+          signCells.set(slot.id, { x: at.x, y: at.y, z: at.z, yaw });
           const cue = slot.accepts;
-          if (!cue) continue; // «libre» (phase 6): its cell stays a plain panel of the frame (buildSignFrame)
+          if (!cue) continue; // «libre»: its cell stays a plain panel of the frame (buildSignFrame)
           const x = dockColumnX(truck, level, slot.column);
           const cell = signCell(truck, slot.column, slot.level);
           const cellKey = `${cell.x0}/${cell.x1}/${cell.y0}/${cell.y1}`;
@@ -180,7 +198,7 @@ export const TRUCK_RENDER: StorageSkinRender = {
           );
         }
         view.followWall(wall.heightScale);
-        return new TruckUnit(view, truck.wall, ctx.boxHeight);
+        return new TruckUnit(view, truck.wall, ctx.boxHeight, signCells);
       },
     };
   },

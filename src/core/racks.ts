@@ -56,8 +56,8 @@ export function racksOf(level: Pick<LevelData, 'storage'>): readonly LevelRack[]
 }
 
 /**
- * The level has at least one storage rack (docs/RACKS.md; the F / V row and fork steps key off it until phase 6). A
- * view of `level.storage` until phase 7.
+ * The level has at least one storage rack (docs/RACKS.md; since phase 6 the F / V row and the fork steps go by
+ * core/storage `hasStorage`, not by this). A view of `level.storage` until phase 7.
  */
 export function hasRacks(level: Pick<LevelData, 'storage'>): boolean {
   return (level.storage ?? []).some(isRack);

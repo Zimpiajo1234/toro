@@ -11,12 +11,13 @@ import { GameState } from './GameState';
  * drives dead straight along a column's centre line, which is how a jam at the door went unnoticed. Here the rig comes
  * through the row behind the door, from a cell further back (its load just short of the guard rails' mouth), a little
  * off the column's centre line and a little crooked, and the player only holds W (vehicle controls: the heading assist
- * straightens small errors by itself), at 60 and 20 fps: carrying a box onto the bed, with empty tines to lift the box
- * on the bed, and backing out with S. Over the whole grid:
+ * straightens small errors by itself), at 60 and 20 fps: carrying a box onto the bed (with F as soon as the rig is at a
+ * column whose next free level is above the forks: they go by the keys at the truck too, docs/STORAGE.md rule 9), with
+ * empty tines to lift the box on the bed, and backing out with S. Over the whole grid:
  * - nothing ever lands in (or is lifted from) a column other than the one of the door cell the body stands on;
  * - S always backs out freely: the rig moves back and the load leaves the door;
  * - lined up within 5° (what the assist straightens), whatever the offset, the load goes in straight, into the column
- *   it aimed at, in a normal time (ENTRY_SEC at most, most of them in about 1.3–1.5 s).
+ *   it aimed at, in a normal time (ENTRY_SEC at most, most of them in about 1.3–1.65 s).
  * More crooked, the rig may stop before the door (a rail's end or a plant in the way), drift into the next column (and
  * land there, by the rule above), go in crooked or, with its load already in the door, jam: the guard rail holds the
  * body, the neighbouring column's shut span holds the load and the heading holds while the load is in the door, so W
@@ -41,9 +42,13 @@ const OFFSETS = [0, 0.05, -0.05, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
 const ERRORS = [0, 5, -5, 10, -10, 15, -15, 25, -25];
 /** Lined up at least this well, the rig always goes in straight. */
 const LINED_UP_DEG = 5;
-/** The slowest entry lined up within LINED_UP_DEG (a load sliding round a rail's end), and the usual one (median). */
-const ENTRY_SEC = 3;
-const ENTRY_MEDIAN_SEC = 1.5;
+/**
+ * The slowest entry lined up within LINED_UP_DEG (a load sliding round a rail's end), and the usual one (median). With a
+ * box already on the bed (the first column) the forks climb to the next level after F, once the rig is at the column
+ * (docs/STORAGE.md rule 9): the load waits for them at the box, a few tenths more than on the empty column.
+ */
+const ENTRY_SEC = 3.2;
+const ENTRY_MEDIAN_SEC = 1.65;
 /** Holding S this long always backs the rig out. */
 const BACK_SEC = 2.5;
 
@@ -63,13 +68,13 @@ function hold(state: GameState, frame: InputFrame, seconds: number, dt: number):
   return events;
 }
 
-/** Hold `frame` until the rig has stood still for 0.3 s (at most `max` s); `each` runs after every frame. */
-function holdUntilStill(state: GameState, frame: InputFrame, dt: number, max: number, each: (t: number) => void): void {
+/** Hold `frame` (or what it gives each frame) until the rig has stood still for 0.3 s (at most `max` s); `each` runs after every frame. */
+function holdUntilStill(state: GameState, frame: InputFrame | (() => InputFrame), dt: number, max: number, each: (t: number) => void): void {
   const f = state.getSnapshot().forklift;
   let still = 0;
   let [x, z] = [f.pos.x, f.pos.z];
   for (let t = dt; t <= max; t += dt) {
-    state.update(dt, frame);
+    state.update(dt, typeof frame === 'function' ? frame() : frame);
     each(t);
     still = Math.hypot(f.pos.x - x, f.pos.z - z) < 2e-4 ? still + dt : 0;
     [x, z] = [f.pos.x, f.pos.z];
@@ -126,9 +131,16 @@ function approach(column: number, offset: number, errorDeg: number, empty: boole
     return l ? wallZ - (l.z - carriedBoxRadius) : wallZ - (f.pos.z + Math.cos(f.heading) * forkReach);
   };
   const offered = () =>
-    empty ? snap.boxes.find((b) => b.id === snap.hint.targetBoxId)?.slotId != null : snap.hint.storage?.skin === 'truck';
+    empty ? snap.boxes.find((b) => b.id === snap.hint.targetBoxId)?.slotId != null : snap.hint.storage?.skin === 'truck' && snap.hint.storage.ready;
+  /** W, and carrying F at a truck column whose next free level is above the forks chosen there (as a player sets them). */
+  const keys = (): InputFrame => {
+    const at = snap.hint.storage;
+    if (empty || at === null || at.skin !== 'truck') return drive(1);
+    const next = snap.storageSlots.filter((s) => s.unitId === at.unitId && s.column === at.column && s.occupiedBy !== null).length;
+    return at.level < next ? { ...drive(1), forkStep: 1 } : drive(1);
+  };
   let entry = Infinity;
-  holdUntilStill(state, drive(1), dt, 6, (t) => {
+  holdUntilStill(state, keys, dt, 6, (t) => {
     if (entry === Infinity && offered()) entry = t;
   });
   const crooked = Math.abs(angleDelta(f.heading, NORTH)) * (180 / Math.PI);

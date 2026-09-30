@@ -403,8 +403,8 @@ export function buildGlowFrameGeometry(G: GlowFrameDims, halfH: number, faces: r
   return geo;
 }
 
-/** Rounded-rectangle ring `width` wide (outer half extents given). */
-function rectRingShape(halfW: number, halfH: number, width: number, radius: number): Shape {
+/** Rounded-rectangle ring `width` wide (outer half extents given): a slot marker's frame (also a dock sign cell's). */
+export function rectRingShape(halfW: number, halfH: number, width: number, radius: number): Shape {
   const shape = roundedRectShape(halfW, halfH, radius, 4);
   shape.holes.push(new Path(roundedRectPoints(halfW - width, halfH - width, Math.max(0.01, radius - width), 4)));
   return shape;

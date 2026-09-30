@@ -13,9 +13,9 @@ const VEHICLE_KEYS = GAME_CONFIG.controls.keyboardMapping === 'vehicle';
 
 /**
  * Control hint, bottom center: on screen the whole time a level is played, in every level (it never fades out on its
- * own). The move row (drive, pick / drop, zoom) and, in levels with storage whose forks go by the keys (`storage`:
- * today the racks'), the fork row under it, in one soft panel. It reserves the bottom band up to its top edge: the
- * camera frames the level above it.
+ * own). The move row (drive, pick / drop, zoom) and, in levels with storage (`storage`: racks, trucks; the forks go by
+ * the keys at every unit), the fork row under it, in one soft panel. It reserves the bottom band up to its top edge:
+ * the camera frames the level above it.
  */
 export function ControlHint({ store, show }: { store: Store<UIState>; show: boolean }) {
   const storage = useStore(store, (s) => s.storage);
@@ -101,8 +101,8 @@ function ZoomGroup() {
 }
 
 /**
- * F / V and the mouse wheel step the forks one level up / down at a storage column whose forks go by the keys (a rack's,
- * docs/RACKS.md). A gamepad's X / B do too, but the hint only lists the keyboard and the mouse.
+ * F / V and the mouse wheel step the forks one level up / down at a storage column (a rack's, a truck's:
+ * docs/STORAGE.md rule 9). A gamepad's X / B do too, but the hint only lists the keyboard and the mouse.
  */
 function ForkRow() {
   return (
