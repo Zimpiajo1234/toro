@@ -84,10 +84,11 @@ export interface UIState {
    */
   benchmark: boolean;
   /**
-   * The level on screen has storage racks: the control hint (always on screen while playing) adds its fork row,
-   * F / V, the wheel and pad X / B (docs/RACKS.md).
+   * The level on screen has storage units whose forks go by the keys (docs/STORAGE.md: logic/storageAccess
+   * hasKeyedForks; today exactly the levels with racks, a truck's forks go by themselves until phase 6): the control
+   * hint (always on screen while playing) adds its fork row, F / V, the wheel and pad X / B.
    */
-  racks: boolean;
+  storage: boolean;
 }
 
 /** Screen bands covered by overlay pieces that stay over the scene while playing, in CSS px from each edge. */
@@ -152,7 +153,7 @@ export const initialUIState: UIState = {
   canContinue: false,
   testMode: false,
   benchmark: false,
-  racks: false,
+  storage: false,
 };
 
 export function createUIStore(): Store<UIState> {

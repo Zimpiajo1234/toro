@@ -3,7 +3,7 @@ import type { BoxState, ColorId } from '../../core/types';
 import { damp, easeInOutSine, easeOutBack, easeOutCubic } from '../../core/math';
 import { GAME_CONFIG } from '../../config';
 import type { BoxPalette } from '../../themes/types';
-import { rackSlotY } from '../dims';
+import type { SupportLook } from '../storage/support';
 import { OneShot, bump } from '../tween';
 import { FLASH_SEC, LOCK_SEC } from './success';
 
@@ -60,7 +60,7 @@ const UP = new Vector3(0, 1, 0);
 const _target = new Vector3();
 const _targetQuat = new Quaternion();
 const _euler = new Euler();
-const NO_SHELVES: ReadonlySet<string> = new Set();
+const NO_STORAGE: ReadonlyMap<string, SupportLook> = new Map();
 
 /**
  * One pickable box. The group carries the visual transform (damped, never teleports) and the
@@ -113,10 +113,11 @@ export class BoxView {
      */
     private readonly lockTint: Color | null = null,
     /**
-     * Ids of the level's storage slots on shelves (support `shelves`: a rack's): a box in one rests on its shelf
-     * (dims rackSlotY); in any other storage slot (a stack: a truck bed) it rests at its stack height, as on the floor.
+     * The support of each of the level's storage slots, by slot id (render/storage SUPPORT_LOOK of its skin's support):
+     * a box stored there rests at that level's floor (on a shelf: dims rackSlotY; in a stack, a truck bed: its stack
+     * height, as on the floor).
      */
-    private readonly shelfSlots: ReadonlySet<string> = NO_SHELVES,
+    private readonly slotSupport: ReadonlyMap<string, SupportLook> = NO_STORAGE,
   ) {
     if (ghostable) {
       // Always transparent (opacity 1 while solid) so fading never switches shader programs mid-game.
@@ -225,14 +226,20 @@ export class BoxView {
     this.applyHighlight(state, isTarget, dt);
   }
 
-  /** Resting height: its stack level, or the floor of its storage shelf. */
+  /** Resting height: its stack level, or the floor of its storage level (by its support). */
   private restY(state: BoxState): number {
-    return this.onShelf(state) ? rackSlotY(state.level) : state.level * this.stackStep;
+    const support = this.supportOf(state);
+    return support ? support.levelY(state.level, this.stackStep) : state.level * this.stackStep;
   }
 
-  /** The box rests in a storage slot on a shelf (a rack slot), not on a stack. */
+  /** The support of the storage slot the box rests in, or null (on the floor, or carried). */
+  private supportOf(state: BoxState): SupportLook | null {
+    return state.slotId !== null ? (this.slotSupport.get(state.slotId) ?? null) : null;
+  }
+
+  /** The box rests in a storage slot on a shelf of its own (a rack slot), not on a stack. */
   private onShelf(state: BoxState): boolean {
-    return state.slotId !== null && this.shelfSlots.has(state.slotId);
+    return this.supportOf(state)?.shelf === true;
   }
 
   private beginPick(): void {

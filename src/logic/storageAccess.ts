@@ -1,5 +1,6 @@
 import { degToRad } from '../core/math';
-import type { StorageAccess } from '../core/types';
+import { storageOf } from '../core/storage';
+import type { LevelData, StorageAccess } from '../core/types';
 
 /**
  * How the rig works at a storage column, by the access of its unit (docs/STORAGE.md «Acceso»): one row per access
@@ -98,3 +99,12 @@ export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAcc
 
 /** The access kinds in engagement priority (STORAGE_ACCESS key order). */
 export const STORAGE_ACCESS_ORDER = Object.keys(STORAGE_ACCESS) as readonly StorageAccess['kind'][];
+
+/**
+ * The level has storage units whose forks go by the keys (F / V, the mouse wheel, pad X / B: every access that is not
+ * `autoForks`): Game shows the fork row for it (UIState.storage) and clicks the fork steps that take effect there. Today
+ * exactly the levels with racks; once phase 6 removes `autoForks`, every level with storage.
+ */
+export function hasKeyedForks(level: Pick<LevelData, 'storage'>): boolean {
+  return storageOf(level).some((unit) => !STORAGE_ACCESS[unit.access.kind].autoForks);
+}

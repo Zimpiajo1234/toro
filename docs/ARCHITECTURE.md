@@ -26,7 +26,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/data/levels/minimums.ts`, `minimumsBuild.ts`, `src/data/levelMinimums.json` | **levels** | The move counter's minimums: `levelMinimum(id)` → `{ moves, exact }` or null, read from the precomputed JSON (never solved at runtime); `minimumsBuild.ts` computes / formats / diffs it for `npm run levels -- --minimos` and `minimums.test.ts` (docs/LEVELS.md, «Mínimos del contador de movimientos») |
 | `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), tests |
-| `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation |
+| `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation; storage units through the skins registry `render/storage/` (`STORAGE_RENDER`, one entry per skin, one interface per unit, heights by support: docs/STORAGE.md) |
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
 | `src/game/**` | **game** | Frame loop, input, wiring, flow between screens |
@@ -390,6 +390,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
+- Storage units (docs/STORAGE.md, «Contratos por capa», render): LevelView builds every unit of `level.storage` through
+  the skins registry (`render/storage/`: `STORAGE_RENDER`, one adapter per skin over its builders and view; the
+  `StorageUnitView` interface: group, a `SlotLight` per level, the chosen-level marker's place, static `fitBox`, ghosting
+  pieces, burst place) and walks one `snapshot.storageSlots` list; heights go by the skin's support (`SUPPORT_LOOK`:
+  shelves at `rackSlotY`, a stack at floor stack heights), never by the skin.
 - Storage racks (docs/RACKS.md, «Render»): their own furniture (`builders/rack.ts`, `views/RackView.ts`): plain
   low-poly slate metal (no diagonal braces), cream beams, open slots, a faint see-through plate at each end (no solid side wall: `END_PLATE`, opacity 0.2, no depth write, so the end column's boxes show through), a back panel per slot, and a
   loading line painted on the floor in front (`Theme.rack`). The cue is an unlit, opaque sticker (`createCueMaterial`)
@@ -400,8 +405,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   hint on an occupied, unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35
   over the forklift or its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
   in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.storage` of a rack,
-  brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
-  slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
+  brighter when `ready`; one marker per skin that has one, placed by its unit); the drop outline floats on the slot
+  floor. At a rack the forks ride just over the selected slot floor (`ForkliftView.sync(…, support)`, support
+  `shelves`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
 - Loading docks (docs/DOCKS.md, «Render»): the dock door is an opening in its wall over the door cells
   (`builders/walls.ts`, `dims.ts` `DOCK`: up to `doorTop` 1.70, over a level-1 load's ≈ 1.62; slate frame on both
   faces, the shutter's bottom rail at the head and its roll outside above the door, rubber seals and bumpers outside,
@@ -525,9 +531,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   band (the camera frames the level below them); under 480 px wide the end corner stacks the counter under the time.
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar · + − zoom" (zoom last, so the row stays
-  one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage racks
-  (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
-  horquilla · rueda" (the pad's X / B also step the forks but are not listed). Trucks add nothing to it (their forks are automatic, no new keys).
+  one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage whose forks go by the
+  keys (`UIState.storage`: logic/storageAccess `hasKeyedForks`, today the levels with racks; published by Game when a
+  level loads), a second row in the same panel: "F V subir / bajar horquilla · rueda" (the pad's X / B also step the
+  forks but are not listed). Trucks add nothing to it (their forks are automatic until phase 6, no new keys).
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
   short windows such as

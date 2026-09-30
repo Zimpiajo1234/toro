@@ -2,13 +2,13 @@ import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
 import { zoneMatchKinds, type MatchKind } from '../core/sorting';
-import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
 import { forkRiseRate } from '../logic/forkRise';
+import { hasKeyedForks } from '../logic/storageAccess';
 import { Timer } from '../logic/Timer';
 import { GameRenderer } from '../render/GameRenderer';
 import { AudioEngine } from '../audio/AudioEngine';
@@ -85,9 +85,12 @@ export class Game implements GameActions {
     actionPressed: false,
     forkStep: 0,
   };
-  /** The level on screen has storage racks: F / V, the wheel and pad X / B step the forks there (docs/RACKS.md). */
-  private levelHasRacks = false;
-  /** Levels with racks: each fork step that takes effect at a rack column gets a soft click. */
+  /**
+   * The level on screen has storage units whose forks go by the keys (logic/storageAccess hasKeyedForks; today its
+   * racks): F / V, the wheel and pad X / B step the forks there (docs/STORAGE.md).
+   */
+  private levelKeyedForks = false;
+  /** Those levels: each fork step that takes effect at a storage column gets a soft click. */
   private readonly forkSteps = new ForkStepWatcher();
 
   private rt: Runtime | null = null;
@@ -495,7 +498,7 @@ export class Game implements GameActions {
       if (wasPlaying && input.zoomStep !== 0) rt.renderer.zoomBy(input.zoomStep);
       if (wasPlaying && input.zoom !== 0) rt.renderer.zoomTrack(input.zoom);
       const driving = Math.abs(frame.drive.throttle) > MOVE_EPSILON || Math.abs(frame.drive.steer) > MOVE_EPSILON;
-      const forking = frame.forkStep !== 0 && this.levelHasRacks;
+      const forking = frame.forkStep !== 0 && this.levelKeyedForks;
       if (this.resumeTimerOnInput && (frame.actionPressed || driving || forking || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
         // A resumed level's clock picks up on the first input, like a fresh level's.
         this.resumeTimerOnInput = false;
@@ -525,7 +528,7 @@ export class Game implements GameActions {
     // The move counter follows the simulation (a count changes on a drop only: a store write a few times a level).
     if (snapshot.moves !== this.store.get().moves) this.store.set({ moves: snapshot.moves });
 
-    if (this.levelHasRacks) {
+    if (this.levelKeyedForks) {
       // One soft click per fork step that took effect at a storage column (none at the top / bottom, none off a unit).
       const at = snapshot.hint.storage;
       const forkStep = this.forkSteps.observe(at, frame.forkStep);
@@ -741,7 +744,7 @@ export class Game implements GameActions {
   private loadScene(rt: Runtime, level: LevelData): LevelData {
     this.level = level;
     this.zoneMatch = zoneMatchKinds(level);
-    this.levelHasRacks = hasRacks(level);
+    this.levelKeyedForks = hasKeyedForks(level);
     this.forkSteps.reset();
     this.state = new GameState(level);
     rt.renderer.loadLevel(this.state.getSnapshot(), getTheme(level.theme));
@@ -757,7 +760,7 @@ export class Game implements GameActions {
     this.resumeTimerOnInput = false;
     // The control hint's fork row goes with the level on screen; the move counter starts over, against this level's
     // minimum.
-    this.store.set({ racks: this.levelHasRacks, moves: 0, minMoves: shownMinimum(level.id), finished: false });
+    this.store.set({ storage: this.levelKeyedForks, moves: 0, minMoves: shownMinimum(level.id), finished: false });
     return level;
   }
 

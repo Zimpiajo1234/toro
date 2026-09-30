@@ -1,10 +1,11 @@
 import { Group, Mesh, Object3D, type Material } from 'three';
-import type { ForkliftState } from '../../core/types';
+import type { ForkliftState, StorageSupport } from '../../core/types';
 import { TAU, clamp, damp, degToRad, lerp } from '../../core/math';
 import { BEAT_SEC } from '../../core/tempo';
 import { BEACON, BEACON_LIGHT_Y, FORKLIFT_LAYOUT, type ForkliftGeometry } from '../builders/forklift';
 import { FORK, RACK } from '../dims';
 import type { BeaconMaterials } from '../materials';
+import { SUPPORT_LOOK } from '../storage/support';
 import { OneShot, bump } from '../tween';
 
 const MAX_TILT = degToRad(3);
@@ -184,14 +185,14 @@ export class ForkliftView {
   }
 
   /**
-   * `atRack`: the rig works at a storage column whose levels are shelves (hint.storage of support `shelves`: a rack
-   * column). There forkHeight counts slot levels (dims rackSlotY) and the forks ride just over the selected slot floor,
-   * empty or under the load, so it clears the beam above; at a stack (a truck bed) it counts stack levels, as anywhere
-   * else.
+   * `support`: the support of the storage column the rig works at (hint.storage's skin, core/storage STORAGE_SKINS),
+   * null off storage; its heights come from render/storage SUPPORT_LOOK, never from the skin. On shelves of their own
+   * (a rack column) forkHeight counts shelf levels and the forks ride just over the chosen shelf's floor, empty or under
+   * the load, so it clears the beam above; in a stack (a truck bed) it counts stack levels, as on the floor.
    */
-  sync(state: ForkliftState, dt: number, time: number, atRack = false): void {
+  sync(state: ForkliftState, dt: number, time: number, support: StorageSupport | null = null): void {
     const { tuning } = this;
-    const rackTarget = atRack ? 1 : 0;
+    const rackTarget = support !== null && SUPPORT_LOOK[support].shelf ? 1 : 0;
     this.rackBlend = dt > 0 ? damp(this.rackBlend, rackTarget, RACK_BLEND_LAMBDA, dt) : rackTarget;
     if (Math.abs(this.rackBlend - rackTarget) < 1e-4) this.rackBlend = rackTarget;
     const blend = this.rackBlend;
@@ -222,8 +223,9 @@ export class ForkliftView {
     if (this.stackLift < 1e-4) this.stackLift = 0;
     const forkLift = clamp(state.forkLift, 0, 1);
     const floorY = lerp(FORK.downY, FORK.upY, forkLift);
-    const stackY = floorY + this.stackLift * (tuning.stackStep ?? 0);
-    const rackY = RACK.base + this.stackLift * RACK.pitch + lerp(RACK.forkRest, RACK.forkCarry, forkLift);
+    // Stack levels (the floor, a truck bed) over the floor fork height; on shelves, just over the chosen shelf's floor.
+    const stackY = floorY + SUPPORT_LOOK.stack.levelY(this.stackLift, tuning.stackStep ?? 0);
+    const rackY = SUPPORT_LOOK.shelves.levelY(this.stackLift, tuning.stackStep ?? 0) + lerp(RACK.forkRest, RACK.forkCarry, forkLift);
     let forkY = lerp(stackY, rackY, blend);
     const extra = Math.max(0, forkY - floorY);
     this.innerMast.visible = extra > 1e-3;

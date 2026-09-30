@@ -1,7 +1,7 @@
 import { CylinderGeometry, type BufferGeometry, type Vector3 } from 'three';
 import type { DockRail } from '../../core/docks';
 import { clamp } from '../../core/math';
-import type { LevelData, LevelTruck, WallSide } from '../../core/types';
+import type { LevelData, LevelTruck, TruckCue, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { DIORAMA, DOCK } from '../dims';
 import { PartList, type Placement } from '../paint';
@@ -31,7 +31,7 @@ import { DOOR, dockSpan } from './walls';
  *   buildSignGlowGeometry): a framed grid with one cell per bed column (right above its door cell, so left to right it
  *   reads as the door cells from either face) and per level (bottom row = level 0), each cell a lit cream panel with
  *   the rack sticker of its level's cue on both faces, upright and unmirrored for whoever looks at that face. The cell
- *   of a column with fewer levels than the tallest one stays a plain panel.
+ *   of a column with fewer levels than the tallest one (or of a «libre» level) stays a plain panel.
  */
 
 export const TRUCK = {
@@ -114,8 +114,15 @@ export const SIGN_GLOW: GlowFrameDims & { halfH: number; gap: number } = {
   gap: 0.004,
 };
 
-/** Success burst of a truck level (LevelView): its ring hugs the box's face on the door plane. */
+/** Success burst of a truck level (render/storage truck `burstAt`): its ring hugs the box's face on the door plane. */
 export const TRUCK_BURST = { halfW: 0.44 } as const;
+
+/**
+ * What the dock builders read of a unit loaded through a dock door (render/storage truck: a LevelStorage of skin
+ * `truck`; a LevelTruck reads the same): its wall, its first door cell and, per bed column, its levels' cues bottom
+ * → top (null = «libre»: its sign cell stays a plain panel).
+ */
+export type DockShape = Pick<LevelTruck, 'wall' | 'x' | 'z'> & { readonly columns: readonly (readonly (TruckCue | null)[])[] };
 
 /**
  * Guard rail of a dock door (buildDockRails), dock-local, inside the footprint the logic gives it (core/docks DockRail:
@@ -146,12 +153,12 @@ export function dockColumnX(truck: Pick<LevelTruck, 'wall' | 'x' | 'z'>, level: 
 }
 
 /** Place of bed column `column` along the door run, from its start (dockSpan a): a west dock's columns run backward. */
-function runIndex(truck: Pick<LevelTruck, 'wall' | 'columns'>, column: number): number {
+function runIndex(truck: Pick<DockShape, 'wall' | 'columns'>, column: number): number {
   return truck.wall === 'north' ? column : truck.columns.length - 1 - column;
 }
 
 /** Rows of the truck's sign: the levels of its tallest bed column. */
-export function signRows(truck: Pick<LevelTruck, 'columns'>): number {
+export function signRows(truck: Pick<DockShape, 'columns'>): number {
   let rows = 1;
   for (const column of truck.columns) rows = Math.max(rows, column.length);
   return rows;
@@ -190,7 +197,7 @@ export interface SignCell {
  * door cell along the wall and at signRowY(level); x along the wall like dock-local x): the outer border at the ends
  * of the sign, half a divider toward a neighbouring cell.
  */
-export function signCell(truck: Pick<LevelTruck, 'wall' | 'columns'>, column: number, level: number): SignCell {
+export function signCell(truck: Pick<DockShape, 'wall' | 'columns'>, column: number, level: number): SignCell {
   const S = DOCK_SIGN;
   const n = truck.columns.length;
   const rows = signRows(truck);
@@ -231,7 +238,7 @@ function addWheel(parts: PartList, theme: Theme, x: number, y: number, z: number
  * lap onto the truck's bed out past the wall's outer face (between the drop sides), the hinge bar where they meet and
  * three flat treads.
  */
-export function buildDockPlate(truck: LevelTruck, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
+export function buildDockPlate(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
   const c = theme.truck;
   const P = DOCK_PLATE;
   const T = DIORAMA.wallThickness;
@@ -296,7 +303,7 @@ export function buildDockRails(rails: readonly DockRail[], level: Pick<LevelData
  * pit and two soft guide lines. Nothing of it stands over or between the bed columns. `index` (the truck's place in the
  * level) sets each driveway a hair lower than the one before, so two docks side by side never z-fight.
  */
-export function buildTruckBody(truck: LevelTruck, level: Pick<LevelData, 'size'>, theme: Theme, index = 0): BufferGeometry {
+export function buildTruckBody(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme, index = 0): BufferGeometry {
   const c = theme.truck;
   const T = DIORAMA.wallThickness;
   const { a, b } = dockSpan(truck, level);
@@ -399,10 +406,11 @@ export function buildTruckBody(truck: LevelTruck, level: Pick<LevelData, 'size'>
  * The frame of the dock sign, in world space (a bay of its own, views/TruckView: it ghosts, its stickers never): the
  * slate border round the sign, the dividers between its cells (one column per bed column along the door run, one row
  * per level of its tallest column, bottom row = level 0), the plain cream panel of each cell a shorter column leaves
- * empty, and two slate brackets holding it off the wall, hidden behind its end bars from inside (and beside the
- * stickers, never over them, from outside). A cell with a level gets its own panel (buildSignPanel).
+ * empty (and of a «libre» level: nothing to show), and two slate brackets holding it off the wall, hidden behind its
+ * end bars from inside (and beside the stickers, never over them, from outside). A cell with a cue gets its own panel
+ * (buildSignPanel).
  */
-export function buildSignFrame(truck: LevelTruck, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
+export function buildSignFrame(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
   const c = theme.truck;
   const S = DOCK_SIGN;
   const { a, b } = dockSpan(truck, level);
@@ -422,11 +430,12 @@ export function buildSignFrame(truck: LevelTruck, level: Pick<LevelData, 'size'>
     const y = y0 + S.border + k * S.row;
     local.block(c.doorFrame, a + S.border, b - S.border, y - S.divider / 2, y + S.divider / 2, z0, z1);
   }
-  // The cells a shorter column leaves empty: plain panels, recessed like the lit ones.
+  // The cells a shorter column leaves empty, and those of its «libre» levels: plain panels, recessed like the lit ones.
   const mid = signMidZ();
   truck.columns.forEach((cues, column) => {
     const x = dockColumnX(truck, level, column);
-    for (let k = cues.length; k < rows; k++) {
+    for (let k = 0; k < rows; k++) {
+      if (k < cues.length && cues[k] !== null) continue;
       const cell = signCell(truck, column, k);
       const y = signRowY(k);
       local.block(c.board, x + cell.x0, x + cell.x1, y + cell.y0, y + cell.y1, mid - S.panel / 2, mid + S.panel / 2);

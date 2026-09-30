@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent } from '../core/types';
 import { GAME_CONFIG } from '../config';
-import { hasRacks } from '../core/racks';
 import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
+import { hasKeyedForks } from '../logic/storageAccess';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
 import { ZOOM_KEY_RATE, ZOOM_TAP_STOPS } from './Input';
@@ -1068,7 +1068,7 @@ describe('Game: Benchmark (test mode special level)', () => {
       screen: 'playing',
       benchmark: true,
       levelName: benchmark.name,
-      racks: true,
+      storage: true,
       elapsedMs: 0,
       timerStarted: false,
     });
@@ -1218,17 +1218,17 @@ describe('Game: control hint', () => {
     total: 1,
   };
 
-  it('publishes the level on screen having racks (the fork row) and nothing ever takes the hint away while playing', () => {
+  it('publishes the level on screen having storage with keyed forks (the fork row); nothing takes the hint away while playing', () => {
     const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
     const { game, store } = setup();
     game.start(0);
     advance(0.2);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[0]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasKeyedForks(LEVELS[0]) });
     game.toTitle();
     game.toggleTestMode();
     game.startBenchmark();
     advance(1 / 60);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
 
     // Not a fork step that takes effect, a drop, a restart or the next level of a session: the flag only follows
     // the level on screen (the hint itself shows whenever the screen is 'playing').
@@ -1237,17 +1237,17 @@ describe('Game: control hint', () => {
     tap('KeyV', 'v');
     expect(click).toHaveBeenCalledExactlyOnceWith(1, -1);
     emit(dropped);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
     sim.storage = null;
     game.restart();
     advance(0.2);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
 
     // Esc keeps the Benchmark behind the title (still its level); another level brings its own flag.
     tap('Escape', 'Escape');
-    expect(store.get()).toMatchObject({ screen: 'title', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'title', storage: true });
     game.start(1);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[1]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasKeyedForks(LEVELS[1]) });
     click.mockRestore();
   });
 });

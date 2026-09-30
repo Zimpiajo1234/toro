@@ -196,14 +196,14 @@ describe('Overlay', () => {
     expect(html).not.toContain('>prueba<');
   });
 
-  it('control hint: always the move row while playing and, in levels with racks, the fork row under it', () => {
+  it('control hint: always the move row while playing and, with storage whose forks go by the keys (racks), the fork row under it', () => {
     const plain = render({ screen: 'playing' });
     expect(plain).toMatch(/<div class="hint ui-enter ui-enter--d4" role="note"><p class="hint__row">/);
     expect(plain).toContain('recoger / dejar');
     expect(plain).not.toContain('horquilla');
     expect(plain.match(/class="hint__row"/g)).toHaveLength(1);
 
-    const racks = render({ screen: 'playing', racks: true });
+    const racks = render({ screen: 'playing', storage: true });
     expect(racks).toMatch(/<div class="hint ui-enter ui-enter--d4 hint--rows" role="note">/);
     expect(racks.match(/class="hint__row"/g)).toHaveLength(2);
     // Move row first, fork row under it.
@@ -217,7 +217,7 @@ describe('Overlay', () => {
 
     // Only while playing.
     for (const screen of ['title', 'complete'] as const) {
-      const html = render({ screen, racks: true });
+      const html = render({ screen, storage: true });
       expect(html).not.toContain('recoger / dejar');
       expect(html).not.toContain('horquilla');
     }
@@ -227,7 +227,7 @@ describe('Overlay', () => {
     const screens: Partial<UIState>[] = [
       { screen: 'title', levels },
       { screen: 'playing' },
-      { screen: 'playing', racks: true },
+      { screen: 'playing', storage: true },
       { screen: 'complete', result: result({}) },
     ];
     for (const patch of screens) {
@@ -253,8 +253,8 @@ describe('Overlay', () => {
     expect(plain.match(/class="hint__row"/g)).toHaveLength(1);
     expect(plain.match(/>zoom</g)).toHaveLength(1);
 
-    // With racks: still in the move row, before the fork row; the wheel stays with the forks (never "zoom").
-    const racks = render({ screen: 'playing', racks: true });
+    // With the fork row (racks): still in the move row, before it; the wheel stays with the forks (never "zoom").
+    const racks = render({ screen: 'playing', storage: true });
     expect(racks.match(/class="hint__row"/g)).toHaveLength(2);
     const forkRowAt = racks.lastIndexOf('<p class="hint__row">');
     expect(racks.indexOf(ZOOM_GROUP)).toBeGreaterThan(0);
@@ -263,7 +263,7 @@ describe('Overlay', () => {
     expect(racks.slice(forkRowAt)).toContain('rueda');
 
     for (const screen of ['title', 'complete'] as const) {
-      expect(render({ screen, racks: true })).not.toContain(ZOOM_GROUP);
+      expect(render({ screen, storage: true })).not.toContain(ZOOM_GROUP);
     }
   });
 

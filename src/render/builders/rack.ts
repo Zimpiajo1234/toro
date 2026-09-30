@@ -1,7 +1,7 @@
 import { BufferAttribute, BufferGeometry, Path, PlaneGeometry, Shape, ShapeGeometry, Vector2 } from 'three';
 import { FACING_X, FACING_Z, runsAlongX } from '../../core/racks';
 import { cueOf } from '../../core/sorting';
-import type { Facing, LevelData, LevelRack } from '../../core/types';
+import type { Facing, LevelData, LevelRack, RackSlot } from '../../core/types';
 import type { GlyphShape, Theme } from '../../themes/types';
 import { RACK, rackSlotY } from '../dims';
 import { glyphShape } from '../glyphs';
@@ -90,9 +90,16 @@ const MARKER = {
 export const SLOT_GLOW = { halfW: 0.45, solidX: 0.035, solidY: 0.035, featherX: 0.045, featherY: 0.012, radius: 0.05, gap: 0.006 } as const;
 
 /**
- * What a slot's cue shows (LevelView picks it from the theme): `fill` = the colour of the box it asks for (the neutral
- * cue fill for a symbol only), `rim` its outline, `glyph` the symbol drawn in `ink` (or none), `lip` the tape on the
- * slot's front lip.
+ * What the rack builders read of a unit loaded from its front (render/storage rack: a LevelStorage of skin `rack`; a
+ * LevelRack reads the same): its first cell, its front's facing and, per column, its slots' cues bottom → top («libre»
+ * = null, or a cue asking for nothing).
+ */
+export type RackShape = Pick<LevelRack, 'x' | 'z' | 'facing'> & { readonly columns: readonly (readonly (RackSlot | null)[])[] };
+
+/**
+ * What a slot's cue shows (render/storage picks it from the theme): `fill` = the colour of the box it asks for (the
+ * neutral cue fill for a symbol only), `rim` its outline, `glyph` the symbol drawn in `ink` (or none), `lip` the tape
+ * on the slot's front lip.
  */
 export interface CueLook {
   fill: string;
@@ -134,7 +141,7 @@ export function rackTopY(levels: number): number {
  * of rack-local space and the last one the +x end (a one-column rack both). Slot-local x is rack-local x turned with
  * the front (outwardYaw), so it flips for racks facing north or east. Middle columns close no end: [].
  */
-export function cueEndSides(rack: Pick<LevelRack, 'facing' | 'columns'>, column: number): (1 | -1)[] {
+export function cueEndSides(rack: Pick<RackShape, 'facing' | 'columns'>, column: number): (1 | -1)[] {
   const out = outwardZ(rack.facing);
   const sides: (1 | -1)[] = [];
   if (column === 0) sides.push(out === 1 ? -1 : 1);
@@ -150,7 +157,7 @@ export function cueEndSides(rack: Pick<LevelRack, 'facing' | 'columns'>, column:
  * plate of each end (END_PLATE; one geometry per end column, both ends in one for a one-column rack), tagged with that
  * column (endPlateColumn): views/RackView draws it apart, faint, with its bay.
  */
-export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry[] {
+export function buildRackBays(rack: RackShape, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry[] {
   const c = theme.rack;
   const w = rack.columns.length;
   const bays = rack.columns.map(() => new PartList());
@@ -210,7 +217,8 @@ export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, t
       }
     }
     for (let k = 0; k < n; k++) {
-      if (cueOf(slots[k]) !== null) continue;
+      const slot = slots[k];
+      if (slot !== null && cueOf(slot) !== null) continue;
       const y = rackSlotY(k);
       const m = col + 0.5;
       block(col, c.panel, m - RACK_PANEL.halfW, m + RACK_PANEL.halfW, y, y + PANEL_HEIGHT, RACK_PANEL.d0, RACK_PANEL.d1);
@@ -237,7 +245,7 @@ export function endPlateColumn(geometry: BufferGeometry): number | null {
  * Loading line on the floor in front of each column (the `facing` side), in world space: a stop line along the face
  * and two short bay marks, the rack's own soft slate (never a functional hue).
  */
-export function addRackLines(parts: PartList, rack: LevelRack, level: Pick<LevelData, 'size'>, theme: Theme): void {
+export function addRackLines(parts: PartList, rack: RackShape, level: Pick<LevelData, 'size'>, theme: Theme): void {
   const local = new PartList();
   const out = outwardZ(rack.facing);
   const L = LOADING_LINE;

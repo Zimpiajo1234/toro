@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry, Color, CylinderGeometry, PlaneGeometry, Vector3 } from 'three';
-import { trucksOf } from '../../core/docks';
+import { storageOf } from '../../core/storage';
 import type { LevelData, LevelTruck, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { DIORAMA, DOCK } from '../dims';
@@ -115,10 +115,13 @@ export function wallLayouts(level: LevelData): WallLayout[] {
       west.openings.push({ a: d - win.at - win.width + inset, b: d - win.at - inset, cells: win.width });
     }
   }
-  for (const truck of trucksOf(level)) {
-    const span = dockSpan(truck, level);
+  // Every storage unit loaded through a door (docs/STORAGE.md access `door`: a truck) opens its dock door in its wall.
+  for (const unit of storageOf(level)) {
+    if (unit.access.kind !== 'door') continue;
+    const { wall } = unit.access;
+    const span = dockSpan({ wall, x: unit.x, z: unit.z, columns: unit.columns }, level);
     const door = { a: span.a + DOCK.doorInset, b: span.b - DOCK.doorInset };
-    (truck.wall === 'north' ? north : west).doors.push(door);
+    (wall === 'north' ? north : west).doors.push(door);
   }
   for (const layout of [north, west]) {
     layout.openings.sort((p, q) => p.a - q.a);
@@ -127,11 +130,14 @@ export function wallLayouts(level: LevelData): WallLayout[] {
   return [north, west];
 }
 
+/** What a dock door's run reads of its unit: its wall, its first door cell and its columns (one per door cell). */
+export type DockRun = Pick<LevelTruck, 'wall' | 'x' | 'z'> & { readonly columns: { readonly length: number } };
+
 /**
  * The run of a truck's bed cells along its wall, in the wall's local x (see wallLayouts): a north dock's column c
  * spans x + c‥x + c + 1; a west dock's runs the other way (local x = depth − z), so its first column is the last span.
  */
-export function dockSpan(truck: Pick<LevelTruck, 'wall' | 'x' | 'z' | 'columns'>, level: Pick<LevelData, 'size'>): { a: number; b: number } {
+export function dockSpan(truck: DockRun, level: Pick<LevelData, 'size'>): { a: number; b: number } {
   const n = truck.columns.length;
   if (truck.wall === 'north') return { a: truck.x, b: truck.x + n };
   const d = level.size.depth;

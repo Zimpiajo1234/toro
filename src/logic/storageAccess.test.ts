@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STORAGE_SKINS } from '../core/storage';
-import { STORAGE_ACCESS, STORAGE_ACCESS_ORDER } from './storageAccess';
+import type { LevelStorage, StorageAccess, StorageSkin } from '../core/types';
+import { STORAGE_ACCESS, STORAGE_ACCESS_ORDER, hasKeyedForks } from './storageAccess';
 
 describe('STORAGE_ACCESS (docs/STORAGE.md «Acceso»)', () => {
   it('one row per access, a rack first: the numbers of the table', () => {
@@ -22,5 +23,15 @@ describe('STORAGE_ACCESS (docs/STORAGE.md «Acceso»)', () => {
   it('TEMPORARY until phase 6: the forks go by themselves only through a door (the truck), keyed at a rack', () => {
     expect(STORAGE_ACCESS.front.autoForks).toBe(false);
     expect(STORAGE_ACCESS.door.autoForks).toBe(true);
+  });
+
+  it('hasKeyedForks: a level with a unit whose forks go by the keys (today: a rack; the fork row, the clicks)', () => {
+    const unit = (id: string, skin: StorageSkin, access: StorageAccess): LevelStorage => ({ id, skin, x: 1, z: 0, w: 1, access, columns: [[{ color: 'blue' }]] });
+    const rack = unit('r1', 'rack', { kind: 'front', facing: 'south' });
+    const truck = unit('t1', 'truck', { kind: 'door', wall: 'north' });
+    expect(hasKeyedForks({})).toBe(false);
+    expect(hasKeyedForks({ storage: [rack] })).toBe(true);
+    expect(hasKeyedForks({ storage: [truck, { ...truck, id: 't2', x: 3 }] })).toBe(false);
+    expect(hasKeyedForks({ storage: [rack, truck] })).toBe(true);
   });
 });
