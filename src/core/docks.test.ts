@@ -105,13 +105,13 @@ describe('core/docks geometry', () => {
     const T = DOCK_RAIL.thickness;
     // A north door over x 2‥4: its side cells (1,0) and (4,0), its rails just inside the ends of the run.
     expect(dockRailsOf({ ...withTrucks(NORTH), size })).toEqual([
-      { truckIndex: 0, wall: 'north', end: 0, side: { x: 1, z: 0 }, line: 2 + DOOR_JAMB, outer: 2 + DOOR_JAMB - T, from: 0, to: 1 },
-      { truckIndex: 0, wall: 'north', end: 1, side: { x: 4, z: 0 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
+      { unitId: 't1', wall: 'north', end: 0, side: { x: 1, z: 0 }, line: 2 + DOOR_JAMB, outer: 2 + DOOR_JAMB - T, from: 0, to: 1 },
+      { unitId: 't1', wall: 'north', end: 1, side: { x: 4, z: 0 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
     ]);
     // A west door over z 1‥3: along column 0, from the west wall's inner face (x = 0) one cell in.
     expect(dockRailsOf({ ...withTrucks(NORTH, WEST), size }).slice(2)).toEqual([
-      { truckIndex: 1, wall: 'west', end: 0, side: { x: 0, z: 0 }, line: 1 + DOOR_JAMB, outer: 1 + DOOR_JAMB - T, from: 0, to: 1 },
-      { truckIndex: 1, wall: 'west', end: 1, side: { x: 0, z: 3 }, line: 3 - DOOR_JAMB, outer: 3 - DOOR_JAMB + T, from: 0, to: 1 },
+      { unitId: 't2', wall: 'west', end: 0, side: { x: 0, z: 0 }, line: 1 + DOOR_JAMB, outer: 1 + DOOR_JAMB - T, from: 0, to: 1 },
+      { unitId: 't2', wall: 'west', end: 1, side: { x: 0, z: 3 }, line: 3 - DOOR_JAMB, outer: 3 - DOOR_JAMB + T, from: 0, to: 1 },
     ]);
     // A run that reaches a corner of the room has no side cell (and no rail) at that end.
     expect(dockRailsOf({ ...withTrucks({ ...NORTH, x: 0 }), size }).map((r) => [r.end, r.side])).toEqual([[1, { x: 2, z: 0 }]]);
@@ -131,16 +131,15 @@ describe('core/docks geometry', () => {
 
 describe('truck levels as targets (core/sorting)', () => {
   it('targets end with every truck level; destinies come from the unique assignment', () => {
-    expect(targetsOf(level).map((t) => [t.kind, t.id, t.index])).toEqual([
-      ['truck', 't1:0:0', 0],
-      ['truck', 't1:0:1', 1],
-      ['truck', 't1:1:0', 2],
+    expect(targetsOf(level).map((t) => [t.kind, t.skin, t.id, t.index])).toEqual([
+      ['slot', 'truck', 't1:0:0', 0],
+      ['slot', 'truck', 't1:0:1', 1],
+      ['slot', 'truck', 't1:1:0', 2],
     ]);
     // «azul» takes the only blue box; so «▲» is mint ▲'s, and coral ◆ its exact level.
     expect(levelDestinies(level)).toEqual({
       zones: [],
-      slots: [],
-      trucks: [
+      slots: [
         { color: 'blue', symbol: 'triangle' },
         { color: 'mint', symbol: 'triangle' },
         { color: 'coral', symbol: 'diamond' },

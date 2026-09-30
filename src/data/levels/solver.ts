@@ -51,7 +51,8 @@ import {
 } from '../../core/types';
 import { assignBoxes, criteriaOf, cueOf, levelDestinies, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
 import { racksOf, rackCellOf, slotsOf } from '../../core/racks';
-import { truckColumnsOf, usesTargetRules } from '../../core/docks';
+import { truckColumnsOf, truckSlotIdOf, usesTargetRules } from '../../core/docks';
+import { storageSlotsOf } from '../../core/storage';
 
 /* ------------------------------------------------------------------ */
 /* Grid model                                                          */
@@ -186,19 +187,22 @@ export class LevelGrid {
       this.bedAtPose[door * 4 + INWARD_DIR[bed.facing]] = pos;
     });
     const destinies = levelDestinies(level);
+    // Destinies are per storage slot of any skin (core/sorting LevelDestinies.slots, core/storage storageSlotsOf order);
+    // the positions here read them by slot id until phase 4 (one table of positions for every unit).
+    const destinyOf = new Map(storageSlotsOf(level).map((slot, i) => [slot.id, destinies?.slots[i] ?? null]));
     level.zones.forEach((zone, i) => {
       const destined = destinies?.zones[i];
       this.steps[this.index(zone.x, zone.z)] = destined ? [{ color: destined.color, symbol: destined.symbol }] : zoneSteps(zone);
     });
     slots.forEach((slot, i) => {
-      const destined = destinies?.slots[i];
+      const destined = destinyOf.get(slot.id);
       const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
       this.steps[this.cellCount + i] = destined ? [{ color: destined.color, symbol: destined.symbol }] : cue ? [cue] : null;
     });
     beds.forEach((bed, i) => {
       // Each level asks for its destined kind (its cue if the level has no unique assignment, as a hand-built one).
       this.steps[this.bedBase + i] = bed.cues.map((cue, lvl) => {
-        const destined = destinies?.trucks[bed.firstSlot + lvl];
+        const destined = destinyOf.get(truckSlotIdOf(bed.truck.id, bed.column, lvl));
         return destined ? { color: destined.color, symbol: destined.symbol } : { ...cue };
       });
     });

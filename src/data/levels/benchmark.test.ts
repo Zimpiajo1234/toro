@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runsAlongX, frontCellOf, rackCellOf, racksOf, slotsOf, FACING_X, FACING_Z } from '../../core/racks';
 import { dockRailsOf, truckColumnsOf, truckSlotsOf, trucksOf } from '../../core/docks';
+import { storageSlotsOf } from '../../core/storage';
 import { assignmentsOf, criteriaOf, cueOf, levelDestinies, matchKind, meets, sameKind, sortableOf, targetsOf, type Sortable } from '../../core/sorting';
 import { MAX_TRUCK_COLUMNS, MAX_TRUCK_LEVELS, type LevelData } from '../../core/types';
 import { parseLevel, renderLevel } from '../asciiLevel';
@@ -195,9 +196,9 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     }
     const destinies = levelDestinies(level)!;
     const destinyOf = (t: (typeof targets)[number]) =>
-      t.kind === 'zone' ? destinies.zones[t.index] : t.kind === 'slot' ? destinies.slots[t.index]! : destinies.trucks[t.index];
+      t.kind === 'zone' ? destinies.zones[t.index] : destinies.slots[t.index]!;
     targets.forEach((t, i) => expect(sameKind(got[i]!, destinyOf(t)), t.id).toBe(true));
-    expect(targets.filter((t) => t.kind === 'truck')).toHaveLength(truckSlotsOf(level).length);
+    expect(targets.filter((t) => t.skin === 'truck')).toHaveLength(truckSlotsOf(level).length);
     // The deduction is written down for whoever designs or tests with it.
     expect(source.notes.join('\n')).toMatch(/deducción/i);
     expect(source.notes.length).toBeGreaterThanOrEqual(4);
@@ -226,9 +227,9 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
     expect(loaded).toHaveLength(1);
     const [box] = loaded;
-    const ref = truckSlotsOf(level).findIndex((s) => s.cell.x === box.x && s.cell.z === box.z && s.level === box.level);
-    expect(sameKind(destinies.trucks[ref], sortableOf(box))).toBe(false);
-    expect(sameKind(destinies.trucks[ref + 1], sortableOf(box))).toBe(true);
+    const ref = storageSlotsOf(level).findIndex((s) => s.cell.x === box.x && s.cell.z === box.z && s.level === box.level);
+    expect(sameKind(destinies.slots[ref]!, sortableOf(box))).toBe(false);
+    expect(sameKind(destinies.slots[ref + 1]!, sortableOf(box))).toBe(true);
   });
 
   it('the corridor box only comes out in reverse: without the reverse gear it cannot be carried anywhere', () => {

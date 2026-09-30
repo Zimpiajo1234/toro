@@ -273,10 +273,10 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // .level), and the cell just past that end along the wall, behind the rail, holds a static obstacle (a plant, a shelf
   // or a rack); a run reaching a corner of the room has no rail there. A rack in that cell never faces a door cell: the
   // rail would stand right across its front.
-  /** The unit of each dock door, in dockRailsOf's `truckIndex` order. */
-  const doors = units.flatMap((unit, u) => (unit.access.kind === 'door' ? [u] : []));
+  /** How messages name each unit, by its id (a rail names the unit of its door). */
+  const nameOf = new Map(units.map((unit, u) => [unit.id, names[u]]));
   for (const rail of dockRailsOf({ storage: units, size: { width, depth } })) {
-    const door = names[doors[rail.truckIndex]];
+    const door = nameOf.get(rail.unitId)!;
     const k = cellKey(rail.side);
     const other = doorCells.get(k);
     if (other)
@@ -450,7 +450,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (recipeZone >= 0) fail(`zones[${recipeZone}] asks for a stack: in a level with storage racks floor stacks only park boxes`);
     const targets = targetsOf(withStorage);
     if (targets.length === 0) fail('a level needs at least one zone or rack slot with a cue');
-    const truckLevels = targets.filter((t) => t.kind === 'truck').length;
+    const truckLevels = targets.filter((t) => t.skin === 'truck').length;
     if (boxes.length !== targets.length)
       fail(
         hasTrucks

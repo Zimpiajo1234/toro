@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { racksOf, slotsOf } from '../core/racks';
 import { truckSlotsOf } from '../core/docks';
 import { cueFits, isDestined } from '../core/sorting';
-import type { GameEvent } from '../core/types';
+import type { GameEvent, GameSnapshot } from '../core/types';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
 import { LevelGrid, misplacedCount } from '../data/levels/solver';
 import { GameState } from '../logic/GameState';
@@ -27,6 +27,9 @@ type Dropped = Extract<GameEvent, { type: 'boxDropped' }>;
 type Picked = Extract<GameEvent, { type: 'boxPicked' }>;
 const drops = (events: readonly GameEvent[]) => events.filter((e): e is Dropped => e.type === 'boxDropped');
 const picks = (events: readonly GameEvent[]) => events.filter((e): e is Picked => e.type === 'boxPicked');
+/** The live storage slots of each skin (snapshot.storageSlots: rack slots, then truck levels). */
+const rackSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'rack');
+const truckSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'truck');
 
 describe('the Benchmark is playable with the real controls', () => {
   it.each([
@@ -43,17 +46,17 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(out.controls.forkSteps).toBeGreaterThan(0);
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
     // Both racks loaded, the top slots too; boxes taken out of slots, the one parked high in the back rack included.
-    const inSlots = drops(out.events).filter((d) => d.slotId !== undefined);
+    const inSlots = drops(out.events).filter((d) => d.skin === 'rack');
     for (const rack of racksOf(level)) expect(inSlots.some((d) => d.slotId!.startsWith(`${rack.id}:`)), rack.id).toBe(true);
     expect(inSlots.some((d) => d.level === 2)).toBe(true);
     expect(inSlots.every((d) => d.zoneId === null)).toBe(true);
-    const fromSlots = picks(out.events).filter((p) => p.fromSlotId !== undefined);
+    const fromSlots = picks(out.events).filter((p) => p.skin === 'rack');
     expect(fromSlots.some((p) => p.level === 2)).toBe(true);
     // The truck: its wrong load taken off from the front, every level loaded, one on top of a locked box, at the
     // automatic fork height (no F / V there: the presses above are all at the racks).
-    expect(picks(out.events).filter((p) => p.fromTruckSlotId !== undefined).map((p) => p.fromTruckSlotId)).toEqual(['t1:0:0']);
-    const onTruck = drops(out.events).filter((d) => d.truckSlotId !== undefined);
-    expect(onTruck.filter((d) => d.correct).map((d) => d.truckSlotId).sort()).toEqual(truckSlotsOf(level).map((s) => s.id).sort());
+    expect(picks(out.events).filter((p) => p.skin === 'truck').map((p) => p.fromSlotId)).toEqual(['t1:0:0']);
+    const onTruck = drops(out.events).filter((d) => d.skin === 'truck');
+    expect(onTruck.filter((d) => d.correct).map((d) => d.slotId).sort()).toEqual(truckSlotsOf(level).map((s) => s.id).sort());
     expect(onTruck.every((d) => d.zoneId === null && d.recipeLength === 1)).toBe(true);
     expect(onTruck.some((d) => d.level === 1 && d.correct)).toBe(true);
     // Everything lit at the end: the last drop completes the last target.
@@ -73,14 +76,14 @@ describe('the Benchmark is playable with the real controls', () => {
 describe('the Benchmark in the live game state', () => {
   it('starts with its trap: mint ◆ fits the «menta» slot but is not its box (dark, not wrong); mint ▲ sits in a slot it does not fit', () => {
     const snap = new GameState(level).getSnapshot();
-    const boxOf = (slotId: string) => snap.boxes.find((b) => b.id === snap.slots.find((s) => s.id === slotId)!.occupiedBy)!;
-    const mintSlot = snap.slots.find((s) => s.accepts?.color === 'mint' && s.accepts.symbol === undefined)!;
+    const boxOf = (slotId: string) => snap.boxes.find((b) => b.id === rackSlots(snap).find((s) => s.id === slotId)!.occupiedBy)!;
+    const mintSlot = rackSlots(snap).find((s) => s.accepts?.color === 'mint' && s.accepts.symbol === undefined)!;
     const trap = boxOf(mintSlot.id);
     expect(trap).toMatchObject({ color: 'mint', symbol: 'diamond', correct: false });
     expect(cueFits(mintSlot, trap)).toBe(true);
     expect(isDestined(mintSlot, trap)).toBe(false);
     expect(mintSlot.satisfied).toBe(false);
-    const diamondSlot = snap.slots.find((s) => s.accepts?.symbol === 'diamond' && s.accepts.color === undefined)!;
+    const diamondSlot = rackSlots(snap).find((s) => s.accepts?.symbol === 'diamond' && s.accepts.color === undefined)!;
     const wrong = boxOf(diamondSlot.id);
     expect(wrong).toMatchObject({ color: 'mint', symbol: 'triangle', correct: false });
     expect(cueFits(diamondSlot, wrong)).toBe(false);
@@ -92,10 +95,10 @@ describe('the Benchmark in the live game state', () => {
 
   it('starts with a wrong truck load: yellow ■ on the «azul» level, whose destiny is the «■» level right above it', () => {
     const snap = new GameState(level).getSnapshot();
-    const [azul, square, exact] = snap.truckSlots!;
+    const [azul, square, exact] = truckSlots(snap);
     expect([azul.accepts, square.accepts, exact.accepts]).toEqual([{ color: 'blue' }, { symbol: 'square' }, { color: 'yellow', symbol: 'cross' }]);
     const load = snap.boxes.find((b) => b.id === azul.occupiedBy)!;
-    expect(load).toMatchObject({ color: 'yellow', symbol: 'square', truckSlotId: azul.id, correct: false, locked: false });
+    expect(load).toMatchObject({ color: 'yellow', symbol: 'square', slotId: azul.id, correct: false, locked: false });
     expect(cueFits(azul, load)).toBe(false);
     expect(isDestined(square, load)).toBe(true);
     expect([azul.satisfied, azul.loadable, square.loadable, exact.loadable]).toEqual([false, false, false, true]);
@@ -103,7 +106,7 @@ describe('the Benchmark in the live game state', () => {
 
   it('parks at height: the mint swap done in its own column, through the «libre» slot on top, in the fewest moves', () => {
     const snap = new GameState(level).getSnapshot();
-    const [mintSlot, diamondSlot, top] = snap.slots.filter((s) => s.rackId === 'r1' && s.column === 0);
+    const [mintSlot, diamondSlot, top] = rackSlots(snap).filter((s) => s.unitId === 'r1' && s.column === 0);
     expect([mintSlot.accepts, diamondSlot.accepts, top.accepts]).toEqual([{ color: 'mint' }, { symbol: 'diamond' }, null]);
     const at = (id: string) => grid.cellCount + slotIndex(id);
     const swap = [
@@ -125,7 +128,7 @@ describe('the Benchmark in the live game state', () => {
 
   it('a truck level that fits but is not the destiny: blue ▲ loaded on «azul» buzzes softly, stays pickable, then moves on', () => {
     const snap = new GameState(level).getSnapshot();
-    const [azul] = snap.truckSlots!;
+    const [azul] = truckSlots(snap);
     const bed = grid.posOf(azul.cell.x, azul.cell.z); // its bed column, outside the map
     const pile = snap.boxes.find((b) => b.color === 'blue' && b.symbol === 'triangle')!;
     // Unload the wrong box (parked east, out of the way), then the trap: blue ▲ off the floor stack onto «azul».
@@ -139,16 +142,16 @@ describe('the Benchmark in the live game state', () => {
     const [unload, trap] = drops(out.events);
     expect(unload).toMatchObject({ cell: { x: 10, z: 1 }, zoneId: null, correct: false });
     expect(unload).not.toHaveProperty('wrongTarget'); // plain floor is never a target
-    expect(trap).toMatchObject({ boxId: pile.id, truckSlotId: azul.id, level: 0, zoneId: null, correct: false, recipeLength: 1, wrongTarget: true });
+    expect(trap).toMatchObject({ boxId: pile.id, slotId: azul.id, skin: 'truck', level: 0, zoneId: null, correct: false, recipeLength: 1, wrongTarget: true });
     // It is taken back off the truck later, and ends on its own destiny (the ▲ zone).
-    expect(picks(out.events).some((p) => p.boxId === pile.id && p.fromTruckSlotId === azul.id)).toBe(true);
+    expect(picks(out.events).some((p) => p.boxId === pile.id && p.fromSlotId === azul.id)).toBe(true);
     expect(drops(out.events).filter((d) => d.boxId === pile.id).at(-1)).toMatchObject({ correct: true, zoneId: expect.any(String) });
   });
 
   it('recovers from a cue that fits but is not the destiny: yellow ● into the «●» slot stays dark, then moves on', () => {
     const snap = new GameState(level).getSnapshot();
     const yellow = snap.boxes.find((b) => b.color === 'yellow')!;
-    const circle = snap.slots.find((s) => s.accepts?.symbol === 'circle' && s.accepts.color === undefined)!;
+    const circle = rackSlots(snap).find((s) => s.accepts?.symbol === 'circle' && s.accepts.color === undefined)!;
     expect(cueFits(circle, yellow)).toBe(true);
     expect(isDestined(circle, yellow)).toBe(false);
     const out = autopilot(level, 1 / 60, [{ from: grid.index(yellow.cell!.x, yellow.cell!.z), drop: grid.cellCount + slotIndex(circle.id) }]);

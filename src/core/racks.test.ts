@@ -136,7 +136,6 @@ describe('cues and destinies (core/sorting)', () => {
     expect(levelDestinies(rackLevel)).toEqual({
       zones: [box('blue', 'circle')],
       slots: [box('blue', 'triangle'), box('mint', 'triangle'), null],
-      trucks: [],
     });
     expect(levelDestinies({ ...rackLevel, storage: undefined })).toBeNull();
     // Ambiguous (two blue boxes, two «blue» targets): no destinies.

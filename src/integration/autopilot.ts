@@ -44,7 +44,8 @@ const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 
 /**
  * Live stacks from the snapshot (resting boxes by position — floor cell, rack slot or truck bed column, whose cell lies
- * outside the map — ordered by level).
+ * outside the map — ordered by level). A stored box names its level (`slotId`, any skin): the solver's grid reads it
+ * as a rack slot, and a bed cell as its bed column whatever the level.
  */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
@@ -120,16 +121,16 @@ class Pilot {
     this.tick(0, 0);
   }
   /**
-   * In front of a rack column: press F / V until slot `level` is selected, then wait for the forks to stand at it.
-   * False when the rig is not at a rack or it takes too long.
+   * In front of a rack column: press F / V until slot `level` is selected (hint.storage), then wait for the forks to
+   * stand at it. False when the rig is not at a rack or it takes too long.
    */
   selectLevel(level: number, budgetSec = 6): boolean {
     let t = 0;
     for (;;) {
-      const rack = this.snap.hint.rack;
-      if (!rack) return false;
-      if (rack.level === level) break;
-      this.fork(rack.level < level ? 1 : -1);
+      const at = this.snap.hint.storage;
+      if (!at) return false;
+      if (at.level === level) break;
+      this.fork(at.level < level ? 1 : -1);
       if ((t += 2 * this.dt) > budgetSec) return false;
     }
     while (Math.abs(this.snap.forklift.forkHeight - level) > 0.02) {

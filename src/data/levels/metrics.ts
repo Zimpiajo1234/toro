@@ -330,7 +330,7 @@ function ambiguousBoxes(level: LevelData): number {
 function rackTraps(level: LevelData): number {
   const targets = targetsOf(level);
   const kindOf = (t: (typeof targets)[number]) =>
-    t.kind === 'zone' ? zoneKind(level.zones[t.index]) : t.kind === 'slot' ? cueKind(t.criteria) : truckCueKind(t.criteria);
+    t.kind === 'zone' ? zoneKind(level.zones[t.index]) : t.skin === 'truck' ? truckCueKind(t.criteria) : cueKind(t.criteria);
   const boxes = level.boxes.map(sortableOf);
   const traps = new Set<string>();
   boxes.forEach((box, i) => {

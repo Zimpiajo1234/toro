@@ -228,39 +228,29 @@ export function assignmentsOf(boxes: readonly Sortable[], targets: readonly Zone
 }
 
 /**
- * A target of a level with storage (docs/STORAGE.md rule 4): a floor zone, or a storage slot with a cue («libre» slots
- * are never targets) — a rack slot (kind 'slot') or a truck level (kind 'truck': every one has a cue until phase 6).
+ * A target of a level with storage (docs/STORAGE.md rule 4): a floor zone, or a storage slot with a cue in any skin («libre»
+ * slots are never targets): a rack slot, a truck level (every one has a cue until phase 6).
  */
 export interface LevelTarget {
-  kind: 'zone' | 'slot' | 'truck';
+  kind: 'zone' | 'slot';
   /** Zone id or slot id. */
   id: string;
-  /** Index in level.zones, in core/racks `slotsOf` (kind 'slot') or in core/docks `truckSlotsOf` (kind 'truck'). */
+  /** Index in level.zones (kind 'zone') or in core/storage `storageSlotsOf` (kind 'slot'). */
   index: number;
+  /** The skin of the slot's unit (kind 'slot'); null for a zone. */
+  skin: StorageSkin | null;
   criteria: ZoneCriteria;
-}
-
-/** The target kind of a slot of each skin (the shapes of LevelTarget / LevelDestinies stay until phase 3). */
-const SLOT_TARGET: { readonly [S in StorageSkin]: 'slot' | 'truck' } = { rack: 'slot', truck: 'truck' };
-
-/** How many slots of each skin a level has (each skin's slots are the index space of its targets). */
-function slotCounts(level: Pick<LevelData, 'storage'>): Record<StorageSkin, number> {
-  const counts: Record<StorageSkin, number> = { rack: 0, truck: 0 };
-  for (const unit of storageOf(level)) for (const levels of unit.columns) counts[unit.skin] += levels.length;
-  return counts;
 }
 
 /**
  * Every target of a level: its zones (level order), then its storage slots with a cue (core/storage `storageSlotsOf`
- * order: its rack slots, then its truck levels).
+ * order: unit by unit, rule 12: its rack slots, then its truck levels).
  */
 export function targetsOf(level: Pick<LevelData, 'zones' | 'storage'>): LevelTarget[] {
-  const targets: LevelTarget[] = level.zones.map((zone, index) => ({ kind: 'zone', id: zone.id, index, criteria: criteriaOf(zone) }));
-  const next: Record<StorageSkin, number> = { rack: 0, truck: 0 };
-  for (const slot of storageSlotsOf(level)) {
-    const index = next[slot.unit.skin]++;
-    if (slot.cue) targets.push({ kind: SLOT_TARGET[slot.unit.skin], id: slot.id, index, criteria: criteriaOf(slot.cue) });
-  }
+  const targets: LevelTarget[] = level.zones.map((zone, index) => ({ kind: 'zone', id: zone.id, index, skin: null, criteria: criteriaOf(zone) }));
+  storageSlotsOf(level).forEach((slot, index) => {
+    if (slot.cue) targets.push({ kind: 'slot', id: slot.id, index, skin: slot.unit.skin, criteria: criteriaOf(slot.cue) });
+  });
   return targets;
 }
 
@@ -268,10 +258,8 @@ export function targetsOf(level: Pick<LevelData, 'zones' | 'storage'>): LevelTar
 export interface LevelDestinies {
   /** Per zone, in level.zones order. */
   zones: Sortable[];
-  /** Per rack slot, in core/racks `slotsOf` order: its destined kind, null for a «libre» slot. */
+  /** Per storage slot, in core/storage `storageSlotsOf` order (every skin): its destined kind, null for a «libre» one. */
   slots: (Sortable | null)[];
-  /** Per truck slot, in core/docks `truckSlotsOf` order (empty without trucks). */
-  trucks: Sortable[];
 }
 
 /**
@@ -285,14 +273,11 @@ export function levelDestinies(level: Pick<LevelData, 'boxes' | 'zones' | 'stora
   const { count, found } = assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria));
   if (count !== 1) return null;
   const [assignment] = found;
-  const counts = slotCounts(level);
   const zones = new Array<Sortable>(level.zones.length);
-  const slots = new Array<Sortable | null>(counts.rack).fill(null);
-  const trucks = new Array<Sortable>(counts.truck);
+  const slots = new Array<Sortable | null>(storageSlotsOf(level).length).fill(null);
   targets.forEach((t, i) => {
     if (t.kind === 'zone') zones[t.index] = assignment[i];
-    else if (t.kind === 'slot') slots[t.index] = assignment[i];
-    else trucks[t.index] = assignment[i];
+    else slots[t.index] = assignment[i];
   });
-  return { zones, slots, trucks };
+  return { zones, slots };
 }

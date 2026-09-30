@@ -27,7 +27,7 @@
 import type { BoxState, Facing, LevelData, WallSide, ZoneCriteria } from '../core/types';
 import { hasRacks, slotsOf } from '../core/racks';
 import { truckColumnsOf } from '../core/docks';
-import { hasStorage, storageOf, storageSlotsOf } from '../core/storage';
+import { STORAGE_SKINS, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
 import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
@@ -121,7 +121,7 @@ const cellText = (c: { x: number; z: number }) => `${c.x},${c.z}`;
 
 /** Where a live box rests: its storage slot id, else its floor cell and height (and the zone it is on). */
 function boxAt(box: BoxState): string {
-  const slot = box.slotId ?? box.truckSlotId ?? null;
+  const slot = box.slotId;
   if (slot !== null) return slot;
   if (!box.cell) return 'carried';
   return `${cellText(box.cell)}@${box.level}${box.zoneId === null ? '' : `[${box.zoneId}]`}`;
@@ -169,13 +169,13 @@ export function targetsSection(level: LevelData): LevelCharacterization['targets
   const destinies = levelDestinies(level);
   const kinds = zoneMatchKinds(level);
   const destinyOf = (t: (typeof targets)[number]): Sortable | null | undefined =>
-    t.kind === 'zone' ? destinies?.zones[t.index] : t.kind === 'slot' ? destinies?.slots[t.index] : destinies?.trucks[t.index];
+    t.kind === 'zone' ? destinies?.zones[t.index] : destinies?.slots[t.index];
   return {
     rules: { targetRules: hasStorage(level), symbols: usesSymbols(level), forkRow: hasRacks(level) },
     counts: {
       zones: targets.filter((t) => t.kind === 'zone').length,
-      slots: targets.filter((t) => t.kind === 'slot').length,
-      truckLevels: targets.filter((t) => t.kind === 'truck').length,
+      slots: targets.filter((t) => t.skin === 'rack').length,
+      truckLevels: targets.filter((t) => t.skin === 'truck').length,
       assignments: assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria), 2).count,
     },
     destinies: targets.map((t) => {
@@ -237,21 +237,20 @@ export function solverSection(level: LevelData): LevelCharacterization['solver']
   return { lower: result.lower, upper: result.upper, exact: result.exact, unsolvable: result.unsolvable, states: result.states, plan };
 }
 
-/** The live state right after load: progress, every storage slot (rack slots, then truck levels) and every box. */
+/**
+ * The live state right after load: progress, every storage slot (rack slots, then truck levels; a stack's also says
+ * whether it is loadable, as it always did) and every box.
+ */
 export function startSection(level: LevelData): LevelCharacterization['start'] {
   const snap = new GameState(level).getSnapshot();
   const destinedText = (k: Sortable | null) => (k === null ? '-' : kindText(k));
   return {
     progress: `${snap.progress.satisfied}/${snap.progress.total}`,
-    slots: [
-      ...snap.slots.map(
-        (s) => `${s.id} accepts ${cueText(s.accepts)} destined ${destinedText(s.destined)} occupiedBy ${s.occupiedBy ?? '-'} satisfied ${s.satisfied}`,
-      ),
-      ...(snap.truckSlots ?? []).map(
-        (s) =>
-          `${s.id} accepts ${cueText(s.accepts)} destined ${destinedText(s.destined)} occupiedBy ${s.occupiedBy ?? '-'} satisfied ${s.satisfied} loadable ${s.loadable}`,
-      ),
-    ],
+    slots: snap.storageSlots.map(
+      (s) =>
+        `${s.id} accepts ${cueText(s.accepts)} destined ${destinedText(s.destined)} occupiedBy ${s.occupiedBy ?? '-'} satisfied ${s.satisfied}` +
+        (STORAGE_SKINS[s.skin].support === 'stack' ? ` loadable ${s.loadable}` : ''),
+    ),
     boxes: snap.boxes.map((b) => `${b.id} ${kindText(b)} ${boxAt(b)} correct ${b.correct} locked ${b.locked}`),
   };
 }
@@ -264,7 +263,7 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
   for (const e of out.events) {
     if (e.type !== 'boxDropped') continue;
     const floor = `${cellText(e.cell)}@${e.level}${e.zoneId === null ? '' : `[${e.zoneId}]`}`;
-    const to = e.slotId ?? e.truckSlotId ?? floor;
+    const to = e.slotId ?? floor;
     const flags = `${e.correct ? ` ok ${e.satisfiedCount}/${e.total}` : ''}${e.wrongTarget ? ' wrong' : ''}`;
     log.push(`${e.boxId} ${where.get(e.boxId) ?? '?'} → ${to}${flags}`);
     where.set(e.boxId, to);

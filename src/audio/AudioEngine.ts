@@ -1,5 +1,6 @@
 import type { MatchKind } from '../core/sorting';
-import type { GameEvent } from '../core/types';
+import { STORAGE_SKINS } from '../core/storage';
+import type { GameEvent, StorageSkin } from '../core/types';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import type { AudioScene, Rng } from './types';
 import { createAudioGraph, type AudioGraph } from './graph';
@@ -109,21 +110,23 @@ export class AudioEngine {
     this.guard('handleEvent', (rt, now) => {
       switch (event.type) {
         case 'boxPicked':
-          // Out of a rack slot the box eases off a metal beam; anywhere else (a truck bed too: wood), the classic knock.
-          if (event.fromSlotId !== undefined) rt.sfx.slotLift(now, event.level ?? 0);
+          // Out of storage, as its skin sounds (core/storage STORAGE_SKINS): off a rack's metal beam the box eases up;
+          // anywhere else (a truck bed too: wood), the classic knock.
+          if (soundOf(event.fromSlotId, event.skin) === 'metal') rt.sfx.slotLift(now, event.level ?? 0);
           else rt.sfx.pickup(now, event.level ?? 0);
           break;
         case 'boxDropped': {
           const chord = this.composer.currentChord() ?? undefined;
           const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
           const final = event.correct && event.satisfiedCount >= event.total;
-          if (event.slotId !== undefined) {
+          const sound = soundOf(event.slotId, event.skin);
+          if (sound === 'metal') {
             // Into a rack slot: the metal toc. `correct` = the slot now holds its destined box, the only one that
             // chimes; a box that merely fits the cue (or any box in a «libre» slot) just settles, never a success sound.
             rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
-          } else if (event.truckSlotId !== undefined) {
+          } else if (sound === 'wood') {
             // Onto a truck bed (loading docks): the hollow wooden trailer-floor thunk; the chime only when its truck
-            // slot is now satisfied (`correct`), like a rack slot.
+            // level is now satisfied (`correct`), like a rack slot.
             rt.sfx.truckDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
           } else {
             const stack =
@@ -479,6 +482,15 @@ const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'] as const;
  */
 export function isWrongTarget(event: GameEvent): boolean {
   return event.type === 'boxDropped' && event.wrongTarget === true && !event.correct;
+}
+
+/**
+ * How a pick or a drop in storage sounds (docs/STORAGE.md «Contratos», audio): the event's slot names its unit's skin,
+ * whose row says the sound (core/storage STORAGE_SKINS: `metal` = a rack's slotLift / slotDrop, `wood` = pickup /
+ * truckDrop); null off storage (the floor's own sounds).
+ */
+function soundOf(slotId: string | undefined, skin: StorageSkin | undefined): 'metal' | 'wood' | null {
+  return slotId !== undefined && skin !== undefined ? STORAGE_SKINS[skin].sound : null;
 }
 
 function audioContextCtor(): AudioContextCtor | null {

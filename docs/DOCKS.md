@@ -33,6 +33,13 @@ bloquear con assets, las flores con maceta que tienes»):
   obstáculo fijo del mapa, una planta con maceta `p` (u otro obstáculo fijo). Sin trampilla en el suelo. Una puerta que
   llega a un rincón no tiene barandilla ni casilla lateral en ese lado: ya guía el otro muro.
 
+> **Fase 3 de docs/STORAGE.md** (2026-09-30): el estado y la lógica del almacenaje son comunes a estanterías y
+> camiones: `snapshot.storageSlots` (`StorageSlotState`), un solo `box.slotId`, `hint.storage`, eventos con `slotId` /
+> `fromSlotId` y `skin`, `LevelGrid.columns`, `GameState.refreshStorageAim` con la tabla `STORAGE_ACCESS` y las
+> aberturas de `CollisionWorld` (`setOpen`). Las secciones de abajo aún usan los nombres de antes (`truckSlots`,
+> `truckSlotId`, `hint.dropTruckSlotId`, `refreshTruckAim`, `setDoorOpen`, `RackAim.truck`…): la fase 7 las pone al
+> día; la equivalencia, en docs/STORAGE.md «Fase 3: lo entregado».
+
 ## Reglas
 1. **Muelle** = puerta en el muro **norte** u **oeste** con un camión aparcado **fuera**. La puerta es una **tirada
    recta de casillas de puerta** pegada al muro, dentro del mapa: en el muelle norte, casillas de la fila `z = 0`; en el

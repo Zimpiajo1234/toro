@@ -2,7 +2,7 @@ import { Color, Mesh, type BufferGeometry, type MeshBasicMaterial, type MeshStan
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
 import { isDestined } from '../../core/sorting';
-import type { BoxState, GameSnapshot, LevelData, SlotState, ZoneState } from '../../core/types';
+import type { BoxState, GameSnapshot, LevelData, StorageSlotState, ZoneState } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
@@ -90,7 +90,7 @@ const boxOf = (snap: GameSnapshot, color: string) => snap.boxes.find((b) => b.co
 const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
 
 /** Hand-driven snapshot edits (the view only reads it), as logic would publish them on a drop. */
-function restInSlot(box: BoxState, slot: SlotState): void {
+function restInSlot(box: BoxState, slot: StorageSlotState): void {
   const destined = isDestined(slot, box);
   Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, slotId: slot.id, zoneId: null, correct: destined, locked: destined });
   Object.assign(slot, { occupiedBy: box.id, satisfied: destined });
@@ -126,7 +126,7 @@ describe('destined box in a rack slot: flash, burst, soft glow, then deeper and 
   it('plays the sequence once the box lands, in order', () => {
     const { snap, view } = setup();
     const blue = boxOf(snap, 'blue');
-    const slot = snap.slots[0];
+    const slot = snap.storageSlots[0];
     run(view, snap, 0.5);
     const own = boxMesh(view, blue.id).material.color.clone();
     expect(colorDistance(own, new Color(1, 1, 1))).toBeLessThan(1e-6);
@@ -271,7 +271,7 @@ describe('locked boxes: no pick affordance, no drop preview on them', () => {
     const { snap, view } = setup();
     const blue = boxOf(snap, 'blue');
     const mint = boxOf(snap, 'mint');
-    const slot = snap.slots[0];
+    const slot = snap.storageSlots[0];
     const zone = snap.zones[0];
     restInSlot(blue, slot);
     restOnZone(mint, zone);
@@ -279,7 +279,7 @@ describe('locked boxes: no pick affordance, no drop preview on them', () => {
 
     // Facing its slot with empty forks: even if a hint named it, no hover lift or glow, and the slot marker stays faint.
     snap.hint.targetBoxId = blue.id;
-    snap.hint.rack = { rackId: 'r1', column: 0, levels: 1, level: 0, slotId: slot.id, ready: true };
+    snap.hint.storage = { unitId: 'r1', skin: 'rack', column: 0, levels: 1, level: 0, slotId: slot.id, ready: true };
     run(view, snap, 1);
     expect(boxMesh(view, blue.id).position.y).toBeCloseTo(0, 4);
     expect(boxMesh(view, blue.id).material.emissiveIntensity).toBeLessThan(0.01);
@@ -287,7 +287,7 @@ describe('locked boxes: no pick affordance, no drop preview on them', () => {
     expect(marker.material.opacity).toBeLessThan(0.4);
 
     // Carrying another box over the locked zone box: no drop preview on top of it.
-    snap.hint.rack = null;
+    snap.hint.storage = null;
     snap.hint.targetBoxId = null;
     Object.assign(blue, { carried: true, cell: null, slotId: null, locked: false, correct: false });
     Object.assign(slot, { occupiedBy: null, satisfied: false });
@@ -313,14 +313,14 @@ describe('load, restart and completion', () => {
     const state = new GameState(MIXED);
     const snap = state.getSnapshot();
     const blue = boxOf(snap, 'blue');
-    restInSlot(blue, snap.slots[0]);
+    restInSlot(blue, snap.storageSlots[0]);
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
     const tint = lockTintOf(defaultTheme.boxes.blue);
     expect(colorDistance(boxMesh(view, blue.id).material.color, tint)).toBeLessThan(1e-3);
     let peak = 0;
     let burst = false;
     run(view, snap, 3, () => {
-      peak = Math.max(peak, panel(view, snap.slots[0].id).material.emissiveIntensity);
+      peak = Math.max(peak, panel(view, snap.storageSlots[0].id).material.emissiveIntensity);
       burst ||= bursting(view);
       expect(colorDistance(boxMesh(view, blue.id).material.color, tint)).toBeLessThan(1e-3);
     });
@@ -332,7 +332,7 @@ describe('load, restart and completion', () => {
     const fresh = setup();
     let lit = 0;
     run(fresh.view, fresh.snap, 2, () => {
-      lit = Math.max(lit, panel(fresh.view, fresh.snap.slots[0].id).material.emissiveIntensity);
+      lit = Math.max(lit, panel(fresh.view, fresh.snap.storageSlots[0].id).material.emissiveIntensity);
       burst ||= bursting(fresh.view);
     });
     expect(lit).toBeLessThan(0.005);
@@ -343,7 +343,7 @@ describe('load, restart and completion', () => {
 
   it('the level-complete wave still plays over locked boxes and their targets', () => {
     const { snap, view } = setup();
-    restInSlot(boxOf(snap, 'blue'), snap.slots[0]);
+    restInSlot(boxOf(snap, 'blue'), snap.storageSlots[0]);
     restOnZone(boxOf(snap, 'mint'), snap.zones[0]);
     run(view, snap, LOCK_DELAY + LOCK_SEC + 1);
     snap.completed = true;
@@ -352,7 +352,7 @@ describe('load, restart and completion', () => {
     let padPeak = 0;
     let boxPeak = 0;
     run(view, snap, 2.5, () => {
-      slotPeak = Math.max(slotPeak, panel(view, snap.slots[0].id).material.emissiveIntensity);
+      slotPeak = Math.max(slotPeak, panel(view, snap.storageSlots[0].id).material.emissiveIntensity);
       padPeak = Math.max(padPeak, pad(view, snap.zones[0].id).material.emissiveIntensity);
       boxPeak = Math.max(boxPeak, boxMesh(view, boxOf(snap, 'blue').id).material.emissiveIntensity);
     });
@@ -368,7 +368,7 @@ describe('load, restart and completion', () => {
     const { snap, view } = setup();
     expect(bursts(view)).toHaveLength(2);
     expect(bursts(view).every((b) => !b.visible)).toBe(true);
-    expect(band(view, snap.slots[0].id).visible).toBe(false);
+    expect(band(view, snap.storageSlots[0].id).visible).toBe(false);
     const disposed = new Set<object>();
     const tracked: Mesh[] = [];
     const watch = (o: Object3D) => {
@@ -378,7 +378,7 @@ describe('load, restart and completion', () => {
       (o.material as MeshBasicMaterial).addEventListener('dispose', () => disposed.add(o.material as MeshBasicMaterial));
     };
     for (const b of bursts(view)) b.traverse(watch);
-    watch(band(view, snap.slots[0].id));
+    watch(band(view, snap.storageSlots[0].id));
     view.dispose();
     for (const m of tracked) {
       expect(disposed.has(m.geometry)).toBe(true);

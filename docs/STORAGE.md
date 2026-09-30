@@ -1,13 +1,15 @@
 # Almacenaje común: estanterías, camiones y los aspectos que vengan
 
-**Estado: fase 2 de 7** (modelo común en core y datos). El juego no ha cambiado. Los datos del nivel ya son un solo
-modelo (`LevelData.storage`, `core/storage.ts`, «Fase 2: lo entregado»); la lógica, el solver y el render siguen con las
-dos implementaciones de abajo, que leen `racksOf` / `trucksOf` (vistas de `level.storage` hasta la fase 7). Este
-documento fija el modelo, sus reglas y contratos, y cómo se comprueba que por el camino nada cambia. Lo propio de cada
-aspecto sigue en docs/RACKS.md (estanterías almacenables) y docs/DOCKS.md (muelles de carga).
+**Estado: fase 3 de 7** (lógica, colisión y estado). El juego no ha cambiado. Los datos del nivel son un solo modelo
+(`LevelData.storage`, `core/storage.ts`, «Fase 2: lo entregado») y la lógica, un solo camino para todo aspecto: un
+enganche por la tabla `STORAGE_ACCESS`, una abertura por columna, un coger / dejar y un estado (`snapshot.storageSlots`,
+`box.slotId`, `hint.storage`: «Fase 3: lo entregado»). El solver y el render siguen con las dos implementaciones de
+abajo, que leen `racksOf` / `trucksOf` (vistas de `level.storage` hasta la fase 7). Este documento fija el modelo, sus
+reglas y contratos, y cómo se comprueba que por el camino nada cambia. Lo propio de cada aspecto sigue en docs/RACKS.md
+(estanterías almacenables) y docs/DOCKS.md (muelles de carga).
 
 Ojo con el nombre: `src/storage/` es el progreso guardado (ProgressStore), nada que ver con esto. Lo nuevo va en
-`src/core/storage.ts` y `src/render/storage/`.
+`src/core/storage.ts`, `src/logic/storageAccess.ts` y `src/render/storage/`.
 
 ## Decisiones
 
@@ -56,6 +58,8 @@ Decisiones (2026-09-30):
 Ya compartido: `SlotLight` y `RackBay` (views/RackView), las pegatinas (`buildCueFace`, `createCueMaterial`),
 `views/success`, `cueFits` / `isDestined` / `satisfiesTarget` / `assignmentsOf` / `targetsOf` / `levelDestinies`
 (core/sorting), `columnFrame` / `inwardHeading` (core/racks) y la puerta de reglas `usesTargetRules` (core/docks).
+Las filas Datos (fase 2), Estado, Eventos, Lógica, Rejilla / colisión e Interacción (fase 3) ya son una sola; quedan
+Solver y Métricas (fase 4) y Render y UI (fase 5).
 
 ## Modelo
 
@@ -105,7 +109,15 @@ interface StorageSlotState {
   satisfied: boolean;
   loadable: boolean;              // regla 8
 }
-// BoxState.slotId: el nivel donde descansa, en cualquier aspecto (desaparece truckSlotId). Eventos: slotId / fromSlotId.
+// BoxState.slotId: el nivel donde descansa, en cualquier aspecto (desaparece truckSlotId).
+// Eventos (fase 3): boxPicked.fromSlotId, boxDropped.slotId, zoneReleased.slotId y, con cada uno, `skin` (el aspecto
+// de su unidad: el audio y el render lo leen sin buscar el nivel).
+// hint.storage (fase 3, en lugar de hint.rack y hint.dropTruckSlotId): la columna donde trabaja y el nivel elegido.
+interface StorageHint { unitId; skin; column; levels; level; slotId; ready }
+// Estantería: mientras la encara o la mantiene (y no levanta ahí una caja del suelo), el nivel de F / V. Camión (hasta
+// la fase 6, `autoForks`): solo cuando la carga caería ahí, a su nivel, con `ready` true; si no, null.
+// core/sorting (fase 3): LevelTarget { kind: 'zone' | 'slot'; id; index; skin; criteria } (index en level.zones o en
+// storageSlotsOf; skin null en una zona) y LevelDestinies { zones; slots } (slots en el orden de storageSlotsOf).
 ```
 
 **Soporte** (lo decide la fila del aspecto, nunca el aspecto en sí):
@@ -115,16 +127,21 @@ interface StorageSlotState {
   se cumplen, y el siguiente se carga encima de una caja fija. En el solver, una posición por columna, de capacidad
   sus niveles.
 
-**Acceso** (tabla `STORAGE_ACCESS` en `logic/`; sin casos por muro fuera de ella):
+**Acceso** (tabla `STORAGE_ACCESS` en `logic/storageAccess.ts`, fase 3; sin casos por muro fuera de ella). Sus campos:
+`faceAngle` / `faceLateral` / `faceNear` / `faceFar` (se encara), `holdAngle` / `holdLateral` / `holdNear` (se
+mantiene; lo más lejos, `faceFar`), `bodyInLine`, `actsHeld` (coge y deja también solo mantenida), `pickReach` /
+`dropReach` (hondura del punto de horquilla para coger / dejar), `doorway` y el temporal `autoForks`. El orden de sus
+claves es la prioridad del enganche (una estantería antes que un camión, como siempre):
 
 | | `front` (estantería) | `door` (camión) |
 |---|---|---|
 | Se encara | rumbo ≤ 30° hacia dentro; punto de horquilla a ≤ 0,35 del eje, de 0,8 delante de la cara a 1 dentro | el cuerpo en línea con su casilla de puerta; ≤ 30°; ≤ 0,5 del eje; de 0,8 delante de la línea del muro a 1 más allá |
-| Se mantiene | 50°, 0,75, 1,3 | 45°, 0,6, el cuerpo aún en línea |
-| Coger / dejar | horquilla en el nivel elegido (±0,25); para dejar, su punto a ≤ 0,55 delante de la cara (`RACK_DROP_REACH`) | punto de horquilla ≥ 0,3 más allá del muro (`TRUCK_REACH`); con la carga en la puerta sin llegar, nada (`doorway`) |
-| Paso de la carga | la columna encarada se abre con la horquilla en su nivel y el hueco vacío; dentro, panel y montantes (`RACK_WALL`); cierra suave (`softenRack`) | el tramo de puerta de la columna encarada (`doorCells`) entre jambas (`DOOR_JAMB`) hacia el bolsillo (`DOOR_POCKET`); barandillas `dockRailsOf` |
-| Rumbo fijo | con la carga dentro del hueco | con la carga pasada la línea del muro (`loadInDoor`) |
-| Celda | dentro del mapa, sólida para el cuerpo y las cajas del suelo | fuera del mapa (`z = -1` / `x = -1`); la casilla de puerta es suelo |
+| Se mantiene | 50°, 0,75, 1,3 | 45°, 0,6, 0,8, el cuerpo aún en línea |
+| Coger / dejar | solo encarada, horquilla en el nivel elegido (±0,25); para dejar, su punto a ≤ 0,55 delante de la cara (`dropReach` −0,55; `pickReach` −0,8: donde la encara) | encarada o mantenida; punto de horquilla ≥ 0,3 más allá del muro (`pickReach` = `dropReach` = 0,3); con la carga en la puerta sin llegar, nada (`doorway`) |
+| Horquilla | por teclas: F / V / rueda (`forkLevel`) | sola, como en una pila del suelo: `autoForks`, TEMPORAL hasta la fase 6 |
+| Paso de la carga | la columna encarada se abre con la horquilla en su nivel y el hueco vacío; dentro, panel y montantes (`RACK_WALL`); cierra suave (`CollisionWorld.soften`) | el tramo de puerta de la columna encarada (`doorCells`) entre jambas (`DOOR_JAMB`) hacia el bolsillo (`DOOR_POCKET`); barandillas `dockRailsOf` (por `unitId`) |
+| Rumbo fijo | con la carga dentro del hueco abierto (`loadInside`) | con la carga pasada la línea del muro (`loadInDoor`); los dos, `loadInOpening` |
+| Celda | dentro del mapa, sólida para el cuerpo y las cajas del suelo; sus cajas no chocan solas | fuera del mapa (`z = -1` / `x = -1`); la casilla de puerta es suelo; sus cajas, una pila como la del suelo |
 
 ## Reglas
 
@@ -189,11 +206,13 @@ interface StorageSlotState {
   sus palabras en `SKIN_WORDS`). Nuevos, solo para `storage`: `storage and the legacy racks / trucks lists do not mix…`,
   `storage[i].skin must be rack or truck`, `racks[i].access.kind must be "front"…`, `racks[i].access.facing …` /
   `trucks[i].access.wall …`. Hasta la fase 6, un camión sin pista sigue siendo un error (`must ask for something`).
-- **logic**: un solo enganche (`refreshStorageAim` + `STORAGE_ACCESS`), un solo paso de carga (aberturas genéricas por
-  columna en `CollisionWorld`, la celda dentro o fuera del mapa), un solo camino de coger / dejar y `refreshColumn`
-  según el soporte; `LevelGrid` con columnas dentro o fuera del mapa; `snapshot.storageSlots`, `box.slotId`, eventos
-  con `slotId`; el hint del nivel elegido sirve a toda unidad y dice su aspecto (hoy `hint.rack` y
-  `hint.dropTruckSlotId`). Hasta la fase 6, un `autoForks` temporal deja el camión como está.
+- **logic** (fase 3, hecho): un solo enganche (`GameState.refreshStorageAim` + `STORAGE_ACCESS`), un solo paso de
+  carga (`refreshStoragePassage` sobre las aberturas de `CollisionWorld`), un solo camino de coger / dejar
+  (`Interaction.findPickTarget` / `findDrop` sobre `StorageAim`; `GameState.pick` / `dropInStorage`) y `refreshColumn`
+  según el soporte; `LevelGrid.columns`, una lista de columnas dentro o fuera del mapa; `snapshot.storageSlots`,
+  `box.slotId`, eventos con `slotId` / `fromSlotId` y `skin`; `hint.storage` sirve a toda unidad y dice su aspecto (en
+  lugar de `hint.rack` y `hint.dropTruckSlotId`). Hasta la fase 6, `STORAGE_ACCESS.door.autoForks` deja el camión como
+  está. Detalle y decisiones: «Fase 3: lo entregado».
 - **solver / métricas / informe / piloto** (fase 4): una tabla de posiciones tras las casillas, en el orden de las
   unidades (baldas: una por nivel; pila: una por columna); `lockedAt`, `validDrop`, `carrySearch`, `carryBackTo` y
   `pickupStarts` según el soporte y el acceso; las cotas siguen admisibles y consistentes (`levels/docks.test.ts`);
@@ -207,10 +226,10 @@ interface StorageSlotState {
 - **UI**: `UIState.storage` en lugar de `racks`; la fila «F V subir / bajar horquilla · rueda» en todo nivel con
   almacenaje (fase 6).
 - **audio**: dejar / coger según `STORAGE_SKINS[skin].sound` (`metal`: `slotDrop` / `slotLift`; `wood`: `truckDrop` /
-  `pickup`); campana solo con `correct`, zumbido con `wrongTarget`; el clic de F / V (`ForkStepWatcher`) en toda unidad
-  (fase 6).
-- **game**: `Game.matchOf` por `slotId` (`zoneMatchKinds` ya indexa por id de nivel); F / V y su clic se abren con «el
-  nivel tiene almacenaje», no «tiene estanterías» (fase 6).
+  `pickup`; hecho en la fase 3: el evento trae `slotId` y `skin`); campana solo con `correct`, zumbido con
+  `wrongTarget`; el clic de F / V (`ForkStepWatcher`, sobre `hint.storage`) en toda unidad (fase 6).
+- **game**: `Game.matchOf` por `slotId` (hecho en la fase 3: `zoneMatchKinds` ya indexa por id de nivel); F / V y su
+  clic se abren con «el nivel tiene almacenaje», no «tiene estanterías» (fase 6).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -248,7 +267,10 @@ interface StorageSlotState {
 - **Regla para las fases 2–5**: esos tests no se tocan. Si una fase renombra o junta una API, adapta
   `storageCharacterization.ts`; el JSON se queda byte a byte igual. Si falla, algo cambió: se arregla el código. (Fase
   2: `storageSection` lee ya `storageOf` / `storageSlotsOf` y `targetsSection`, `hasStorage`; el JSON y su test, tal
-  cual, y pasan: el modelo nuevo da justo las unidades y los niveles congelados en la fase 1.)
+  cual, y pasan: el modelo nuevo da justo las unidades y los niveles congelados en la fase 1. Fase 3: `boxAt` lee
+  `box.slotId`; `targetsSection` cuenta huecos y niveles de camión por `skin` y lee `destinies.slots`; `startSection`,
+  `snapshot.storageSlots` (con `loadable` solo en las pilas, como antes); el registro del piloto, `slotId`. El JSON, tal
+  cual, y pasa entero: los mismos frames del piloto a 60 y 20 fps.)
 - **Fase 6**: la única que lo regenera, a propósito, revisando el diff:
   `TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u` (PowerShell:
   `$env:TORO_CARACTERIZAR = '1'; npx vitest run src/integration/storageCharacterization.test.ts -u;
@@ -316,6 +338,55 @@ U = camión muelle oeste: amarillo ■ + caja amarillo ■ / ✚
   tabla (solo cambian los ms), Benchmark OK 8/8, 14 movimientos, repartos 1, callejones 0 (60); `levels:fmt`, los 4
   canónicos; los mínimos, al día.
 
+## Fase 3: lo entregado (2026-09-30)
+
+- **Estado** (`core/types.ts`): `StorageSlotState` y `snapshot.storageSlots` (en lugar de `SlotState` / `slots` y
+  `TruckSlotState` / `truckSlots?`; sin el `wall` del camión: lo dice su `facing`), un solo `BoxState.slotId` (sin
+  `truckSlotId`), `StorageHint` / `hint.storage` (en lugar de `RackHint` / `hint.rack` y `hint.dropTruckSlotId`) y los
+  eventos con `slotId` / `fromSlotId` + `skin` (sin `truckSlotId` / `fromTruckSlotId`). Ya no hay campos opcionales
+  «solo en niveles con camión»: sin almacenaje, `storageSlots` vacío, `hint.storage` null y todo `slotId` null.
+- **core/sorting**: `LevelTarget` con `kind` `'zone'` / `'slot'` y `skin`, `index` en `storageSlotsOf`; `LevelDestinies`
+  = `{ zones, slots }`. **core/docks**: `DockRail.unitId` (en lugar de `truckIndex`).
+- **Rejilla** (`logic/grid.ts`): `LevelGrid.columns` (`StorageColumn`: unidad, aspecto, soporte, acceso, celda dentro o
+  fuera del mapa, `levels`, `firstSlot`) en lugar de `columns` + `truckColumns`. Las cajas, por soporte: en baldas una
+  por nivel (`slotBox`); en pila, la pila de su columna, que responden las consultas de pila por celda (`height`,
+  `boxAt`, `baseAt`, `stackAt`, `pushBox`, `popBox`, `capacity`; `isStackColumn`) como una del suelo. Nuevos:
+  `columnAt` (cualquier celda), `canStore`, `putBox`, `takeBox`.
+- **Enganche** (`GameState.refreshStorageAim`): un solo `engaged` / `facing` / `forkLevel` para toda columna, acceso a
+  acceso en el orden de `STORAGE_ACCESS` (encarar antes que mantener, como antes: la estantería gana). `StorageAim`
+  (`logic/interaction.ts`, en lugar de `RackAim`): `column`, `level` (el de F / V, o donde va sola la horquilla:
+  `autoLevel`), `reach` y `blocked` (antes `travel` o `doorway`).
+- **Colisión** (`logic/collision.ts`): una abertura por columna de almacenaje (`StorageOpening`: `front` = su celda con
+  panel y montantes, `door` = su tramo de puerta) y una API: `columnCount`, `opening`, `setOpen`, `isOpen`, `soften`,
+  `openingInset` (en lugar de `rackCell` / `setRackOpen` / `softenRack` / `rackInset` y `doorCell` / `setDoorOpen` /
+  `doorCount`). El constructor recibe `StorageColliders` (`openings`, `doors`, `shelfSlots`). Una caja no choca sola si
+  descansa en una balda (`shelfSlots`); en una pila (el camión), su base choca como en el suelo.
+- **Coger / dejar**: `Interaction` solo deja coger la caja que el aim señala (en baldas, la del nivel; en pila, la de
+  arriba) y dejar en `canStore`; `GameState.pick` / `dropInStorage` para todo aspecto; `refreshColumn` por soporte
+  (baldas: nivel a nivel, `loadable` = vacío; pila: acumulado, el siguiente sobre una caja fija, `loadable`).
+- **Horquilla**: `forkLevel` y F / V donde la horquilla va por teclas (hoy, las estanterías: `forkKeys`, `forksKeyed`);
+  `STORAGE_ACCESS.door.autoForks` (TEMPORAL, marcado para quitar en la fase 6) deja la del camión sola, con sus ramas en
+  `GameState` (`autoLevel`, `fillStorageHint`, `forksKeyed`).
+- **Consumidores**, a mano y sin cambiar nada: `LevelView` (las luces por aspecto, las alturas y fantasmas por soporte
+  con `shelfSlots`; `hint.storage`), `BoxView` (`shelfSlots`: `rackSlotY` solo en baldas), `ForkliftView`
+  (`atRack` = hint de soporte `shelves`), `SlotMarker` / `RackView` (`StorageSlotState`), `AudioEngine`
+  (`STORAGE_SKINS[skin].sound`), `ForkStepWatcher` (`StorageAt`, por `unitId`), `Game.matchOf` (por `slotId`), el
+  piloto (`hint.storage`), el solver (compila: lee los destinos por id), métricas (`trampas` por `skin`) y
+  `validateLevel` (niveles de camión por `skin`, barandillas por `unitId`).
+- **Decidido**: los eventos llevan `skin` junto al id (el audio no lee el nivel; el render mira `shelfSlots`); el hint
+  del camión solo existe con una descarga posible, como el `dropTruckSlotId` de antes (la fase 6 lo abre a «enganchado»,
+  como la estantería); `loadInside` (estantería) y `loadInDoor` (camión) siguen siendo dos medidas del «la carga está
+  dentro», con la aritmética de antes, para que los frames del piloto no cambien.
+- **Tests**: adaptados a los nombres nuevos sin cambiar lo que comprueban (también seis líneas de
+  `storageFixture.test.ts`: barandillas por `unitId`, objetivos por `skin`, destinos en `slots`, eventos por `skin`);
+  nuevos: `logic/grid.test.ts` (la lista de columnas y las cajas por soporte), `logic/storageAccess.test.ts` (la tabla)
+  y, en `collision.test.ts`, las cajas en baldas y en pila.
+- **Medido**: la caracterización, tal cual y en verde (el JSON sin tocar); 1116 tests (los 1111 de antes y 5 nuevos),
+  dos veces; `npm run levels`, la misma tabla (Benchmark OK 8/8, 14 movimientos, repartos 1, callejones 0 (60));
+  `levels:fmt`, los 4 canónicos; los mínimos, al día. En el navegador (servidor propio en el puerto 4186, pestaña
+  propia): el piloto grabado a 20 fps (4991 frames) reproducido en el `Game` real sobre el Benchmark lo termina, 14
+  movimientos y 12/12 objetivos, hasta la tarjeta final, sin un error en la consola.
+
 ## Huecos para las fases siguientes
 
 Encontrados en la fase 1. El código de entonces aguantaba el nivel de prueba sin cambios: varios camiones, norte y oeste
@@ -331,28 +402,30 @@ anotado:
 3. **Camión sin «libre» por todas partes** (fase 6): `TruckCue` nunca null, `TruckSlotState.accepts` nunca null, el
    cartel pide pista a cada nivel (`LevelView.buildTrucks` → `markOf(cue)`), `Game.matchOf` → `matchKind(accepts)`,
    `zoneMatchKinds`, `validateLevel` («must ask for something») y la gramática («no hay niveles libre»).
-4. **F / V solo con estanterías**: `GameState.update` descarta `forkStep` si no hay columnas de estantería; `Game`
-   solo con estanterías cuenta F / V como primera entrada del cronómetro, vigila los pasos (`ForkStepWatcher`) y enseña
-   la fila F V (`UIState.racks`); `hint.rack` es null ante un camión y el marcador (`SlotMarker`) solo conoce huecos.
-   La fase 6 abre todo eso a «tiene almacenaje».
-5. **Altura de la horquilla en el dibujo**: `ForkliftView.sync(…, atRack)` cuenta huecos (`rackSlotY`) solo ante una
-   estantería; en el camión son alturas de pila. El hint unificado tiene que decir el soporte.
-6. **`loadable`** solo existe en el camión; en baldas será «vacío» (regla 8), que es lo que hoy mira el render para
-   los huecos.
+4. **F / V solo con estanterías**: `GameState.update` descarta `forkStep` si ninguna columna va por teclas
+   (`forkKeys`: hoy, sin estanterías); `Game` solo con estanterías cuenta F / V como primera entrada del cronómetro,
+   vigila los pasos (`ForkStepWatcher`) y enseña la fila F V (`UIState.racks`); ante un camión `hint.storage` solo
+   existe con una descarga posible y el marcador (`SlotMarker`) solo conoce huecos. La fase 6 abre todo eso a «tiene
+   almacenaje».
+5. **Altura de la horquilla en el dibujo** (fase 3: el hint dice el aspecto y de ahí el soporte): `ForkliftView.sync(…,
+   atRack)` cuenta huecos (`rackSlotY`) con un `hint.storage` de soporte `shelves`; en una pila, alturas de pila. El
+   registro de la fase 5 lo llevará a cada aspecto.
+6. **`loadable`** (hecho en la fase 3): en baldas es «vacío» (regla 8). El render aún mira `occupiedBy === null` en las
+   baldas y `loadable` en las pilas (`LevelView.takesNow`), igual que antes.
 7. **`callejones`** no sirve de objetivo `dificultad:` mientras la búsqueda no recorra todos los estados (sale «≥ 0»):
    el Benchmark y el nivel de prueba lo comprueban en su test con `deadEnds`.
 
 Encontrados en la fase 2:
 8. **Vistas derivadas en cada llamada**: `racksOf` / `trucksOf` / `slotsOf` / `truckSlotsOf` / `truckColumnsOf` crean
-   sus objetos cada vez. Hoy da igual (solo se llaman al construir `GameState`, `LevelGrid`, `CollisionWorld`,
-   `LevelView` y el solver; nada por frame), pero la fase 3 debería leer `storageColumnsOf` / `storageSlotsOf` una vez.
+   sus objetos cada vez. Hoy da igual (nada por frame). Fase 3: `GameState`, `LevelGrid` y `CollisionWorld` ya leen
+   `storageColumnsOf` / `storageSlotsOf` una vez; quedan `LevelView` (fase 5) y el solver (fase 4).
 9. **Un «libre» en un camión, a medias** (fase 6): `trucksOf` lo da como `{}`, una pista que no pide nada, y de ahí
    `truckSlotsOf` → `TruckSlotState.accepts` = `{}` (con `cueFits`, encaja cualquier caja) y el cartel pediría una
    pista vacía; `targetsOf` y `zoneMatchKinds` ya lo saltan (null). Antes de abrir «libre» en el camión, sus
    consumidores tienen que pasar a `storageSlotsOf` (null = «libre»).
-10. **Objetivos con la forma de antes** (fase 3): `LevelTarget.kind` `'slot'` / `'truck'`, su `index` dentro de su
-    aspecto, y `LevelDestinies.slots` / `.trucks`. Mejor un solo índice en `storageSlotsOf` (lo leen `GameState`, el
-    solver, las métricas y la caracterización).
+10. **Objetivos con la forma de antes** (hecho en la fase 3): un solo índice en `storageSlotsOf`
+    (`LevelTarget.skin`, `LevelDestinies.slots`). El solver aún los lee por id de nivel (`destinyOf`) y las métricas
+    distinguen `trampas` por `skin` hasta la fase 4.
 11. **Mensajes con nombres de aspecto**: `validateLevel` nombra `racks[i]` / `trucks[i]` y varios textos siguen siendo
     de estantería o de camión (`a level with storage racks or trucks needs one box per target (…)`, `a level needs at
     least one zone or rack slot with a cue`, `…in a level with storage racks floor stacks only park boxes`, `…is a
@@ -361,11 +434,31 @@ Encontrados en la fase 2:
     `explainValidation`.
 12. **Gramática por aspecto**: `RACK_WORDS` / `TRUCK_WORDS` (qué es un nivel, si vale «libre»): la fase 6 abre `libre`
     en el camión.
-13. **`DockRail.truckIndex`**: indexa las unidades con puerta (hoy, los camiones); en las fases 3 / 5, por id de unidad.
-14. **`STORAGE_SKINS.fillToMax` y `.sound`**, declarados y sin leer hasta las fases 6 y 5; `support` y `access` los
-    lee ya la validación.
-15. **`usesTargetRules`** (core/docks) repite `hasStorage`: sus llamadas (`GameState`, `LevelView`, métricas, solver)
-    cambian en sus fases; la fase 7 lo quita.
+13. **`DockRail.truckIndex`** (hecho en la fase 3): `DockRail.unitId`.
+14. **`STORAGE_SKINS.fillToMax`**, declarado y sin leer hasta la fase 6; `.sound` lo lee ya el audio (fase 3), `support`
+    y `access`, la validación, la rejilla y la colisión.
+15. **`usesTargetRules`** (core/docks) repite `hasStorage`: sus llamadas (`LevelView`, métricas, solver) cambian en sus
+    fases (`GameState` ya usa `hasStorage`); la fase 7 lo quita.
+
+Encontrados en la fase 3:
+16. **`autoForks` y sus ramas** (fase 6 las quita): `STORAGE_ACCESS.door.autoForks` y, en `GameState`, `forkKeys` (F / V
+    solo si alguna columna va por teclas), `autoLevel` (el nivel de `StorageAim` en el camión), `fillStorageHint` (el
+    hint del camión solo con una descarga) y `forksKeyed` (`stepForkHeight`, `stepForkLevel`). Al quitarlo, el hint del
+    camión pasa a «enganchado» como el de la estantería, y el render, el clic (`ForkStepWatcher` ya lo recibe) y el
+    piloto lo leen igual.
+17. **Dos medidas de «la carga está dentro»**: `loadInside` (en la columna encarada, por su hondura) y `loadInDoor`
+    (por la línea de cada muro con puerta, `doorLines`). Podrían ser una por columna, pero la aritmética cambiaría en el
+    último decimal y con ella los frames del piloto: mejor en la fase 6, que regenera la caracterización.
+18. **Orden de la colisión**: `CollisionWorld` mira los tramos de puerta cerrados justo tras los muros de carga y las
+    celdas de estantería tras los estáticos, como antes (en un empate de hondura gana el primero: cambiar el orden
+    podría cambiar un empuje). `soften` solo vale para una abertura `front` (una puerta nunca se cierra sobre la carga).
+19. **Render por aspecto a mano** (fase 5): `LevelView` reparte cada `StorageSlotState` a `RackView` o `TruckView` por
+    `skin`, y alturas, fantasmas y el «dip» de la pila por soporte con `shelfSlots` (también `BoxView`); `buildRacks` /
+    `buildTrucks` siguen con `racksOf` / `trucksOf`.
+20. **El solver con sus índices** (fase 4): huecos (`cellCount + hueco`, `slotsOf`) y columnas de camión (`bedBase +
+    columna`); lee `LevelDestinies.slots` por id de nivel. `solverSection` de la caracterización, igual.
+21. **DOCKS.md y RACKS.md** nombran aún `refreshTruckAim`, `setDoorOpen`, `RackAim`, `hint.rack`, `truckSlots`… (una
+    nota antes de sus «Reglas» avisa y apunta aquí): la fase 7 los deja con lo propio de cada aspecto apuntando aquí.
 
 ## Fases
 
@@ -375,8 +468,8 @@ Base: `1142b68` (lo verificado de `feat/pulido-benchmark`).
 1. **Diseño y red de seguridad** — hecho: este documento, la caracterización y el nivel de prueba con sus tests.
 2. **Modelo común en core y datos** — hecho («Fase 2: lo entregado»): `core/storage.ts`, `level.storage`, objetivos y
    destinos desde ahí; `racksOf` / `trucksOf` como vistas; los ids no cambian.
-3. **Lógica, colisión y estado** — pendiente: un enganche, un paso, un camino de coger / dejar, `refreshColumn` por
-   soporte, `snapshot.storageSlots`, `box.slotId`; `autoForks` temporal en el camión.
+3. **Lógica, colisión y estado** — hecho («Fase 3: lo entregado»): un enganche, un paso, un camino de coger / dejar,
+   `refreshColumn` por soporte, `snapshot.storageSlots`, `box.slotId`, `hint.storage`; `autoForks` temporal en el camión.
 4. **Solver, métricas, informe y piloto** — pendiente: una tabla de posiciones, `lockedAt` / `validDrop` /
    `carrySearch` por soporte, el informe por aspecto.
 5. **Render, UI y audio por aspecto** — pendiente: registro `src/render/storage/`, `UIState.storage`, sonido por

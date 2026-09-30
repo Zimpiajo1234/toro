@@ -121,7 +121,7 @@ R = estantería frente sur: azul + caja menta / menta / libre
     const state = new GameState(RACK);
     const snap = state.getSnapshot();
     run(state, 2, drive(1)); // up to the rack face, forks at the bottom slot
-    expect(snap.hint.rack).toMatchObject({ level: 0 });
+    expect(snap.hint.storage).toMatchObject({ skin: 'rack', level: 0 });
     expect(picked(press(state))).toMatchObject({ fromSlotId: 'r1:0:0', level: 0 });
     expect(dropped(press(state))).toMatchObject({ slotId: 'r1:0:0', level: 0 });
     expect(snap.moves).toBe(0);
@@ -130,7 +130,7 @@ R = estantería frente sur: azul + caja menta / menta / libre
     run(state, 1.2, drive(-1)); // straight out
     state.update(DT, drive(0, 1));
     run(state, 1.5, IDLE); // the forks climb to the middle slot
-    expect(snap.hint.rack).toMatchObject({ level: 1 });
+    expect(snap.hint.storage).toMatchObject({ skin: 'rack', level: 1 });
     run(state, 2, drive(1));
     expect(dropped(press(state))).toMatchObject({ slotId: 'r1:0:1', level: 1, correct: true });
     expect(snap.moves).toBe(1);

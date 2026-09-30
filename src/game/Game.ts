@@ -1,7 +1,7 @@
 import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
-import { matchKind, zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { zoneMatchKinds, type MatchKind } from '../core/sorting';
 import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
@@ -526,10 +526,10 @@ export class Game implements GameActions {
     if (snapshot.moves !== this.store.get().moves) this.store.set({ moves: snapshot.moves });
 
     if (this.levelHasRacks) {
-      // One soft click per fork step that took effect at a rack column (none at the top / bottom, none off a rack).
-      const rack = snapshot.hint.rack;
-      const forkStep = this.forkSteps.observe(rack, frame.forkStep);
-      if (rack && forkStep !== 0) rt.audio.forkClick(rack.level, forkStep);
+      // One soft click per fork step that took effect at a storage column (none at the top / bottom, none off a unit).
+      const at = snapshot.hint.storage;
+      const forkStep = this.forkSteps.observe(at, frame.forkStep);
+      if (at && forkStep !== 0) rt.audio.forkClick(at.level, forkStep);
     }
 
     const forklift = snapshot.forklift;
@@ -635,7 +635,7 @@ export class Game implements GameActions {
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
     rt.renderer.handleEvent(event, snapshot);
-    rt.audio.handleEvent(event, this.matchOf(event, snapshot));
+    rt.audio.handleEvent(event, this.matchOf(event));
     switch (event.type) {
       case 'firstInput':
         this.timer.start();
@@ -711,18 +711,12 @@ export class Game implements GameActions {
   /* ---------------------------------------------------------------- */
 
   /**
-   * Kind of match of the zone (or rack slot, or truck slot) a drop / restore event is about (the classic color bell for
-   * anything else). A truck slot's comes from its cue in the snapshot when the level's match table does not list it.
+   * Kind of match of the zone or storage slot (any skin) a drop / restore event is about, by its id (core/sorting
+   * zoneMatchKinds lists every zone and every storage slot with a cue); the classic color bell for anything else (a
+   * «libre» slot, plain floor).
    */
-  private matchOf(event: GameEvent, snapshot: GameSnapshot): MatchKind {
+  private matchOf(event: GameEvent): MatchKind {
     if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
-    if (event.type === 'boxDropped' && event.truckSlotId !== undefined) {
-      const id = event.truckSlotId;
-      const known = this.zoneMatch.get(id);
-      if (known) return known;
-      const slot = snapshot.truckSlots?.find((s) => s.id === id);
-      return slot ? matchKind(slot.accepts) : 'color';
-    }
     const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
     return (target !== null && this.zoneMatch.get(target)) || 'color';
   }

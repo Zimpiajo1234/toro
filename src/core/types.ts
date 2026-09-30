@@ -331,9 +331,9 @@ export interface ForkliftState {
   /**
    * Extra carriage height in stack levels (0 = floor, 1 = on top of one box, …), continuous while it moves.
    * Rises toward the drop height (carrying) or the target box's level (empty), and early enough to clear any stack
-   * the load or the forks are over or about to reach (they never sink into one). In front of a storage rack it goes
-   * to the selected slot level (`hint.rack.level`; slot level n sits at height n). Animated by logic; 0 in classic
-   * levels.
+   * the load or the forks are over or about to reach (they never sink into one). At a storage column whose forks are
+   * keyed (a rack) it goes to the level selected there (`hint.storage.level`; level n sits at height n). Animated by
+   * logic; 0 in classic levels.
    */
   forkHeight: number;
   /** Id of the box on the forks, or null. */
@@ -359,37 +359,33 @@ export interface BoxState {
   /** World position of the box center on the floor plane. While carried it follows the forks. */
   pos: Vec2;
   /**
-   * Grid cell when resting (on the floor, on a stack, in a rack slot: its rack cell; on a truck: its bed cell, outside
-   * the map beyond the dock door), null while carried.
+   * Grid cell when resting (on the floor, on a stack; in storage its column's cell: a rack's own cell, a truck's bed
+   * cell outside the map beyond the dock door), null while carried.
    */
   cell: CellPos | null;
-  /** Height in its stack: 0 = on the floor, 1 = on one box, … ; in a rack, its slot level (0 while carried). */
+  /** Height in its stack: 0 = on the floor, 1 = on one box, … ; in storage, its level there (0 while carried). */
   level: number;
   carried: boolean;
   /** Zone the box is resting on (accepting it or not), or null. */
   zoneId: string | null;
-  /** Storage rack slot the box rests in, or null (always null in levels without racks). */
-  slotId: string | null;
   /**
-   * Levels with trucks (docs/DOCKS.md): the truck slot the box rests on (`${truckId}:${column}:${level}`, see
-   * TruckSlotState), else null; `cell` is then its bed cell (outside the map) and `pos` its centre, `level` its truck
-   * level (zoneId and slotId null).
-   * GameState sets it on every box of a level with trucks and leaves it undefined in every other level, so their state
-   * is exactly as before: undefined reads as null.
+   * The storage slot the box rests in, in any skin (docs/STORAGE.md: StorageSlotState.id, `${unitId}:${column}:${level}`:
+   * a rack slot, a truck level), else null (always null in levels without storage). `cell` is then its column's cell and
+   * `level` its level there (zoneId null).
    */
-  truckSlotId?: string | null;
+  slotId: string | null;
   /**
    * True when resting on a zone and the stack from the floor up to this box fits it so far: the bottom box accepted
    * by the zone (core/sorting `accepts`), every box above it of the colour its recipe asks for there. In levels with
-   * racks or trucks: the box rests alone on its zone, or in its slot, or on its truck slot, and is the destined one
-   * (zone / slot / truck slot `satisfied`).
+   * storage: the box rests alone on its zone, or in its storage slot, and is the destined one (zone / slot
+   * `satisfied`).
    */
   correct: boolean;
   /**
-   * Levels with racks or trucks: true while the box rests on its destined zone, slot or truck slot (docs/RACKS.md,
-   * docs/DOCKS.md; the target is `satisfied`). A locked box is done: it can no longer be picked up (the action there
-   * gives the gentle `actionIdle`) and nothing can be dropped or stacked on it — except on a truck, where the next
-   * level of its bed column can still be loaded on top of it. Always false in levels without racks or trucks.
+   * Levels with storage: true while the box rests on its destined zone or storage slot (docs/STORAGE.md rule 5; the
+   * target is `satisfied`). A locked box is done: it can no longer be picked up (the action there gives the gentle
+   * `actionIdle`) and nothing can be dropped or stacked on it — except in a stack (a truck bed column), where the next
+   * level can still be loaded on top of it. Always false in levels without storage.
    */
   locked: boolean;
 }
@@ -433,103 +429,85 @@ export interface ZoneState {
 }
 
 /**
- * One slot of a storage rack (docs/RACKS.md), in GameSnapshot.slots: every rack, column by column, bottom → top.
- * Whether a carried box fits its cue (what breathes): core/sorting `cueFits`; whether it is the destined one (what
- * lights it): `isDestined`.
+ * One storage slot (docs/STORAGE.md «Modelo»): one level of one column of one storage unit, in any skin (a rack slot,
+ * a truck level), in GameSnapshot.storageSlots: unit by unit (rule 12: racks, then trucks), column by column, bottom →
+ * top (core/storage `storageSlotsOf`). How its levels hold boxes is its skin's support (core/storage
+ * `STORAGE_SKINS[skin].support`): on shelves each level is a slot apart; in a stack the boxes sit on each other from
+ * the bottom up (the levels below an occupied one are occupied). Whether a carried box fits its cue (what breathes):
+ * core/sorting `cueFits`; whether it is the destined one (what lights it): `isDestined`.
  */
-export interface SlotState {
-  /** `${rackId}:${column}:${level}` (core/racks `slotIdOf`). */
+export interface StorageSlotState {
+  /** `${unitId}:${column}:${level}` (core/storage `slotIdOf`, the same form in every skin). */
   id: string;
-  rackId: string;
-  /** Column along the rack (0 = its first cell, see LevelRack). */
+  unitId: string;
+  skin: StorageSkin;
+  /** Column along the unit (0 = its first cell, see LevelStorage). */
   column: number;
-  /** Height: 0 = bottom slot. The fork level that reaches it and the box's `level` inside it. */
+  /**
+   * Height: 0 = the bottom level (a rack's bottom slot, a truck's bed). The fork level that reaches it and the box's
+   * `level` in it.
+   */
   level: number;
-  /** The rack cell of this column. */
+  /**
+   * Its column's cell: a rack's own cell (inside the map, solid), a truck's bed cell (OUTSIDE the map, one step beyond
+   * the wall from its door cell: a north dock { x, z: -1 }, a west dock { x: -1, z }). Boxes stored there carry it.
+   */
   cell: CellPos;
-  /** Floor cell in front of the column: where the forklift stands, facing the rack, to load or unload it. */
+  /**
+   * Where the forklift stands, facing the column, to load or unload it: the floor cell in front of a rack column, a
+   * truck column's door cell (row 0 / column 0, against the wall).
+   */
   front: CellPos;
+  /** The side it is loaded from (a truck's: TRUCK_FACING[wall]). */
   facing: Facing;
-  /** World position of the rack cell's centre. */
+  /** World position of the centre of `cell`. */
   pos: Vec2;
   /**
-   * The slot's cue (on its back panel, visible from both faces of the rack): a colour, a symbol or both; null =
-   * «libre» (plain storage, never a target).
+   * The level's cue (a rack slot's back panel, a cell of the sign above a dock door): a colour, a symbol or both; null =
+   * «libre» (plain storage, never a target). A truck has no «libre» level until phase 6.
    */
   accepts: ZoneCriteria | null;
   /** The kind of box the level's unique solution puts here; null for a «libre» slot. Only it lights the slot. */
   destined: ColorSymbol | null;
-  /** Box resting in the slot, or null. */
-  occupiedBy: string | null;
-  /** Holds its destined box (never true for a «libre» slot). */
-  satisfied: boolean;
-}
-
-/**
- * One level of a truck bed column (docs/DOCKS.md), in GameSnapshot.truckSlots: every truck, column by column, bottom
- * → top. The fields it shares with SlotState mean the same, so the core/sorting helpers (`cueFits`, `isDestined`,
- * `satisfiesTarget`) and the glow / lock / success code read both. Unlike a rack slot, a bed column is a stack: its
- * boxes sit on each other from the bed up (the levels below an occupied one are occupied). The bed column lies just
- * outside the building, beyond its door cell: the forklift loads it through the door from `front`.
- */
-export interface TruckSlotState {
-  /** `${truckId}:${column}:${level}` (column and level from 0; level 0 = on the bed). */
-  id: string;
-  truckId: string;
-  /** Column along the truck bed (0 = its first door cell, see LevelTruck). */
-  column: number;
-  /** Height: 0 = on the bed, 1 = on one box, … as on a floor stack (the box's `level` there, the drop level). */
-  level: number;
-  /**
-   * The bed cell of this column: OUTSIDE the map, one step beyond the wall from its door cell (a north dock:
-   * { x, z: -1 }; a west dock: { x: -1, z }). Boxes on it carry this cell.
-   */
-  cell: CellPos;
-  /**
-   * The door cell of the column (floor inside the room, row 0 / column 0): where the forklift stands, facing the wall,
-   * to load or unload it through the door.
-   */
-  front: CellPos;
-  /** Wall of its dock. */
-  wall: WallSide;
-  /** Side the column is loaded from: TRUCK_FACING[wall]. */
-  facing: Facing;
-  /** World position of the (outside) bed cell's centre. */
-  pos: Vec2;
-  /** The level's cue (on the sign above the dock door): a colour, a symbol or both. Never null: no «libre» levels. */
-  accepts: ZoneCriteria;
-  /** The kind of box the level's unique solution puts here (null only in a hand-built level without one). */
-  destined: ColorSymbol | null;
-  /** Box resting at this level of the column, or null. */
+  /** Box resting at this level, or null. */
   occupiedBy: string | null;
   /**
-   * Holds its destined box and every level below it is satisfied (a column is right from the bed up). Its box is then
-   * locked, and the level above can still be loaded.
+   * Holds its destined box (never true for a «libre» slot); in a stack also every level below it is satisfied (a
+   * column is right from the bottom up). Its box is then locked; in a stack the level above can still be loaded.
    */
   satisfied: boolean;
   /**
-   * Empty, the lowest empty level of its column (where the next box loaded there lands) and every level below it
-   * satisfied: loading its destined box now satisfies it. What may pulse while a box is carried (with `cueFits`).
+   * Loading its destined box now satisfies it (docs/STORAGE.md rule 8): on shelves, empty; in a stack, the lowest empty
+   * level of its column (where the next box loaded there lands) with every level below it satisfied. Only for the
+   * light (the target hints, the drop preview's tone), never for whether a drop is allowed.
    */
   loadable: boolean;
 }
 
 /**
- * Levels with racks: the rack column the forklift faces (on or approaching its front cell, turned toward it) and the
- * slot level selected with F / V, the mouse wheel or gamepad X / B.
+ * Levels with storage (docs/STORAGE.md): the storage column the forklift works at and the level chosen there, in any
+ * skin (`skin`; its support, core/storage `STORAGE_SKINS[skin].support`, says how the forks reach that level: a shelf's
+ * height, dims `rackSlotY`, or a stack level). At a column whose forks are keyed (a rack: F / V, the mouse wheel,
+ * gamepad X / B) it is there while the forklift faces the column or is still held at it, the level being the one
+ * selected. At a column whose forks go by themselves (a truck, until phase 6: logic/storageAccess `autoForks`) it only
+ * names where the carried box would land (`ready` true), else it is null.
  */
-export interface RackHint {
-  rackId: string;
+export interface StorageHint {
+  unitId: string;
+  skin: StorageSkin;
   column: number;
-  /** Slots in this column (1–3). */
+  /** Levels in this column (a rack's 1–3 slots, a truck's 1–2 levels). */
   levels: number;
-  /** Selected slot level (0 = bottom): the forks go there and pick / drop act on that slot. */
+  /**
+   * The level chosen (0 = bottom): the one selected with F / V (the forks go there and pick / drop act on it), or where
+   * the carried box would land at a column whose forks go by themselves.
+   */
   level: number;
   /** The slot at that level. */
   slotId: string;
   /**
-   * Empty forks: that slot holds a box (also `targetBoxId`). Carrying: it is empty, so the action drops the box into
-   * it (`dropCell` = the rack cell, `dropLevel` = the slot level).
+   * Empty forks: that slot holds a box (also `targetBoxId`). Carrying: the action drops the box into it (`dropCell` =
+   * the column's cell, `dropLevel` = the level). Always true where the forks go by themselves.
    */
   ready: boolean;
 }
@@ -539,22 +517,16 @@ export interface InteractionHint {
   /** Box that would be picked up if the action were pressed now. */
   targetBoxId: string | null;
   /**
-   * While carrying: the cell the box would be dropped on (null if nowhere valid; a rack cell for a slot; a truck's bed
-   * cell, outside the map, for a truck slot).
+   * While carrying: the cell the box would be dropped on (null if nowhere valid; into storage its column's cell: a rack
+   * cell, or a truck's bed cell outside the map).
    */
   dropCell: CellPos | null;
   /** While carrying: the zone at dropCell, if any. */
   dropZoneId: string | null;
-  /** While carrying: height the box would land at on dropCell (0 = floor, 1 = on one box, …; a slot's level). */
+  /** While carrying: height the box would land at on dropCell (0 = floor, 1 = on one box, …; a storage level). */
   dropLevel: number;
-  /** Levels with racks: the rack column faced and the selected slot, or null (always null without racks). */
-  rack: RackHint | null;
-  /**
-   * Levels with trucks, while carrying: the truck slot the box would land in (`dropCell` = its bed cell, outside the
-   * map; `dropLevel` = its level, `dropZoneId` null), else null. Undefined in levels without trucks (their hint is
-   * exactly as before).
-   */
-  dropTruckSlotId?: string | null;
+  /** Levels with storage: the column worked at and the level chosen there (StorageHint), else null (always without). */
+  storage: StorageHint | null;
 }
 
 export interface GameSnapshot {
@@ -562,19 +534,11 @@ export interface GameSnapshot {
   forklift: ForkliftState;
   boxes: BoxState[];
   zones: ZoneState[];
-  /** Storage rack slots (empty in levels without racks). */
-  slots: SlotState[];
-  /**
-   * Truck slots (docs/DOCKS.md): every truck, column by column, bottom → top. Undefined in levels without trucks, so
-   * their snapshot is exactly as before (read it as `snapshot.truckSlots ?? []`).
-   */
-  truckSlots?: TruckSlotState[];
+  /** Every storage slot (docs/STORAGE.md), in core/storage `storageSlotsOf` order; empty in levels without storage. */
+  storageSlots: StorageSlotState[];
   hint: InteractionHint;
   completed: boolean;
-  /**
-   * Targets currently satisfied / total: the zones, plus the slots with a cue in levels with racks, plus every truck
-   * slot in levels with trucks.
-   */
+  /** Targets currently satisfied / total: the zones, plus the storage slots with a cue in levels with storage. */
   progress: { satisfied: number; total: number };
   /**
    * Box moves so far this attempt (the optional move counter): one per box picked up and put down somewhere else,
@@ -599,17 +563,18 @@ export interface InputFrame {
   /** True only on the frame the action button was pressed (edge). */
   actionPressed: boolean;
   /**
-   * Edge: fork one slot level up (+1: F, mouse wheel up, gamepad X) or down (−1: V, wheel down, gamepad B). Acts only
-   * in front of a storage rack (elsewhere the fork height is automatic, also at a truck: its bed loads like a floor
-   * stack). Optional: omitted = 0.
+   * Edge: fork one level up (+1: F, mouse wheel up, gamepad X) or down (−1: V, wheel down, gamepad B). Acts only at a
+   * storage column whose forks are keyed (a rack; elsewhere the fork height is automatic, also at a truck until phase
+   * 6: its bed loads like a floor stack). Optional: omitted = 0.
    */
   forkStep?: -1 | 0 | 1;
 }
 
 /**
- * Events produced by GameState.update(). Consumed by render (feedback), audio and game/UI. Storage rack slots and
- * truck slots only add optional fields (`fromSlotId`, `slotId`, `fromTruckSlotId`, `truckSlotId`), present only when
- * the event is about one, so events in levels without racks or trucks are exactly as before.
+ * Events produced by GameState.update(). Consumed by render (feedback), audio and game/UI. Storage slots (docs/
+ * STORAGE.md, any skin) only add optional fields, present only when the event is about one: its id (`fromSlotId`,
+ * `slotId`) and, with it, the skin of its unit (`skin`: how it sounds and looks: core/storage `STORAGE_SKINS[skin]`), so
+ * events in levels without storage are exactly as before.
  */
 export type GameEvent =
   | { type: 'firstInput' }
@@ -617,44 +582,44 @@ export type GameEvent =
       type: 'boxPicked';
       boxId: string;
       fromZoneId: string | null;
-      /** Height it was lifted from (a rack slot's level, a truck level). */
+      /** Height it was lifted from (a storage level: a rack slot's, a truck level). */
       level: number;
-      /** The rack slot it was lifted from (only then present). */
+      /** The storage slot it was lifted from (only then present; `fromZoneId` null). */
       fromSlotId?: string;
-      /** The truck slot it was lifted from (only then present; `fromZoneId` null). */
-      fromTruckSlotId?: string;
+      /** The skin of that slot's unit (present with `fromSlotId`). */
+      skin?: StorageSkin;
     }
   | {
       type: 'boxDropped';
       boxId: string;
       cell: CellPos;
-      /** Zone it landed on; null on plain floor, in a rack slot and on a truck. */
+      /** Zone it landed on; null on plain floor and in storage. */
       zoneId: string | null;
-      /** Height it landed at (0 = floor; a rack slot's level; a truck level). */
+      /** Height it landed at (0 = floor; a storage level: a rack slot's, a truck level). */
       level: number;
       /**
        * This drop completed its zone: a single-box zone now holds a box it accepts (classic: one of its colour), a
-       * stack zone its recipe. Levels with racks or trucks: its zone, slot or truck slot is now satisfied (holds its
-       * destined box; on a truck, on satisfied levels).
+       * stack zone its recipe. Levels with storage: its zone or storage slot is now satisfied (holds its destined box;
+       * in a stack, on satisfied levels).
        */
       correct: boolean;
       /**
-       * Recipe length of that zone (1 = classic zone), 0 when not on a zone. 1 in a slot with a cue, 0 in a «libre»
-       * one. 1 on a truck (every truck level has a cue).
+       * Recipe length of that zone (1 = classic zone), 0 when not on a zone. In storage: 1 in a slot with a cue, 0 in a
+       * «libre» one (every truck level has a cue until phase 6).
        */
       recipeLength: number;
-      /** 1-based count of satisfied zones (and slots, and truck slots) after this drop (for rising chimes). */
+      /** 1-based count of satisfied zones (and storage slots) after this drop (for rising chimes). */
       satisfiedCount: number;
       total: number;
-      /** The rack slot it landed in (only then present; `cell` is the rack cell). */
+      /** The storage slot it landed in (only then present; `cell` is its column's cell, outside the map on a truck). */
       slotId?: string;
-      /** The truck slot it landed on (only then present; `cell` is the bed cell outside the map, `zoneId` null). */
-      truckSlotId?: string;
+      /** The skin of that slot's unit (present with `slotId`). */
+      skin?: StorageSkin;
       /**
-       * Levels with racks or trucks only: true when the box landed on a target it does not satisfy — a floor zone, a
-       * slot with a cue (a trap box that fits the cue included), or a truck slot (not its destiny, or on top of a level
-       * that is not satisfied). Absent otherwise: its destined target (`correct`), a «libre» slot, plain floor, and
-       * every drop in levels without racks or trucks.
+       * Levels with storage only: true when the box landed on a target it does not satisfy — a floor zone or a storage
+       * slot with a cue (a trap box that fits the cue included; in a stack also on top of a level that is not
+       * satisfied). Absent otherwise: its destined target (`correct`), a «libre» slot, plain floor, and every drop in
+       * levels without storage.
        */
       wrongTarget?: boolean;
     }
@@ -662,10 +627,10 @@ export type GameEvent =
   | { type: 'actionIdle'; carrying: boolean }
   /**
    * A satisfied zone stopped being satisfied (its box lifted, or one stacked on top). Neutral, never negative. For a
-   * rack slot (its box lifted), `zoneId` is null and `slotId` names the slot; for a truck slot, `truckSlotId` (never
-   * emitted while satisfied truck boxes are locked: docs/DOCKS.md).
+   * storage slot (its box lifted), `zoneId` is null and `slotId` names the slot, `skin` its unit's skin (never emitted
+   * while a satisfied box is locked: docs/STORAGE.md rule 5).
    */
-  | { type: 'zoneReleased'; zoneId: string | null; boxId: string; slotId?: string; truckSlotId?: string }
+  | { type: 'zoneReleased'; zoneId: string | null; boxId: string; slotId?: string; skin?: StorageSkin }
   /**
    * Lifting a box (`boxId`) off a zone left it satisfied again: the wrong box on top came off (stacking levels
    * only). Positive, like a completing drop; the counts are as in boxDropped.

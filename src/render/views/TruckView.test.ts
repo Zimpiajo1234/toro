@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
 import { DOCK_RAIL, dockRailsOf, trucksOf } from '../../core/docks';
 import { cueFits, isDestined } from '../../core/sorting';
-import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type TruckSlotState, type WallSide } from '../../core/types';
+import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type StorageHint, type StorageSlotState, type WallSide } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../../data/levels';
 import { GameState } from '../../logic/GameState';
@@ -189,7 +189,15 @@ const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => 
 const truckFit = (view: LevelView) => view.fitBoxes.find((f) => f.min.y < DOCK.apronTop)!;
 /** A wall of the view is sunk this frame (its group squashed flat, WallView). */
 const wallSunk = (view: LevelView) => view.root.children.some((c) => c.scale.y < 0.01);
-const slotOf = (snap: GameSnapshot, id: string) => snap.truckSlots!.find((s) => s.id === id)!;
+/** The truck levels of the snapshot (snapshot.storageSlots of skin truck) and whether a box rests on one. */
+const truckSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'truck');
+const onTruck = (snap: GameSnapshot, box: BoxState) => box.slotId !== null && truckSlots(snap).some((s) => s.id === box.slotId);
+const slotOf = (snap: GameSnapshot, id: string) => truckSlots(snap).find((s) => s.id === id)!;
+/** hint.storage as logic shows it while a drop would land on truck level `slot` (docs/STORAGE.md: until phase 6). */
+const dropOn = (snap: GameSnapshot, slot: StorageSlotState): StorageHint => {
+  const levels = truckSlots(snap).filter((s) => s.unitId === slot.unitId && s.column === slot.column).length;
+  return { unitId: slot.unitId, skin: 'truck', column: slot.column, levels, level: slot.level, slotId: slot.id, ready: true };
+};
 const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
 const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
 /** Direction from the scene toward the camera (LevelView's `back`). */
@@ -273,24 +281,24 @@ function wallMeshes(lvl: LevelData, yaw?: number): Mesh[] {
  * Hand-driven snapshot edits (the view only reads it). `load`: rest `box` on truck slot `slot`, satisfied when it is
  * the destined one on satisfied levels below (then locked, and the level above becomes loadable). `carry`: lift it.
  */
-function load(snap: GameSnapshot, box: BoxState, slot: TruckSlotState): void {
-  const column = snap.truckSlots!.filter((s) => s.truckId === slot.truckId && s.column === slot.column);
+function load(snap: GameSnapshot, box: BoxState, slot: StorageSlotState): void {
+  const column = truckSlots(snap).filter((s) => s.unitId === slot.unitId && s.column === slot.column);
   const right = column.every((s) => s.level >= slot.level || s.satisfied) && isDestined(slot, box);
-  for (const s of snap.truckSlots!) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
-  Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, zoneId: null, slotId: null, truckSlotId: slot.id, correct: right, locked: right });
+  for (const s of truckSlots(snap)) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
+  Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, zoneId: null, slotId: slot.id, correct: right, locked: right });
   Object.assign(slot, { occupiedBy: box.id, satisfied: right, loadable: false });
   const above = column.find((s) => s.level === slot.level + 1);
   if (above) above.loadable = right;
   if (snap.forklift.carrying === box.id) snap.forklift.carrying = null;
 }
 function carry(snap: GameSnapshot, box: BoxState): void {
-  for (const s of snap.truckSlots ?? []) {
+  for (const s of truckSlots(snap)) {
     if (s.occupiedBy !== box.id) continue;
     Object.assign(s, { occupiedBy: null, satisfied: false });
-    const below = snap.truckSlots!.filter((t) => t.truckId === s.truckId && t.column === s.column && t.level < s.level);
+    const below = truckSlots(snap).filter((t) => t.unitId === s.unitId && t.column === s.column && t.level < s.level);
     s.loadable = below.every((t) => t.satisfied);
   }
-  Object.assign(box, { carried: true, cell: null, level: 0, zoneId: null, slotId: null, truckSlotId: null, correct: false, locked: false });
+  Object.assign(box, { carried: true, cell: null, level: 0, zoneId: null, slotId: null, correct: false, locked: false });
   snap.forklift.carrying = box.id;
   snap.forklift.forkLift = 1;
 }
@@ -299,7 +307,7 @@ function peakGlow(view: LevelView, snap: GameSnapshot, seconds: number): Map<str
   const peak = new Map<string, number>();
   for (let i = 0; i < Math.round(seconds * 60); i++) {
     view.update(snap, 1 / 60, i / 60, YAW, 0);
-    for (const s of snap.truckSlots!) peak.set(s.id, Math.max(peak.get(s.id) ?? 0, panel(view, s.id)!.material.emissiveIntensity));
+    for (const s of truckSlots(snap)) peak.set(s.id, Math.max(peak.get(s.id) ?? 0, panel(view, s.id)!.material.emissiveIntensity));
   }
   return peak;
 }
@@ -360,7 +368,7 @@ a = caja azul
 `);
     expect(wallLayouts(plain).every((l) => l.doors.length === 0)).toBe(true);
     const { snap, view } = setup(plain);
-    expect(snap.truckSlots).toBeUndefined();
+    expect(truckSlots(snap)).toEqual([]);
     step(view, snap, 0.5);
     let tagged = 0;
     view.root.traverse((o) => {
@@ -432,8 +440,8 @@ describe('truck', () => {
       for (const mesh of meshes) for (const tri of triangles(mesh)) expect(overlaps(tri, space)).toBe(false);
       // Each bed column's full stack, from the planks up, is clear of the door, its frame, seals and roll too.
       const walls = wallMeshes(lvl);
-      const columns = new Map<number, TruckSlotState[]>();
-      for (const s of snap.truckSlots!) columns.set(s.column, [...(columns.get(s.column) ?? []), s]);
+      const columns = new Map<number, StorageSlotState[]>();
+      for (const s of truckSlots(snap)) columns.set(s.column, [...(columns.get(s.column) ?? []), s]);
       expect(columns.size).toBe(truck.columns.length);
       for (const levels of columns.values()) {
         const p = levels[0].pos;
@@ -576,7 +584,7 @@ describe('dock sign', () => {
         expect(overlaps(t, cap)).toBe(false);
       }
       // Every level's sticker sits on its cell: right over its door cell, its row from the bottom up.
-      for (const s of snap.truckSlots!) {
+      for (const s of truckSlots(snap)) {
         const cue = cueMesh(view, s.id)!;
         expect(cue).toBeDefined();
         const at = toDock(lvl, truck.wall, cue.position);
@@ -614,17 +622,19 @@ describe('dock sign', () => {
     const r = defaultTheme.rack;
     for (const lvl of ALL) {
       const { snap, view } = setup(lvl);
-      for (const s of snap.truckSlots!) {
+      for (const s of truckSlots(snap)) {
         const cue = cueMesh(view, s.id)!;
         // Unlit, opaque, not tone mapped: exactly its colours, never shaded or faded.
         expect(cue.material.toneMapped).toBe(false);
         expect(cue.material.transparent).toBe(false);
         expect(cue.material.opacity).toBe(1);
-        const box = s.accepts.color ? defaultTheme.boxes[s.accepts.color] : null;
+        // Every truck level asks for something until phase 6 (no «libre» there yet).
+        const accepts = s.accepts!;
+        const box = accepts.color ? defaultTheme.boxes[accepts.color] : null;
         expect(painted(cue.geometry, box ? box.base : r.cueFill)).toBeGreaterThan(0);
         expect(painted(cue.geometry, box ? box.ink : r.cueRim)).toBeGreaterThan(0);
         // These levels sort by symbol: a symbol cue carries it bold, a colour-only cue none.
-        expect(painted(cue.geometry, r.cueInk) > 0).toBe(s.accepts.symbol !== undefined);
+        expect(painted(cue.geometry, r.cueInk) > 0).toBe(accepts.symbol !== undefined);
       }
       view.dispose();
     }
@@ -636,7 +646,7 @@ describe('dock sign', () => {
       const { snap, view } = setup(lvl);
       const inward = truck.wall === 'north' ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
       const yaws = [0, 1, 2, 3].map((k) => YAW + (k * Math.PI) / 2);
-      for (const s of snap.truckSlots!) {
+      for (const s of truckSlots(snap)) {
         const mesh = cueMesh(view, s.id)!;
         mesh.updateWorldMatrix(true, false);
         // A pure yaw: never mirrored, never tilted (its up stays up).
@@ -677,7 +687,7 @@ describe('dock sign', () => {
       const solid = new Mesh(frame.geometry, new MeshBasicMaterial({ side: DoubleSide }));
       solid.matrixAutoUpdate = false;
       solid.matrixWorld.copy(frame.matrixWorld);
-      for (const s of snap.truckSlots!) {
+      for (const s of truckSlots(snap)) {
         const cue = cueMesh(view, s.id)!;
         cue.updateWorldMatrix(true, false);
         const pos = cue.geometry.getAttribute('position');
@@ -787,7 +797,7 @@ describe('truck levels light like rack slots, on the sign', () => {
     const mint = boxOf(snap, 'mint', 'triangle');
     carry(snap, mint);
     const top = slotOf(snap, 't1:0:1');
-    Object.assign(snap.hint, { dropCell: { ...top.cell }, dropLevel: 1, dropZoneId: null, dropTruckSlotId: top.id });
+    Object.assign(snap.hint, { dropCell: { ...top.cell }, dropLevel: 1, dropZoneId: null, storage: dropOn(snap, top) });
     step(view, snap, 1);
     const preview = tagged(view, 'dropPreview');
     expect(preview.visible).toBe(true);
@@ -799,7 +809,7 @@ describe('truck levels light like rack slots, on the sign', () => {
 
     // «coral ◆» would not take it: the preview stays neutral, over the plate and the bed (never under them).
     const coral = slotOf(snap, 't1:1:0');
-    Object.assign(snap.hint, { dropCell: { ...coral.cell }, dropLevel: 0, dropTruckSlotId: coral.id });
+    Object.assign(snap.hint, { dropCell: { ...coral.cell }, dropLevel: 0, storage: dropOn(snap, coral) });
     step(view, snap, 1);
     expect(preview.visible).toBe(true);
     expect(preview.position.y).toBeGreaterThan(DOCK_PLATE.top + 0.002);
@@ -833,7 +843,7 @@ T = camión muelle norte: azul
     expect(isDestined(slot, trap)).toBe(false);
     expect(slot.loadable).toBe(true);
     carry(snap, trap);
-    Object.assign(snap.hint, { dropCell: { ...slot.cell }, dropLevel: 0, dropZoneId: null, dropTruckSlotId: slot.id });
+    Object.assign(snap.hint, { dropCell: { ...slot.cell }, dropLevel: 0, dropZoneId: null, storage: dropOn(snap, slot) });
     const peak = peakGlow(view, snap, 3);
     const preview = tagged(view, 'dropPreview');
     expect(preview.visible).toBe(true);
@@ -859,8 +869,8 @@ describe('dock and camera', () => {
       const frame = signFrame(view);
       expect(frame.material.opacity).toBeLessThan(0.4);
       expect(frame.material.depthWrite).toBe(false);
-      for (const s of snap.truckSlots!) expect(panel(view, s.id)!.material.opacity).toBeCloseTo(frame.material.opacity, 6);
-      for (const s of snap.truckSlots!) {
+      for (const s of truckSlots(snap)) expect(panel(view, s.id)!.material.opacity).toBeCloseTo(frame.material.opacity, 6);
+      for (const s of truckSlots(snap)) {
         const cue = cueMesh(view, s.id)!;
         expect(cue.visible).toBe(true);
         expect(cue.material.transparent).toBe(false);
@@ -874,9 +884,9 @@ describe('dock and camera', () => {
       expect(frame.material.opacity).toBeGreaterThan(0.5);
       expect(frame.material.opacity).toBeLessThan(0.7);
       // From inside (the default camera) the sign hangs behind everything: solid, even over a stack on the bed.
-      const s0 = snap.truckSlots!.find((s) => s.level === 1)!;
-      const below = snap.truckSlots!.find((s) => s.column === s0.column && s.level === 0)!;
-      const loose = snap.boxes.filter((b) => b.truckSlotId === null || b.truckSlotId === undefined);
+      const s0 = truckSlots(snap).find((s) => s.level === 1)!;
+      const below = truckSlots(snap).find((s) => s.column === s0.column && s.level === 0)!;
+      const loose = snap.boxes.filter((b) => !onTruck(snap, b));
       if (!below.occupiedBy) load(snap, loose[0], below);
       load(snap, loose.find((b) => b.id !== below.occupiedBy)!, s0);
       step(view, snap, 3);
@@ -947,7 +957,7 @@ T = camión muelle norte: coral + caja coral ◆ | lavanda
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
     const top = boxOf(snap, 'mint', 'triangle');
     expect(top).toMatchObject({ cell: door, level: 1 });
-    expect(boxOf(snap, 'coral', 'diamond')).toMatchObject({ cell: { x: 1, z: -1 }, truckSlotId: 't1:0:0' });
+    expect(boxOf(snap, 'coral', 'diamond')).toMatchObject({ cell: { x: 1, z: -1 }, slotId: 't1:0:0' });
     for (let i = 0; i < 120; i++) {
       view.update(snap, 1 / 60, i / 60, YAW, 0);
       expect(boxMesh(view, top.id).material.opacity).toBe(1);
@@ -964,7 +974,7 @@ T = camión muelle norte: coral + caja coral ◆ | lavanda
       const before = { min: fit.min.clone(), max: fit.max.clone() };
       const bodyBounds = new Box3().setFromPoints(vertices(body(view)));
       expect(new Box3(fit.min, fit.max).containsBox(bodyBounds)).toBe(true);
-      const loaded = snap.boxes.find((b) => b.truckSlotId);
+      const loaded = snap.boxes.find((b) => onTruck(snap, b));
       const behind = behindOf(truck.wall);
       let sank = false;
       for (let i = 0; i < 240; i++) {
@@ -989,8 +999,8 @@ T = camión muelle norte: coral + caja coral ◆ | lavanda
       const truck = trucksOf(lvl)[0];
       const { snap, view } = setup(lvl);
       // Fill every bed column up to its top (whatever boxes: the view only reads the positions).
-      const loose = snap.boxes.filter((b) => !b.truckSlotId);
-      for (const s of snap.truckSlots!) if (!s.occupiedBy) load(snap, loose.shift()!, s);
+      const loose = snap.boxes.filter((b) => !onTruck(snap, b));
+      for (const s of truckSlots(snap)) if (!s.occupiedBy) load(snap, loose.shift()!, s);
       step(view, snap, 1);
       const group = truckGroup(view);
       const sign = group.children.filter((c): c is Mesh => c instanceof Mesh && (c.userData.sign || c.userData.signPanel || c.userData.truckCue));
@@ -1000,7 +1010,7 @@ T = camión muelle norte: coral + caja coral ◆ | lavanda
       for (const yaw of yaws) {
         const dir = toCamera(yaw);
         const walls = wallMeshes(lvl, yaw);
-        for (const s of snap.truckSlots!) {
+        for (const s of truckSlots(snap)) {
           const c = s.pos;
           const local = toDock(lvl, truck.wall, new Vector3(c.x, 0, c.z));
           // The middle of the face the box turns to the warehouse, a hair in front of it.

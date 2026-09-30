@@ -51,7 +51,7 @@ describe('the move counter with the real controls', () => {
     // Yellow into the «●» slot first (fits the cue, not its destiny): taken out again later, so more than the minimum.
     const snap = new GameState(benchmark).getSnapshot();
     const yellow = snap.boxes.find((b) => b.color === 'yellow')!;
-    const circle = snap.slots.find((s) => s.accepts?.symbol === 'circle' && s.accepts.color === undefined)!;
+    const circle = snap.storageSlots.find((s) => s.skin === 'rack' && s.accepts?.symbol === 'circle' && s.accepts.color === undefined)!;
     const detour = autopilot(benchmark, 1 / 60, [{ from: grid.index(yellow.cell!.x, yellow.cell!.z), drop: at(circle.id) }]);
     expect(detour.solved).toBe(true);
     expect(detour.snapshot.moves).toBe(detour.moves);

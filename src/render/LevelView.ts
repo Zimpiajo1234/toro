@@ -4,6 +4,7 @@ import { dockRailsOf, hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from
 import { degToRad } from '../core/math';
 import { hasRacks, racksOf } from '../core/racks';
 import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
+import { STORAGE_SKINS } from '../core/storage';
 import {
   COLOR_IDS,
   DEFAULT_SYMBOL,
@@ -13,8 +14,8 @@ import {
   type GameEvent,
   type GameSnapshot,
   type LevelData,
-  type SlotState,
-  type TruckSlotState,
+  type StorageHint,
+  type StorageSlotState,
   type Vec2,
   type WallSide,
   type ZoneCriteria,
@@ -182,8 +183,16 @@ export class LevelView {
   private readonly rackOfSlot = new Map<string, RackView>();
   /** The bay (rack column) of each slot: its box ghosts with it. */
   private readonly bayOfSlot = new Map<string, RackBay>();
-  private readonly slotStates = new Map<string, SlotState>();
+  /** The rack slots (the slot marker frames the selected one). */
+  private readonly slotStates = new Map<string, StorageSlotState>();
   private readonly marker: SlotMarker | null = null;
+  /**
+   * Storage (docs/STORAGE.md): each slot's index in snapshot.storageSlots (the list never changes during a level), and
+   * the ids of the slots on shelves (support `shelves`: a rack's), whose boxes rest on their shelf, ghost with their bay
+   * and never dip with a stack; a box in any other slot (a stack: a truck bed) is a stack like the floor's.
+   */
+  private readonly slotIndex = new Map<string, number>();
+  private readonly shelfSlots = new Set<string>();
   /**
    * Loading docks (docs/DOCKS.md): their truck levels light like rack slots, on the sign over each dock door.
    * `targetRules` = racks or trucks: destined boxes, locks, the flash and burst, the strong pulse (docs/RACKS.md).
@@ -202,13 +211,10 @@ export class LevelView {
   private roomMinX = -Infinity;
   private roomMinZ = -Infinity;
   private readonly truckOfSlot = new Map<string, TruckView>();
-  /** Index of each truck slot in snapshot.truckSlots (the hint names the one a drop would land on). */
-  private readonly truckSlotIndex = new Map<string, number>();
-  private readonly truckWasSatisfied: boolean[] = [];
   private readonly wallBySide = new Map<WallSide, { view: WallView; layout: WallLayout }>();
   /**
-   * Levels with racks: the success bursts (pooled) and the sparkle tone of each box colour; last seen `satisfied` of
-   * each zone and slot (snapshot order), so a target that just got its destined box plays one (never on load).
+   * Levels with storage: the success bursts (pooled) and the sparkle tone of each box colour; last seen `satisfied` of
+   * each zone and storage slot (snapshot order), so a target that just got its destined box plays one (never on load).
    */
   private readonly bursts: SuccessBurst[] = [];
   private nextBurst = 0;
@@ -248,6 +254,11 @@ export class LevelView {
     // Depth-only prepass shared by every ghosting shelf and rack.
     this.depthOnly = this.bag.track(new MeshBasicMaterial({ colorWrite: false, transparent: true }));
     sunDirection(level, this.toSun);
+    snapshot.storageSlots.forEach((slot, i) => {
+      this.slotIndex.set(slot.id, i);
+      this.slotWasSatisfied.push(slot.satisfied);
+      if (STORAGE_SKINS[slot.skin].support === 'shelves') this.shelfSlots.add(slot.id);
+    });
 
     this.buildStatic(level, theme, mats);
     this.buildWalls(level, theme, mats, cameraYaw);
@@ -324,7 +335,9 @@ export class LevelView {
   update(snapshot: GameSnapshot, dt: number, time: number, cameraYaw: number, warmth: number): void {
     const f = snapshot.forklift;
     const hint = snapshot.hint;
-    this.forklift.sync(f, dt, time, hint.rack !== null);
+    // At a column of shelves (a rack) the forks count its slot heights; at a stack (a truck bed), stack levels.
+    const shelf = onShelves(hint.storage);
+    this.forklift.sync(f, dt, time, shelf !== null);
     this.forklift.root.updateMatrixWorld(true);
 
     let carried: BoxState | null = null;
@@ -345,14 +358,12 @@ export class LevelView {
     // glows). A truck level invites only as the next level of its column with everything below it right (`loadable`,
     // docs/DOCKS.md). With the hints off nothing invites (`hinted` null): each light eases out on its own.
     const zones = snapshot.zones;
-    const slots = snapshot.slots;
-    const truckSlots = snapshot.truckSlots;
+    const slots = snapshot.storageSlots;
     const hinted = this.targetHints ? carried : null;
     let anyTakes = false;
     if (hinted) {
       for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], hinted);
-      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], hinted);
-      if (truckSlots) for (let i = 0; i < truckSlots.length && !anyTakes; i++) anyTakes = truckSlots[i].loadable && cueFits(truckSlots[i], hinted);
+      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = this.takesNow(slots[i]) && cueFits(slots[i], hinted);
     }
     const swapHint = (this.sorting || this.targetRules) && !anyTakes;
     // With racks or trucks the invitation is a strong pulse (views/success); the swap hint keeps its quiet strength.
@@ -376,37 +387,34 @@ export class LevelView {
       }
     }
 
+    // Each slot lights on its skin's view (a rack's panel, a cell of a dock's sign; phase 5 brings the registry).
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
       const fits = hinted !== null && cueFits(slot, hinted);
-      const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? swapInvite : 0;
-      this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, slotTone, time, dt);
-      if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstInSlot(slot, cameraYaw);
-      this.slotWasSatisfied[i] = slot.satisfied;
-    }
-    if (truckSlots) {
-      for (let i = 0; i < truckSlots.length; i++) {
-        const ts = truckSlots[i];
-        const fits = hinted !== null && cueFits(ts, hinted);
-        const invite = !fits ? 0 : ts.loadable ? 1 : swapHint && ts.occupiedBy !== null && !ts.satisfied ? swapInvite : 0;
-        this.truckOfSlot.get(ts.id)?.syncLevel(ts.id, ts.satisfied, invite, slotTone, time, dt);
-        if (ts.satisfied && this.truckWasSatisfied[i] === false) this.playBurstOnTruck(ts, cameraYaw);
-        this.truckWasSatisfied[i] = ts.satisfied;
+      const invite = !fits ? 0 : this.takesNow(slot) ? 1 : swapHint && slot.occupiedBy !== null && !slot.satisfied ? swapInvite : 0;
+      if (slot.skin === 'rack') {
+        this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, slotTone, time, dt);
+        if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstInSlot(slot, cameraYaw);
+      } else {
+        this.truckOfSlot.get(slot.id)?.syncLevel(slot.id, slot.satisfied, invite, slotTone, time, dt);
+        if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstOnTruck(slot, cameraYaw);
       }
+      this.slotWasSatisfied[i] = slot.satisfied;
     }
     for (let i = 0; i < this.bursts.length; i++) this.bursts[i].update(dt);
 
     // The preview takes the carried box's zone tone when it would land on a zone that takes that box, or in a rack
     // slot whose cue fits it. Into a slot it floats on the slot floor, and the slot marker frames the selected slot.
-    const rack = hint.rack;
-    const selected = rack !== null && !snapshot.completed ? (this.slotStates.get(rack.slotId) ?? null) : null;
+    const selected = shelf !== null && !snapshot.completed ? (this.slotStates.get(shelf.slotId) ?? null) : null;
     // A locked box is done: its slot never reads as ready to pick, and nothing previews on top of it.
     const lockedPick = carried === null && selected !== null && selected.occupiedBy !== null && isLocked(boxes, selected.occupiedBy);
-    const ready = rack !== null && rack.ready && !lockedPick;
-    const dropCell = carried !== null && hint.dropCell !== null && !dropsOnLocked(boxes, hint.dropCell, hint.dropLevel) ? hint.dropCell : null;
+    const ready = shelf !== null && shelf.ready && !lockedPick;
+    const dropCell = carried !== null && hint.dropCell !== null && !this.dropsOnLocked(boxes, hint.dropCell, hint.dropLevel) ? hint.dropCell : null;
     const intoSlot = carried !== null && selected !== null && ready && dropCell !== null;
-    // On a truck the preview takes the box's tone where the level would take it now: loadable and its cue fits.
-    const dropTruck = carried !== null && truckSlots && hint.dropTruckSlotId ? this.truckSlotAt(truckSlots, hint.dropTruckSlotId) : null;
+    // On a stack (a truck bed) the preview takes the box's tone where the level would take it now: loadable and its cue
+    // fits (hint.storage there names where the drop lands).
+    const at = hint.storage;
+    const dropTruck = carried !== null && at !== null && shelf === null && at.ready ? this.slotAt(snapshot, at.slotId) : null;
     let match: Color | null = null;
     if (carried && selected && intoSlot) {
       if (cueFits(selected, carried)) match = this.borders.get(carried.color) ?? null;
@@ -431,10 +439,39 @@ export class LevelView {
     this.glassMaterial.color.setScalar(1 + 0.06 * warmth);
   }
 
-  /** The truck slot `id` of this frame's snapshot (index kept from load: the list never changes during a level). */
-  private truckSlotAt(truckSlots: readonly TruckSlotState[], id: string): TruckSlotState | null {
-    const i = this.truckSlotIndex.get(id);
-    return i !== undefined ? (truckSlots[i] ?? null) : null;
+  /** The storage slot `id` of this frame's snapshot (index kept from load: the list never changes during a level). */
+  private slotAt(snapshot: GameSnapshot, id: string): StorageSlotState | null {
+    const i = this.slotIndex.get(id);
+    return i !== undefined ? (snapshot.storageSlots[i] ?? null) : null;
+  }
+
+  /**
+   * The slot would take the carried box now, so its destined box would light it (what invites, with its cue): an empty
+   * shelf; in a stack, its loadable level (the next one up, on right levels only).
+   */
+  private takesNow(slot: StorageSlotState): boolean {
+    return this.shelfSlots.has(slot.id) ? slot.occupiedBy === null : slot.loadable;
+  }
+
+  /** The box rests on a storage shelf (a rack slot): not a stack, it ghosts with its bay. */
+  private onShelf(box: BoxState): boolean {
+    return box.slotId !== null && this.shelfSlots.has(box.slotId);
+  }
+
+  /**
+   * A drop on `cell` at `level` would land on a locked box: on top of it (floor, a zone) or into its slot. Logic never
+   * offers one; the render still never previews it. In a storage stack (a truck bed) the next level loads on top of a
+   * locked box (docs/STORAGE.md rule 5): only a drop into its own level would.
+   */
+  private dropsOnLocked(boxes: readonly BoxState[], cell: CellPos, level: number): boolean {
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (!b.locked || b.carried || !b.cell || b.cell.x !== cell.x || b.cell.z !== cell.z) continue;
+      if (b.slotId !== null && !this.shelfSlots.has(b.slotId)) {
+        if (b.level === level) return true;
+      } else if (b.slotId === null || b.level === level) return true;
+    }
+    return false;
   }
 
   handleEvent(event: GameEvent, snapshot: GameSnapshot): void {
@@ -447,9 +484,9 @@ export class LevelView {
         this.playCompletionWave(snapshot);
         break;
       case 'boxDropped':
-        // Stacked on top: as it lands, the whole stack (the new box included) dips a touch together. Rack slots hold
-        // one box each on their own beams: nothing below dips.
-        if (event.level > 0 && event.slotId === undefined) {
+        // Stacked on top (a floor stack, a truck bed): as it lands, the whole stack (the new box included) dips a touch
+        // together. Rack slots hold one box each on their own shelves: nothing below dips.
+        if (event.level > 0 && !(event.slotId !== undefined && this.shelfSlots.has(event.slotId))) {
           for (const box of snapshot.boxes) {
             if (box.cell && box.cell.x === event.cell.x && box.cell.z === event.cell.z) {
               this.boxViews.get(box.id)?.playStackSettle(DROP_GLIDE_SEC);
@@ -564,24 +601,18 @@ export class LevelView {
         },
       });
     }
-    for (const s of snapshot.slots) {
+    // Storage slots with a cue («libre» ones never light), in snapshot order: rack slots, then truck levels. Same
+    // distance for a whole column: the stable sort keeps the snapshot order, bottom → top.
+    for (const s of snapshot.storageSlots) {
       if (s.accepts === null) continue;
+      const shelf = this.shelfSlots.has(s.id);
       order.push({
         d: distance(s.pos),
         play: (delay) => {
-          this.rackOfSlot.get(s.id)?.playWave(s.id, delay);
-          if (s.occupiedBy) this.boxViews.get(s.occupiedBy)?.playWave(delay);
-        },
-      });
-    }
-    for (const t of snapshot.truckSlots ?? []) {
-      order.push({
-        // Same distance for a whole bed column: the stable sort keeps the snapshot order, bottom → top.
-        d: distance(t.pos),
-        play: (delay) => {
-          this.truckOfSlot.get(t.id)?.playWave(t.id, delay);
-          // Boxes on a bed column are a stack: they only glow (no bob), so they keep touching.
-          if (t.occupiedBy) this.boxViews.get(t.occupiedBy)?.playWave(delay, false);
+          if (s.skin === 'rack') this.rackOfSlot.get(s.id)?.playWave(s.id, delay);
+          else this.truckOfSlot.get(s.id)?.playWave(s.id, delay);
+          // Boxes in a stack (a bed column) only glow (no bob), so they keep touching.
+          if (s.occupiedBy) this.boxViews.get(s.occupiedBy)?.playWave(delay, shelf);
         },
       });
     }
@@ -629,7 +660,7 @@ export class LevelView {
    * A slot just got its destined box: a ring around its opening and sparkles out of it, as the box lands, on the face
    * the camera sees (its cue reads from both; a rack may turn its back to the camera).
    */
-  private playBurstInSlot(slot: SlotState, cameraYaw: number): void {
+  private playBurstInSlot(slot: StorageSlotState, cameraYaw: number): void {
     const tone = slot.destined ? this.sparkleTones.get(slot.destined.color) : undefined;
     if (!tone) return;
     const front = outwardYaw(slot.facing);
@@ -644,7 +675,7 @@ export class LevelView {
    * of it, as the box lands, on the face of its bed column the camera sees (the door plane from inside, the outer end
    * of the bed from outside). Its sign cell flashes with it (TruckView).
    */
-  private playBurstOnTruck(ts: TruckSlotState, cameraYaw: number): void {
+  private playBurstOnTruck(ts: StorageSlotState, cameraYaw: number): void {
     const tone = ts.destined ? this.sparkleTones.get(ts.destined.color) : undefined;
     if (!tone) return;
     const front = outwardYaw(ts.facing);
@@ -673,8 +704,8 @@ export class LevelView {
     for (let i = 0; i < boxes.length; i++) {
       const box = boxes[i];
       const view = this.boxViews.get(box.id);
-      // Boxes in rack slots ghost with their rack (updateSlotBoxGhosts).
-      if (!view || box.slotId !== null) continue;
+      // Boxes in rack slots ghost with their rack (updateSlotBoxGhosts); a truck bed's are a stack like any other.
+      if (!view || this.onShelf(box)) continue;
       // Once complete (input frozen) every box turns solid, so the glow wave always plays on solid stacks.
       const hides = !snapshot.completed && !box.carried && box.level > 0 && box.cell !== null;
       view.setGhost(hides && this.stackBoxHides(box.cell!, view, snapshot, back), dt);
@@ -692,7 +723,7 @@ export class LevelView {
       const box = boxes[i];
       const view = this.boxViews.get(box.id);
       if (!view) continue;
-      if (box.slotId !== null) view.setGhost(!snapshot.completed && (this.bayOfSlot.get(box.slotId)?.hidesActor ?? false), dt);
+      if (this.onShelf(box)) view.setGhost(!snapshot.completed && (this.bayOfSlot.get(box.slotId!)?.hidesActor ?? false), dt);
       else if (!this.stacking) view.setGhost(false, dt);
     }
   }
@@ -884,10 +915,10 @@ export class LevelView {
     let panel: BufferGeometry | null = null;
     let band: BufferGeometry | null = null;
     const cueByLook = new Map<string, BufferGeometry>();
-    for (const slot of snapshot.slots) {
-      this.slotWasSatisfied.push(slot.satisfied);
-      const view = byId.get(slot.rackId);
-      const rack = rackById.get(slot.rackId);
+    for (const slot of snapshot.storageSlots) {
+      if (slot.skin !== 'rack') continue;
+      const view = byId.get(slot.unitId);
+      const rack = rackById.get(slot.unitId);
       if (!view || !rack) continue;
       this.slotStates.set(slot.id, slot);
       this.rackOfSlot.set(slot.id, view);
@@ -926,17 +957,12 @@ export class LevelView {
    * and the sign over the door (a bay that fades on its own, like a rack's) with one cell per bed column and level,
    * bottom row = level 0: a glowing panel, the level's unlit sticker on both faces (the rack sticker: the exact colour of
    * the box it asks for, rimmed in its ink, or the neutral fill for a symbol only, the same mark in the cue ink) and a
-   * glow band round it. The stickers come from the level data; each level's light reads its TruckSlotState by id every
+   * glow band round it. The stickers come from the level data; each level's light reads its StorageSlotState by id every
    * frame. The boxes on a bed are ordinary boxes (buildBoxes) at their state positions, outside the wall.
    */
   private buildTrucks(snapshot: GameSnapshot, theme: Theme, mats: SharedMaterials): void {
     if (!this.trucked) return;
     const level = snapshot.level;
-    const states = snapshot.truckSlots ?? [];
-    states.forEach((s, i) => {
-      this.truckSlotIndex.set(s.id, i);
-      this.truckWasSatisfied.push(s.satisfied);
-    });
     const signMaterial = () => {
       const material = this.bag.track(mats.painted.clone());
       // Painted metal, like the racks.
@@ -969,7 +995,7 @@ export class LevelView {
         DROP_GLIDE_SEC,
       );
       // The guard rails beside its door (core/docks dockRailsOf): low static props in the room, like the plants.
-      const own = rails.filter((r) => r.truckIndex === index);
+      const own = rails.filter((r) => r.unitId === truck.id);
       if (own.length > 0) {
         const mesh = this.mesh(buildDockRails(own, level, theme), mats.painted, true);
         mesh.userData.dockRails = truck.id;
@@ -981,8 +1007,7 @@ export class LevelView {
         const x = dockColumnX(truck, level, column);
         cues.forEach((cue, k) => {
           const id = truckSlotIdOf(truck.id, column, k);
-          const i = this.truckSlotIndex.get(id);
-          const state = i !== undefined ? states[i] : undefined;
+          const state = this.slotAt(snapshot, id);
           const cell = signCell(truck, column, k);
           const cellKey = `${cell.x0}/${cell.x1}/${cell.y0}/${cell.y1}`;
           let panel = panelByCell.get(cellKey);
@@ -1051,6 +1076,7 @@ export class LevelView {
         // Stacked boxes ghost when they hide the forklift; boxes in rack slots ghost with their rack.
         this.stacking || this.racked,
         lockTints.get(box.color) ?? null,
+        this.shelfSlots,
       );
       this.boxViews.set(box.id, view);
       this.boxList.push(view);
@@ -1081,19 +1107,11 @@ function isLocked(boxes: readonly BoxState[], id: string): boolean {
 }
 
 /**
- * A drop on `cell` at `level` would land on a locked box: on top of it (floor, a zone) or into its slot. Logic never
- * offers one; the render still never previews it. On a truck the next level loads on top of a locked box
- * (docs/DOCKS.md): only a drop into its own level would.
+ * The hint's storage column when its levels are shelves (support `shelves`: a rack column, where the forks count slot
+ * heights and the slot marker frames the level chosen), else null (none, or a stack: a truck bed).
  */
-function dropsOnLocked(boxes: readonly BoxState[], cell: CellPos, level: number): boolean {
-  for (let i = 0; i < boxes.length; i++) {
-    const b = boxes[i];
-    if (!b.locked || b.carried || !b.cell || b.cell.x !== cell.x || b.cell.z !== cell.z) continue;
-    if (b.truckSlotId) {
-      if (b.level === level) return true;
-    } else if (b.slotId === null || b.level === level) return true;
-  }
-  return false;
+function onShelves(at: StorageHint | null): StorageHint | null {
+  return at !== null && STORAGE_SKINS[at.skin].support === 'shelves' ? at : null;
 }
 
 /** The footprint of half-size `half` around `p` overlaps `bounds` in XZ. */

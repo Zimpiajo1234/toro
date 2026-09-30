@@ -60,6 +60,7 @@ const UP = new Vector3(0, 1, 0);
 const _target = new Vector3();
 const _targetQuat = new Quaternion();
 const _euler = new Euler();
+const NO_SHELVES: ReadonlySet<string> = new Set();
 
 /**
  * One pickable box. The group carries the visual transform (damped, never teleports) and the
@@ -88,7 +89,7 @@ export class BoxView {
   private hover = 0;
   private correctGlow: number;
   private glideTurn = 1;
-  /** Resting in a rack slot (last seen while not carried): sets the hover lift and the next pick hop. */
+  /** Resting on a storage shelf (a rack slot; last seen while not carried): sets the hover lift and the next pick hop. */
   private inSlot: boolean;
   /** Last seen BoxState.locked, and how far the box has eased to its deeper tone (0 = own tone, 1 = locked tone). */
   private locked: boolean;
@@ -111,6 +112,11 @@ export class BoxView {
      * the box (material colour); null = never tinted (levels without racks: `locked` is always false there).
      */
     private readonly lockTint: Color | null = null,
+    /**
+     * Ids of the level's storage slots on shelves (support `shelves`: a rack's): a box in one rests on its shelf
+     * (dims rackSlotY); in any other storage slot (a stack: a truck bed) it rests at its stack height, as on the floor.
+     */
+    private readonly shelfSlots: ReadonlySet<string> = NO_SHELVES,
   ) {
     if (ghostable) {
       // Always transparent (opacity 1 while solid) so fading never switches shader programs mid-game.
@@ -123,7 +129,7 @@ export class BoxView {
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.userData.boxId = state.id;
-    this.inSlot = state.slotId !== null;
+    this.inSlot = this.onShelf(state);
     this.group.position.set(state.pos.x, this.restY(state), state.pos.z);
     this.phase = state.carried ? 'carried' : 'rest';
     // A level loaded (or restarted) with a box already locked shows it done at once: nothing replays.
@@ -165,7 +171,7 @@ export class BoxView {
     if (state.carried && (this.phase === 'rest' || this.phase === 'dropping')) this.beginPick();
     else if (!state.carried && (this.phase === 'picking' || this.phase === 'carried')) this.beginDrop(state);
 
-    if (!state.carried) this.inSlot = state.slotId !== null;
+    if (!state.carried) this.inSlot = this.onShelf(state);
 
     const g = this.group;
     switch (this.phase) {
@@ -219,9 +225,14 @@ export class BoxView {
     this.applyHighlight(state, isTarget, dt);
   }
 
-  /** Resting height: its stack level, or the floor of its rack slot. */
+  /** Resting height: its stack level, or the floor of its storage shelf. */
   private restY(state: BoxState): number {
-    return state.slotId !== null ? rackSlotY(state.level) : state.level * this.stackStep;
+    return this.onShelf(state) ? rackSlotY(state.level) : state.level * this.stackStep;
+  }
+
+  /** The box rests in a storage slot on a shelf (a rack slot), not on a stack. */
+  private onShelf(state: BoxState): boolean {
+    return state.slotId !== null && this.shelfSlots.has(state.slotId);
   }
 
   private beginPick(): void {

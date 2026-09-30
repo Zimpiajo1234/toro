@@ -184,8 +184,10 @@ export class ForkliftView {
   }
 
   /**
-   * `atRack`: the rig faces a storage rack column (hint.rack). There forkHeight counts slot levels (dims rackSlotY)
-   * and the forks ride just over the selected slot floor, empty or under the load, so it clears the beam above.
+   * `atRack`: the rig works at a storage column whose levels are shelves (hint.storage of support `shelves`: a rack
+   * column). There forkHeight counts slot levels (dims rackSlotY) and the forks ride just over the selected slot floor,
+   * empty or under the load, so it clears the beam above; at a stack (a truck bed) it counts stack levels, as anywhere
+   * else.
    */
   sync(state: ForkliftState, dt: number, time: number, atRack = false): void {
     const { tuning } = this;

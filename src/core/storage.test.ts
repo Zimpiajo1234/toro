@@ -208,13 +208,13 @@ describe('racksOf / trucksOf and their helpers: views of level.storage (until ph
     ]);
   });
 
-  it('dockRailsOf: the rails of every door unit (truckIndex = its trucksOf index), at both ends of each door run', () => {
+  it('dockRailsOf: the rails of every door unit (by its unit id), at both ends of each door run', () => {
     const T = DOCK_RAIL.thickness;
     expect(dockRailsOf(MANY)).toEqual([
-      { truckIndex: 0, wall: 'north', end: 0, side: { x: 4, z: 0 }, line: 5 + DOOR_JAMB, outer: 5 + DOOR_JAMB - T, from: 0, to: 1 },
-      { truckIndex: 0, wall: 'north', end: 1, side: { x: 7, z: 0 }, line: 7 - DOOR_JAMB, outer: 7 - DOOR_JAMB + T, from: 0, to: 1 },
-      { truckIndex: 1, wall: 'west', end: 0, side: { x: 0, z: 2 }, line: 3 + DOOR_JAMB, outer: 3 + DOOR_JAMB - T, from: 0, to: 1 },
-      { truckIndex: 1, wall: 'west', end: 1, side: { x: 0, z: 4 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
+      { unitId: 't1', wall: 'north', end: 0, side: { x: 4, z: 0 }, line: 5 + DOOR_JAMB, outer: 5 + DOOR_JAMB - T, from: 0, to: 1 },
+      { unitId: 't1', wall: 'north', end: 1, side: { x: 7, z: 0 }, line: 7 - DOOR_JAMB, outer: 7 - DOOR_JAMB + T, from: 0, to: 1 },
+      { unitId: 't2', wall: 'west', end: 0, side: { x: 0, z: 2 }, line: 3 + DOOR_JAMB, outer: 3 + DOOR_JAMB - T, from: 0, to: 1 },
+      { unitId: 't2', wall: 'west', end: 1, side: { x: 0, z: 4 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
     ]);
     // Racks have no door: no rails.
     expect(dockRailsOf({ storage: [RN, RE, RS, RW], size: MANY.size })).toEqual([]);
@@ -239,12 +239,12 @@ describe('targets and destinies from the storage slots (core/sorting)', () => {
     ],
   };
 
-  it('targets: the zones, then every storage slot with a cue in storage order («libre» never), indexed within its skin', () => {
-    expect(targetsOf(level).map((t) => [t.kind, t.id, t.index, t.criteria])).toEqual([
-      ['zone', 'z1', 0, { color: 'blue' }],
-      ['slot', 'r1:0:0', 0, { symbol: 'triangle' }],
-      ['truck', 't1:0:0', 0, { color: 'coral' }],
-      ['truck', 't2:0:0', 1, { color: 'mint', symbol: 'circle' }],
+  it('targets: the zones, then every storage slot with a cue in storage order («libre» never), indexed in storageSlotsOf', () => {
+    expect(targetsOf(level).map((t) => [t.kind, t.skin, t.id, t.index, t.criteria])).toEqual([
+      ['zone', null, 'z1', 0, { color: 'blue' }],
+      ['slot', 'rack', 'r1:0:0', 0, { symbol: 'triangle' }],
+      ['slot', 'truck', 't1:0:0', 3, { color: 'coral' }],
+      ['slot', 'truck', 't2:0:0', 4, { color: 'mint', symbol: 'circle' }],
     ]);
     expect([...zoneMatchKinds(level)]).toEqual([
       ['z1', 'color'],
@@ -254,14 +254,10 @@ describe('targets and destinies from the storage slots (core/sorting)', () => {
     ]);
   });
 
-  it('destinies: per zone, per rack slot (null for «libre») and per truck level, from the unique assignment', () => {
+  it('destinies: per zone and per storage slot of every skin (null for «libre»), from the unique assignment', () => {
     expect(levelDestinies(level)).toEqual({
       zones: [{ color: 'blue', symbol: 'square' }],
-      slots: [{ color: 'yellow', symbol: 'triangle' }, null, null],
-      trucks: [
-        { color: 'coral', symbol: 'diamond' },
-        { color: 'mint', symbol: 'circle' },
-      ],
+      slots: [{ color: 'yellow', symbol: 'triangle' }, null, null, { color: 'coral', symbol: 'diamond' }, { color: 'mint', symbol: 'circle' }],
     });
     expect(levelDestinies({ ...level, storage: undefined })).toBeNull();
     expect(levelDestinies({ ...level, storage: [] })).toBeNull();

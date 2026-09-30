@@ -1,6 +1,6 @@
 import { Color, Mesh, type BufferGeometry, type MeshBasicMaterial } from 'three';
 import { damp } from '../../core/math';
-import type { SlotState } from '../../core/types';
+import type { StorageSlotState } from '../../core/types';
 import { outwardYaw } from '../builders/rack';
 import { rackSlotY } from '../dims';
 
@@ -10,7 +10,7 @@ const SELECTED_OPACITY = 0.3;
 const READY_OPACITY = 0.8;
 
 /**
- * Soft frame around the slot the forks are set to while the forklift faces a rack column (hint.rack), on the front
+ * Soft frame around the slot the forks are set to while the forklift faces a rack column (hint.storage), on the front
  * face and around the back panel, so the player sees what F / V (or the wheel) selected, even before the action would
  * work. Glides between levels with the forks; neutral tone, or the carried box's zone tone when its cue fits the box.
  */
@@ -34,7 +34,7 @@ export class SlotMarker {
   }
 
   /** `slot` = the selected slot (null when not at a rack); `match` = tint for a carried box its cue fits, or null. */
-  sync(slot: SlotState | null, ready: boolean, match: Color | null, dt: number): void {
+  sync(slot: StorageSlotState | null, ready: boolean, match: Color | null, dt: number): void {
     const m = this.mesh;
     if (slot) {
       const yaw = outwardYaw(slot.facing);

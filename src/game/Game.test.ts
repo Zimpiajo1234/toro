@@ -30,10 +30,10 @@ const fakes = vi.hoisted(() => {
     failRenderer: false,
     yaw: Math.PI / 4,
     /**
-     * `hint.rack` of every simulation's snapshot (null = not facing a rack column). A fork step input moves its level
-     * within the column, like the real one.
+     * `hint.storage` of every simulation's snapshot (null = not at a storage column). A fork step input moves its level
+     * within the column, like the real one at a rack.
      */
-    rack: null as { rackId: string; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
+    storage: null as { unitId: string; skin: 'rack' | 'truck'; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
     /**
      * Every renderer zoom (zoomBy steps and zoomTrack stops alike), oldest first; the zoomBy steps alone; and how many
      * times resetZoom ran.
@@ -50,13 +50,13 @@ const fakes = vi.hoisted(() => {
   class FakeGameState {
     readonly level: { id: string };
     readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
-    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { rack: sim.rack }, moves: 0 };
+    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { storage: sim.storage }, moves: 0 };
     constructor(level: { id: string }) {
       this.level = level;
       sim.states.push(this);
     }
     getSnapshot() {
-      this.snapshot.hint.rack = sim.rack;
+      this.snapshot.hint.storage = sim.storage;
       return this.snapshot;
     }
     setMoves(moves: number) {
@@ -74,8 +74,8 @@ const fakes = vi.hoisted(() => {
         action: input.actionPressed,
         forkStep: input.forkStep ?? 0,
       });
-      const rack = sim.rack;
-      if (rack && input.forkStep) rack.level = Math.max(0, Math.min(rack.levels - 1, rack.level + input.forkStep));
+      const at = sim.storage;
+      if (at && input.forkStep) at.level = Math.max(0, Math.min(at.levels - 1, at.level + input.forkStep));
       if (sim.states[sim.states.length - 1] !== this) return [];
       const events = sim.queue.splice(0) as { type: string }[];
       if (events.some((e) => e.type === 'levelComplete')) this.snapshot.completed = true;
@@ -198,7 +198,7 @@ beforeEach(() => {
   sim.queue.length = 0;
   sim.failRenderer = false;
   sim.yaw = Math.PI / 4;
-  sim.rack = null;
+  sim.storage = null;
   sim.minimums.clear();
   sim.zooms.length = 0;
   sim.zoomSteps.length = 0;
@@ -1205,7 +1205,7 @@ describe('Game: Benchmark (test mode special level)', () => {
 });
 
 describe('Game: control hint', () => {
-  const rackAt = (levels: number, level = 0) => ({ rackId: 'r1', column: 0, levels, level, slotId: `r1:0:${level}`, ready: false });
+  const rackAt = (levels: number, level = 0) => ({ unitId: 'r1', skin: 'rack' as const, column: 0, levels, level, slotId: `r1:0:${level}`, ready: false });
   const dropped: GameEvent = {
     type: 'boxDropped',
     boxId: 'b1',
@@ -1232,13 +1232,13 @@ describe('Game: control hint', () => {
 
     // Not a fork step that takes effect, a drop, a restart or the next level of a session: the flag only follows
     // the level on screen (the hint itself shows whenever the screen is 'playing').
-    sim.rack = rackAt(3, 2);
+    sim.storage = rackAt(3, 2);
     advance(1 / 60);
     tap('KeyV', 'v');
     expect(click).toHaveBeenCalledExactlyOnceWith(1, -1);
     emit(dropped);
     expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
-    sim.rack = null;
+    sim.storage = null;
     game.restart();
     advance(0.2);
     expect(store.get()).toMatchObject({ screen: 'playing', racks: true });

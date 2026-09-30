@@ -2,7 +2,7 @@ import { Color, Mesh, type BufferGeometry, type MeshBasicMaterial, type MeshStan
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
 import { accepts, isDestined } from '../core/sorting';
-import type { BoxState, GameSnapshot, LevelData, SlotState, ZoneState } from '../core/types';
+import type { BoxState, GameSnapshot, LevelData, StorageSlotState, ZoneState } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
 import { validateLevel } from '../data/validateLevel';
 import { GameState } from '../logic/GameState';
@@ -188,25 +188,27 @@ const boxById = (snap: GameSnapshot, id: string) => snap.boxes.find((b) => b.id 
 const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
 const zoneOf = (snap: GameSnapshot, color: string | undefined, symbol: string | undefined, nth = 0) =>
   snap.zones.filter((z) => z.accepts.color === color && z.accepts.symbol === symbol)[nth];
-const slotOf = (snap: GameSnapshot, id: string) => snap.slots.find((s) => s.id === id)!;
+/** The rack slots of the snapshot (snapshot.storageSlots of skin rack). */
+const rackSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'rack');
+const slotOf = (snap: GameSnapshot, id: string) => rackSlots(snap).find((s) => s.id === id)!;
 const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
 
 /** Lift `box` onto the forks (freeing its zone or slot). */
 function carry(snap: GameSnapshot, box: BoxState): void {
-  for (const s of snap.slots) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
+  for (const s of rackSlots(snap)) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
   Object.assign(box, { carried: true, cell: null, level: 0, slotId: null, zoneId: null, correct: false, locked: false });
   snap.forklift.carrying = box.id;
   snap.forklift.forkLift = 1;
 }
 /** Rest `box` alone on `zone`, as logic would publish the drop. */
 function restOnZone(snap: GameSnapshot, box: BoxState, zone: ZoneState): void {
-  const right = snap.slots.length > 0 ? isDestined(zone, box) : accepts(zone, box);
-  Object.assign(box, { carried: false, cell: { ...zone.cell }, pos: { ...zone.pos }, level: 0, slotId: null, zoneId: zone.id, correct: right, locked: right && snap.slots.length > 0 });
+  const right = rackSlots(snap).length > 0 ? isDestined(zone, box) : accepts(zone, box);
+  Object.assign(box, { carried: false, cell: { ...zone.cell }, pos: { ...zone.pos }, level: 0, slotId: null, zoneId: zone.id, correct: right, locked: right && rackSlots(snap).length > 0 });
   Object.assign(zone, { stack: [box.id], occupiedBy: box.id, satisfied: right, next: null });
   if (snap.forklift.carrying === box.id) snap.forklift.carrying = null;
 }
 /** Rest `box` in rack `slot`, as logic would publish the drop. */
-function restInSlot(snap: GameSnapshot, box: BoxState, slot: SlotState): void {
+function restInSlot(snap: GameSnapshot, box: BoxState, slot: StorageSlotState): void {
   const destined = isDestined(slot, box);
   Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, slotId: slot.id, zoneId: null, correct: destined, locked: destined });
   Object.assign(slot, { occupiedBy: box.id, satisfied: destined });
@@ -391,7 +393,7 @@ describe('target hints (P): what the setting never touches', () => {
     const blue = boxOf(snap, 'blue', 'triangle');
     carry(snap, blue);
     const slot = slotOf(snap, 'r1:0:0');
-    snap.hint.rack = { rackId: 'r1', column: 0, levels: 3, level: 0, slotId: slot.id, ready: true };
+    snap.hint.storage = { unitId: 'r1', skin: 'rack', column: 0, levels: 3, level: 0, slotId: slot.id, ready: true };
     snap.hint.dropCell = { ...slot.cell };
     snap.hint.dropLevel = 0;
     const peak = peakLights(view, snap, 1.5, 0);

@@ -69,13 +69,13 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     expect(Math.max(...trucks.flatMap((t) => t.columns.map((c) => c.length)))).toBeLessThanOrEqual(level.stackLimit!);
     // A guard rail at both ends of every door (none reaches a corner), a static obstacle behind each: a plant.
     const rails = dockRailsOf(level);
-    expect(rails.map((r) => [r.truckIndex, r.end, r.side.x, r.side.z])).toEqual([
-      [0, 0, 0, 0],
-      [0, 1, 3, 0],
-      [1, 0, 3, 0],
-      [1, 1, 5, 0],
-      [2, 0, 0, 3],
-      [2, 1, 0, 5],
+    expect(rails.map((r) => [r.unitId, r.end, r.side.x, r.side.z])).toEqual([
+      ['t1', 0, 0, 0],
+      ['t1', 1, 3, 0],
+      ['t2', 0, 3, 0],
+      ['t2', 1, 5, 0],
+      ['t3', 0, 0, 3],
+      ['t3', 1, 0, 5],
     ]);
     for (const { side } of rails) expect(plantAt(side.x, side.z), `${side.x},${side.z}`).toBe(true);
     // Every bed column lies outside the map beyond its wall; its door cell and the cell behind it are free floor.
@@ -122,9 +122,9 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
 
   it('has exactly one complete assignment, and its «dificultad:» targets hold: 9 moves (exact), repartos 1', () => {
     const targets = targetsOf(level);
-    expect(targets.map((t) => t.kind)).toEqual(['zone', 'slot', 'slot', 'slot', 'truck', 'truck', 'truck', 'truck', 'truck', 'truck']);
+    expect(targets.map((t) => t.skin ?? t.kind)).toEqual(['zone', 'rack', 'rack', 'rack', 'truck', 'truck', 'truck', 'truck', 'truck', 'truck']);
     expect(assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria), 2).count).toBe(1);
-    expect(levelDestinies(level)!.trucks).toHaveLength(truckSlotsOf(level).length);
+    expect(levelDestinies(level)!.slots).toHaveLength(slotsOf(level).length + truckSlotsOf(level).length);
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 5, cued: 3, free: 2 });
@@ -172,15 +172,15 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     expect(out.controls.forkSteps).toBeGreaterThan(0);
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
     // The wrong load comes off the second truck through its door; the third truck's locked box never moves.
-    expect(picks(out.events).filter((p) => p.fromTruckSlotId !== undefined).map((p) => p.fromTruckSlotId)).toEqual(['t2:0:0']);
+    expect(picks(out.events).filter((p) => p.skin === 'truck').map((p) => p.fromSlotId)).toEqual(['t2:0:0']);
     expect(picks(out.events).some((p) => p.boxId === 'b10')).toBe(false);
     // Every truck level lit exactly once (t3:0:0 starts lit): on both north trucks, on the west one on top of its locked
     // box, bottom → top in the first truck's first column.
-    const lit = drops(out.events).filter((d) => d.correct && d.truckSlotId !== undefined).map((d) => d.truckSlotId);
+    const lit = drops(out.events).filter((d) => d.correct && d.skin === 'truck').map((d) => d.slotId);
     expect([...lit].sort()).toEqual(['t1:0:0', 't1:0:1', 't1:1:0', 't2:0:0', 't3:0:1']);
     expect(lit.indexOf('t1:0:0')).toBeLessThan(lit.indexOf('t1:0:1'));
     // Both racks: every slot with a cue lit, one of them from the other rack's top slot.
-    const inSlots = drops(out.events).filter((d) => d.slotId !== undefined);
+    const inSlots = drops(out.events).filter((d) => d.skin === 'rack');
     expect(inSlots.filter((d) => d.correct).map((d) => d.slotId).sort()).toEqual(['r1:0:0', 'r2:0:0', 'r2:0:2']);
     expect(picks(out.events).find((p) => p.boxId === 'b8')).toMatchObject({ fromSlotId: 'r1:0:1', level: 1 });
     // Every drop lit its target and no box ever left its destiny.

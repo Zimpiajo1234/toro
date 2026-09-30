@@ -63,7 +63,7 @@ export function hasRacks(level: Pick<LevelData, 'storage'>): boolean {
   return (level.storage ?? []).some(isRack);
 }
 
-/** One slot of a level, flattened: every rack, column by column, bottom → top (the order of GameSnapshot.slots). */
+/** One slot of a level, flattened: every rack, column by column, bottom → top (the rack slots of snapshot.storageSlots). */
 export interface SlotRef {
   id: string;
   rack: LevelRack;

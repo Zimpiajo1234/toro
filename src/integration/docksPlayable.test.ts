@@ -86,11 +86,11 @@ describe('truck levels are playable with the real controls', () => {
     // No fork keys at a truck: the height is automatic, as on a floor stack.
     expect(out.controls.forkSteps).toBe(0);
     const truckSlots = trucksOf(lvl).flatMap((t) => t.columns.flatMap((levels, column) => levels.map((_, k) => `${t.id}:${column}:${k}`)));
-    const onTruck = drops(out.events).filter((d) => d.truckSlotId !== undefined);
+    const onTruck = drops(out.events).filter((d) => d.skin === 'truck');
     const correct = onTruck.filter((d) => d.correct);
     const started = lvl.boxes.filter((b) => b.level !== undefined).length;
     // Every truck level lit exactly once (the one that starts satisfied never needs a drop), on top of a locked box too.
-    expect(new Set(correct.map((d) => d.truckSlotId)).size).toBe(correct.length);
+    expect(new Set(correct.map((d) => d.slotId)).size).toBe(correct.length);
     expect(correct.length + (lvl === NORTH ? 0 : started)).toBe(truckSlots.length);
     expect(correct.some((d) => d.level === 1)).toBe(true);
     for (const d of correct) {
@@ -101,7 +101,7 @@ describe('truck levels are playable with the real controls', () => {
     }
     if (lvl === NORTH) {
       // The wrong load comes off from the front and the rig backs out with it.
-      expect(picks(out.events).filter((p) => p.fromTruckSlotId !== undefined)).toMatchObject([{ fromTruckSlotId: 't1:1:0', level: 0, fromZoneId: null }]);
+      expect(picks(out.events).filter((p) => p.skin === 'truck')).toMatchObject([{ fromSlotId: 't1:1:0', level: 0, fromZoneId: null }]);
       expect(out.controls.reverseFrames).toBeGreaterThan(0);
     }
     expect(drops(out.events).at(-1)).toMatchObject({ correct: true });

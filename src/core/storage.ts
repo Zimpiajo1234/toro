@@ -40,7 +40,7 @@ export interface StorageSkinRow {
   readonly chars: string;
   /** Phase 6: every column holds min(maxLevels, stackLimit) levels, the ones past its cues «libre». Unread until then. */
   readonly fillToMax: boolean;
-  /** Phase 5: how a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup). Unread until then. */
+  /** How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup): the audio reads it (phase 3). */
   readonly sound: 'metal' | 'wood';
 }
 
@@ -144,7 +144,7 @@ export function storageColumnsOf(level: Pick<LevelData, 'storage'>): StorageColu
 
 /**
  * One level of a storage column (a slot, in any skin), flattened in storageSlotsOf order. Its fields mean what they
- * will in the snapshot's StorageSlotState (phase 3).
+ * do in the snapshot's StorageSlotState (GameSnapshot.storageSlots, the same order).
  */
 export interface StorageSlotRef {
   /** `${unitId}:${column}:${level}` (slotIdOf, the same form in every skin). */

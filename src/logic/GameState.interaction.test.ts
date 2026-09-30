@@ -515,7 +515,7 @@ describe('zones and events', () => {
     const later = [...run(state, 1, move(1, 0)), ...run(state, 0.5, move(0, 1, true)), ...run(state, 0.5, { move: { x: 0, z: 0 }, actionPressed: true })];
     expect(later).toEqual([]);
     expect(snap.forklift.pos).toEqual(pos);
-    expect(snap.hint).toEqual({ targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null });
+    expect(snap.hint).toEqual({ targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, storage: null });
   });
 
   it('the drop hint keeps its object while the cell is unchanged', () => {

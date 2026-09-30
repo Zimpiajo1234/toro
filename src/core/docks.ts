@@ -39,7 +39,8 @@ export const DOCK_RAIL = { thickness: 0.06 } as const;
  * units: cell edges at whole numbers, the wall's inner face at 0.
  */
 export interface DockRail {
-  truckIndex: number;
+  /** Id of the unit whose door it guards (a door unit of level.storage: a truck). */
+  unitId: string;
   wall: WallSide;
   /** Which end of the door run: 0 = its first door cell's (west of a north dock, north of a west one), 1 = its last. */
   end: 0 | 1;
@@ -68,22 +69,21 @@ function isDoor(unit: LevelStorage): unit is DoorUnit {
 
 /**
  * The guard rails of every dock door of a level (the `door` access, docs/STORAGE.md): door by door in storage order
- * (`truckIndex` = the door's index among them, which is its trucksOf index: the truck is the one skin with a door),
- * each door's first end, then its last one.
+ * (`unitId` = the door's unit), each door's first end, then its last one.
  */
 export function dockRailsOf(level: Pick<LevelData, 'storage' | 'size'>): DockRail[] {
   const out: DockRail[] = [];
-  (level.storage ?? []).filter(isDoor).forEach((unit, truckIndex) => {
+  for (const unit of (level.storage ?? []).filter(isDoor)) {
     const { wall } = unit.access;
     const north = wall === 'north';
     const first = north ? unit.x : unit.z;
     const last = first + unit.w;
     const cell = (along: number): CellPos => (north ? { x: along, z: unit.z } : { x: unit.x, z: along });
     const rail = (end: 0 | 1, side: number, line: number, outward: number) =>
-      out.push({ truckIndex, wall, end, side: cell(side), line, outer: line + outward * DOCK_RAIL.thickness, from: 0, to: 1 });
+      out.push({ unitId: unit.id, wall, end, side: cell(side), line, outer: line + outward * DOCK_RAIL.thickness, from: 0, to: 1 });
     if (first > 0) rail(0, first - 1, first + DOOR_JAMB, -1);
     if (last < (north ? level.size.width : level.size.depth)) rail(1, last, last - DOOR_JAMB, 1);
-  });
+  }
   return out;
 }
 
@@ -192,7 +192,7 @@ export function truckColumnsOf(level: Pick<LevelData, 'storage'>): TruckColumnRe
   return out;
 }
 
-/** One truck slot (a level of a bed column), flattened in GameSnapshot.truckSlots order. */
+/** One truck slot (a level of a bed column), flattened in the order of the truck levels of snapshot.storageSlots. */
 export interface TruckSlotRef {
   id: string;
   truck: LevelTruck;
@@ -207,8 +207,8 @@ export interface TruckSlotRef {
 }
 
 /**
- * Every truck slot of a level: truck by truck, column by column, bottom → top (the order of snapshot.truckSlots; a view
- * of `level.storage` until phase 7: core/storage `storageSlotsOf`).
+ * Every truck slot of a level: truck by truck, column by column, bottom → top (the order of the truck levels of
+ * snapshot.storageSlots; a view of `level.storage` until phase 7: core/storage `storageSlotsOf`).
  */
 export function truckSlotsOf(level: Pick<LevelData, 'storage'>): TruckSlotRef[] {
   const out: TruckSlotRef[] = [];

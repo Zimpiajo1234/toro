@@ -114,8 +114,8 @@ describe('AudioEngine without Web Audio', () => {
     engine.setMotor(Number.NaN, -1, Number.NaN);
     engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 0 });
     engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: 'z', level: 0, correct: true, recipeLength: 1, satisfiedCount: 1, total: 2 });
-    engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromSlotId: 'r1:0:1' });
-    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: null, level: 1, correct: true, recipeLength: 1, satisfiedCount: 2, total: 2, slotId: 'r1:0:1' });
+    engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromSlotId: 'r1:0:1', skin: 'rack' });
+    engine.handleEvent({ type: 'boxDropped', boxId: 'b', cell: { x: 1, z: 1 }, zoneId: null, level: 1, correct: true, recipeLength: 1, satisfiedCount: 2, total: 2, slotId: 'r1:0:1', skin: 'rack' });
     engine.handleEvent({ type: 'levelComplete' });
     engine.uiClick();
     engine.forkClick(1, 1);
@@ -741,6 +741,7 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
         satisfiedCount,
         total: 3,
         slotId: 'r1:0:1',
+        skin: 'rack',
       }) as const;
 
     async function live() {
@@ -804,8 +805,8 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       const tick = vi.spyOn(SfxPlayer.prototype, 'tick');
       engine.handleEvent(inSlot(true));
       await play(ctx, ctx.currentTime + 1);
-      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 2, fromSlotId: 'r1:0:2' });
-      engine.handleEvent({ type: 'zoneReleased', zoneId: null, boxId: 'b', slotId: 'r1:0:2' });
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 2, fromSlotId: 'r1:0:2', skin: 'rack' });
+      engine.handleEvent({ type: 'zoneReleased', zoneId: null, boxId: 'b', slotId: 'r1:0:2', skin: 'rack' });
       expect(pickup).not.toHaveBeenCalled();
       expect(slotLift.mock.calls).toEqual([[ctx.currentTime, 2]]);
       expect(tick.mock.calls).toEqual([[ctx.currentTime, 'release']]);
@@ -921,7 +922,8 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
         recipeLength: 1,
         satisfiedCount,
         total: 3,
-        truckSlotId: `t1:1:${level}`,
+        slotId: `t1:1:${level}`,
+        skin: 'truck',
       }) as const;
 
     it('lands a box on a truck bed with the hollow thunk; it chimes only when correct and buzzes on a wrong truck slot', async () => {
@@ -947,7 +949,7 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
 
       // Picking from a truck bed is the classic wooden pickup.
       const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
-      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromTruckSlotId: 't1:1:1' });
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromSlotId: 't1:1:1', skin: 'truck' });
       expect(pickup.mock.calls).toEqual([[ctx.currentTime, 1]]);
       expect(warn).not.toHaveBeenCalled();
       engine.dispose();

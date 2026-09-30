@@ -23,51 +23,45 @@ export interface DropChoice {
   z: number;
   /** Zone on that cell (any color), or -1. */
   zoneIndex: number;
-  /** Height the box lands at (0 = floor, 1 = on one box, …; a rack slot's level). */
+  /** Height the box lands at (0 = floor, 1 = on one box, …; a storage level). */
   level: number;
-  /** Rack slot (flat index, LevelGrid.slotOf) the box goes into, or -1 for the floor. */
-  slot: number;
-  /** Truck bed column (LevelGrid.truckColumns) the box is loaded onto (at `level`, on top of its stack), or -1. */
-  truck: number;
+  /** Storage column (LevelGrid.columns) the box goes into, at `level` (its cell is x, z), or -1 for the floor. */
+  column: number;
 }
 
 export function createDropChoice(): DropChoice {
-  return { x: 0, z: 0, zoneIndex: -1, level: 0, slot: -1, truck: -1 };
+  return { x: 0, z: 0, zoneIndex: -1, level: 0, column: -1 };
 }
 
 /**
- * Levels with racks (docs/RACKS.md): the rack column the forks work on this frame, kept up to date by GameState.
- * `column` ≥ 0 only while the forklift faces it and the forks stand at the selected slot level, so a pick / drop
- * there acts on that slot and nowhere else.
+ * Levels with storage (docs/STORAGE.md): the storage column the forks work on this frame, kept up to date by GameState
+ * (refreshStorageAim, logic/storageAccess STORAGE_ACCESS), in any skin. Only that column, at that level, is ever a pick
+ * or drop candidate in storage: a unit is loaded and unloaded from its front only.
  */
-export interface RackAim {
-  /** Rack column (LevelGrid.columns) the forks work on, or -1. */
+export interface StorageAim {
+  /**
+   * Storage column (LevelGrid.columns) pick and drop act on, or -1: the one the rig works at, once it faces it (or also
+   * while held there, by its access) with the forks at the level chosen (where they are keyed) and the fork point deep
+   * enough for a pick (its access's `pickReach`).
+   */
   column: number;
-  /** Selected slot level in that column. */
+  /**
+   * The level they act on there: the one selected (keyed forks), or where the forks go by themselves (a stack: its top
+   * box to lift, the next level up to load).
+   */
   level: number;
-  /** Carrying: the fork point is close enough to the rack face for the box to go into the slot. */
+  /** Carrying: the fork point is deep enough for the drop (its access's `dropReach`). */
   reach: boolean;
   /**
-   * Carrying: facing a column with the fork point that close while the forks are still on their way to the selected
-   * level (not held up by a floor stack the load is over): nothing can be dropped, not even on the floor in front.
+   * Carrying at a storage column while nothing may be dropped, not even on the floor in front or beside it: the load at
+   * a rack's face while the forks are still on their way to the selected level (not held up by a floor stack the load is
+   * over), or in a dock door short of the reach (the doorway).
    */
-  travel: boolean;
-  /**
-   * Levels with trucks (docs/DOCKS.md): the truck bed column (LevelGrid.truckColumns) the rig faces from its door cell,
-   * with the forks through the door (far enough past the wall line to load it or lift its top box), or -1. Only that
-   * column's bed cell, outside the map, is ever a pick or drop candidate: a truck is loaded and unloaded through its
-   * door only.
-   */
-  truck: number;
-  /**
-   * Levels with trucks, carrying: the load is in a dock door but the forks are not yet through it (`truck` -1): nothing
-   * can be dropped, not even on the floor beside the door.
-   */
-  doorway: boolean;
+  blocked: boolean;
 }
 
-export function createRackAim(): RackAim {
-  return { column: -1, level: 0, reach: false, travel: false, truck: -1, doorway: false };
+export function createStorageAim(): StorageAim {
+  return { column: -1, level: 0, reach: false, blocked: false };
 }
 
 /**
@@ -90,7 +84,7 @@ export class Interaction {
   private readonly magnetSq: number;
   private readonly contact = createContact();
   private readonly probe = createContact();
-  private readonly aim: RackAim;
+  private readonly aim: StorageAim;
 
   constructor(
     level: LevelData,
@@ -100,7 +94,7 @@ export class Interaction {
     zones: readonly ZoneState[],
     grid: LevelGrid,
     world: CollisionWorld,
-    aim: RackAim = createRackAim(),
+    aim: StorageAim = createStorageAim(),
   ) {
     this.aim = aim;
     this.forklift = forklift;
@@ -123,10 +117,10 @@ export class Interaction {
    * Box the action would lift now, or -1: resting on top of its stack, center within pickupRadius of the fork point and within
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
    * inside another obstacle, so the load collider can always settle smoothly (a dock door is open for it: its fork
-   * point may stand on the bed beyond). A box in a rack slot is only a candidate in the slot the forks work on
-   * (RackAim: facing its column, forks at its level), and a box on a truck bed only as the top of the bed column the
-   * rig faces with the forks through its door (RackAim.truck). A locked box (levels with racks or trucks: resting on
-   * its destined zone, slot or truck slot) never is.
+   * point may stand on the bed beyond). A box in storage (any skin) is only a candidate as the one the aim designates
+   * (StorageAim: the aimed column's box at the aimed level: the slot the forks stand at, or the top of a stack the rig
+   * faces with the forks through its door). A locked box (levels with storage: resting on its destined zone or slot)
+   * never is.
    */
   findPickTarget(): number {
     const f = this.forklift;
@@ -141,28 +135,16 @@ export class Interaction {
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
       if (b.carried || b.locked) continue;
+      const cell = b.cell;
+      let ignore = b.id;
+      // The fork point sits in a stored box's own column: only the rest of the world must leave it room there.
+      let ignoreColumn = -1;
       if (b.slotId !== null) {
         if (i !== aimed) continue;
-        const dx = b.pos.x - px;
-        const dz = b.pos.z - pz;
-        const dSq = dx * dx + dz * dz;
-        if (dSq > this.pickupRadiusSq || dSq >= bestSq - TIE_EPSILON) continue;
-        const ox = b.pos.x - f.pos.x;
-        const oz = b.pos.z - f.pos.z;
-        if (ox * fx + oz * fz < Math.sqrt(ox * ox + oz * oz) * this.pickupCos) continue;
-        // The fork point sits in the slot's own cell: only the rest of the world must leave it room.
-        if (this.world.clearance(px, pz, b.id, false, aim.column) < 0) continue;
-        best = i;
-        bestSq = dSq;
-        continue;
-      }
-      const cell = b.cell;
-      // Only the top of a stack can be lifted; the stack's base stands for the whole cell in collisions.
-      let ignore = b.id;
+        ignoreColumn = aim.column;
+      } else if (cell && this.grid.boxAt(cell.x, cell.z) !== i) continue; // only the top of a floor stack
+      // The stack's base stands for the whole cell in collisions (a box on a shelf has no collider of its own).
       if (cell) {
-        const bed = this.grid.truckColumnAt(cell.x, cell.z);
-        if (bed >= 0 && bed !== aim.truck) continue;
-        if (this.grid.boxAt(cell.x, cell.z) !== i) continue;
         const base = this.grid.baseAt(cell.x, cell.z);
         if (base >= 0) ignore = this.boxes[base].id;
       }
@@ -174,7 +156,7 @@ export class Interaction {
       const oz = b.pos.z - f.pos.z;
       const along = ox * fx + oz * fz;
       if (along < Math.sqrt(ox * ox + oz * oz) * this.pickupCos) continue;
-      if (this.world.clearance(px, pz, ignore) < 0) continue;
+      if (this.world.clearance(px, pz, ignore, false, ignoreColumn) < 0) continue;
       best = i;
       bestSq = dSq;
     }
@@ -190,10 +172,11 @@ export class Interaction {
    * over a single criterion), then the nearest;
    * otherwise the nearest candidate (which may be a zone that does not accept it when the forks are over it). If no
    * cell passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
-   * is used, so a drop in a snug corner still works. Returns false when nothing fits. Facing a truck bed column with
-   * the forks through its door (RackAim.truck): on top of its stack while it has room (also on a locked box: the next
-   * level loads on it), else nothing (never the floor beside it); with the load in the doorway short of that
-   * (RackAim.doorway), nothing. A dock's door cells are plain floor otherwise.
+   * is used, so a drop in a snug corner still works. Returns false when nothing fits. At a storage column with the load
+   * deep enough (StorageAim.column, `reach`): the aimed level if the column takes the box there now (a free shelf; the
+   * next level up of a stack with room, also on a locked box: the next level loads on it), else nothing (never the
+   * floor in front or beside it); while the aim is blocked (the forks still on their way to a rack's selected level,
+   * the load in a doorway short of the reach), nothing. A dock's door cells are plain floor otherwise.
    */
   findDrop(box: Sortable, out: DropChoice): boolean {
     const f = this.forklift;
@@ -201,34 +184,18 @@ export class Interaction {
     const pz = f.pos.z + Math.cos(f.heading) * this.reach;
     const cellX = Math.floor(px + this.halfWidth);
     const cellZ = Math.floor(pz + this.halfDepth);
-    out.slot = -1;
+    out.column = -1;
 
-    // Facing a rack column with the load at its face: the selected slot once the forks stand at it, or nothing (also
-    // while they travel there: never the floor in front).
     const aim = this.aim;
-    if (aim.travel || aim.doorway) return false;
+    if (aim.blocked) return false;
     if (aim.column >= 0 && aim.reach) {
-      const slot = this.grid.slotOf(aim.column, aim.level);
-      if (slot < 0 || this.grid.slotBox(slot) >= 0) return false;
+      if (!this.grid.canStore(aim.column, aim.level)) return false;
       const cell = this.grid.columns[aim.column].cell;
       out.x = cell.x;
       out.z = cell.z;
       out.zoneIndex = -1;
       out.level = aim.level;
-      out.slot = slot;
-      out.truck = -1;
-      return true;
-    }
-    out.truck = -1;
-    if (aim.truck >= 0) {
-      const column = this.grid.truckColumns[aim.truck];
-      const height = this.grid.height(column.cell.x, column.cell.z);
-      if (height >= column.levels) return false;
-      out.x = column.cell.x;
-      out.z = column.cell.z;
-      out.zoneIndex = -1;
-      out.level = height;
-      out.truck = aim.truck;
+      out.column = aim.column;
       return true;
     }
 

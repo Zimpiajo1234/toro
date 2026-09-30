@@ -126,7 +126,7 @@ function approach(column: number, offset: number, errorDeg: number, empty: boole
     return l ? wallZ - (l.z - carriedBoxRadius) : wallZ - (f.pos.z + Math.cos(f.heading) * forkReach);
   };
   const offered = () =>
-    empty ? snap.boxes.find((b) => b.id === snap.hint.targetBoxId)?.truckSlotId != null : snap.hint.dropTruckSlotId != null;
+    empty ? snap.boxes.find((b) => b.id === snap.hint.targetBoxId)?.slotId != null : snap.hint.storage?.skin === 'truck';
   let entry = Infinity;
   holdUntilStill(state, drive(1), dt, 6, (t) => {
     if (entry === Infinity && offered()) entry = t;
@@ -136,8 +136,8 @@ function approach(column: number, offset: number, errorDeg: number, empty: boole
   let outcome: Outcome;
   if (offered()) {
     const events = state.update(dt, ACTION);
-    const done = events.find((e) => e.type === 'boxDropped' || e.type === 'boxPicked') as { truckSlotId?: string; fromTruckSlotId?: string } | undefined;
-    const id = done?.truckSlotId ?? done?.fromTruckSlotId;
+    const done = events.find((e) => e.type === 'boxDropped' || e.type === 'boxPicked') as { slotId?: string; fromSlotId?: string } | undefined;
+    const id = done?.slotId ?? done?.fromSlotId;
     expect(id, 'acting on an offered truck column').toBeDefined();
     const at = Number(id!.split(':')[1]);
     // Only ever the column of the door cell the body stands on.

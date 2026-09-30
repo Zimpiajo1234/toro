@@ -25,6 +25,13 @@ cajas de sus huecos. Cada extremo lleva solo una **placa translúcida** muy tenu
 del lateral; las cajas de la columna del extremo se ven a través. Las **pistas no cambian**: mismo sitio, mismo tamaño,
 color entero, nunca atenuadas ni en espejo, en los dos extremos (ver «Render»).
 
+> **Fase 3 de docs/STORAGE.md** (2026-09-30): el estado y la lógica del almacenaje son comunes a estanterías y
+> camiones: `snapshot.storageSlots` (`StorageSlotState`), un solo `box.slotId`, `hint.storage`, eventos con `slotId` /
+> `fromSlotId` y `skin`, `LevelGrid.columns`, `GameState.refreshStorageAim` con la tabla `STORAGE_ACCESS` y las
+> aberturas de `CollisionWorld` (`setOpen`). Las secciones de abajo aún usan los nombres de antes (`slots`,
+> `SlotState`, `hint.rack`, `refreshRackAim`, `setRackOpen`, `RackAim`…): la fase 7 las pone al día; la
+> equivalencia, en docs/STORAGE.md «Fase 3: lo entregado».
+
 ## Reglas
 1. **Estantería almacenable** = mueble de 1 casilla de fondo, N casillas de ancho (una **columna** por casilla), de 1 a 3
    **huecos** de alto por columna (suelo + 2). Se **carga y descarga solo por el frente** (`facing`): la casilla de delante
