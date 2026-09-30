@@ -14,7 +14,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { ForkStepWatcher } from '../audio/forkSteps';
 import { PROGRESS_STORAGE_KEY, ProgressStore } from '../storage/ProgressStore';
 import { getTheme } from '../themes';
-import type { GameActions, LevelResult, UIState } from '../ui/uiState';
+import type { GameActions, LevelResult, ScreenInsets, UIState } from '../ui/uiState';
 import { Input, type InputSample } from './Input';
 import { inputToDrive, inputToWorld, parseMoveMapping, type ControlMappings, type DriveInput } from './cameraInput';
 import {
@@ -103,6 +103,8 @@ export class Game implements GameActions {
   private resumeTimerOnInput = false;
   /** Last hold-to-restart progress published to the store (0 … 1). */
   private publishedHold = 0;
+  /** Last overlay bands the UI reported (setViewInsets); handed to a renderer created after them. */
+  private viewInsets: ScreenInsets | null = null;
 
   constructor(container: HTMLElement, store: Store<UIState>) {
     this.container = container;
@@ -116,6 +118,7 @@ export class Game implements GameActions {
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
     this.startBenchmark = this.startBenchmark.bind(this);
+    this.setViewInsets = this.setViewInsets.bind(this);
   }
 
   /** Start the frame loop and show the title screen. */
@@ -140,6 +143,7 @@ export class Game implements GameActions {
     });
     const rt: Runtime = { renderer, audio, progress, input };
     this.rt = rt;
+    if (this.viewInsets) renderer.setViewInsets(this.viewInsets, true);
 
     const settings = progress.getSettings();
     audio.setMuted(settings.muted);
@@ -300,6 +304,12 @@ export class Game implements GameActions {
       result: null,
       ...this.progressSummary(rt),
     });
+  }
+
+  /** The overlay's reserved bands changed: the camera eases to frame the level clear of them (plumbing only). */
+  setViewInsets(insets: ScreenInsets): void {
+    this.viewInsets = { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left };
+    this.rt?.renderer.setViewInsets(this.viewInsets);
   }
 
   toggleMute(): void {

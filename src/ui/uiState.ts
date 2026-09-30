@@ -57,6 +57,14 @@ export interface UIState {
   racks: boolean;
 }
 
+/** Screen bands covered by overlay pieces that stay over the scene while playing, in CSS px from each edge. */
+export interface ScreenInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 /** Commands the UI can issue. Implemented by game/Game.ts. */
 export interface GameActions {
   /** From the title screen: start (or continue) at a level index. */
@@ -76,6 +84,11 @@ export interface GameActions {
    * "Continuar" target); "Repetir" reloads it and its card leads back to the title.
    */
   startBenchmark(): void;
+  /**
+   * The overlay's reserved bands changed (HUD pills at the top, control hint at the bottom; ui/reservedAreas.ts,
+   * measured on change): the camera frames the level clear of them. All zero on the title.
+   */
+  setViewInsets?(insets: ScreenInsets): void;
 }
 
 export const initialUIState: UIState = {

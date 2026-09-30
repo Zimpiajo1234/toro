@@ -4,6 +4,7 @@ import { BENCHMARK_TIP, formatClock, TEST_MODE_TIP } from './format';
 import { ClockIcon, RestartIcon } from './icons';
 import { onScreen } from './interaction';
 import { Presence } from './Presence';
+import { useReservedArea } from './reservedAreas';
 import type { GameActions, UIState } from './uiState';
 
 interface HUDProps {
@@ -24,15 +25,19 @@ function keepFocus(e: MouseEvent<HTMLButtonElement>): void {
   e.preventDefault();
 }
 
-/** In-game HUD — only three things: level, time, restart. */
+/**
+ * In-game HUD — only three things: level, time, restart. Its corners reserve the top band (the camera frames the level
+ * below them); a pill added elsewhere at the top takes `useReservedArea('top')` too.
+ */
 export function HUD({ store, actions, show, dimmed }: HUDProps) {
+  const reserveTop = useReservedArea<HTMLDivElement>('top');
   return (
     <Presence show={show} inert={dimmed} className={`hud${dimmed ? ' is-dimmed' : ''}`}>
-      <div className="hud__corner hud__corner--start">
+      <div className="hud__corner hud__corner--start" ref={reserveTop}>
         <LevelBadge store={store} />
         <RestartButton store={store} actions={actions} />
       </div>
-      <div className="hud__corner hud__corner--end">
+      <div className="hud__corner hud__corner--end" ref={reserveTop}>
         <TimerButton store={store} actions={actions} />
       </div>
     </Presence>

@@ -3,6 +3,7 @@ import { useStore, type Store } from '../core/store';
 import { MouseWheelIcon } from './icons';
 import { Keycap } from './Keycap';
 import { Presence, useFrozen } from './Presence';
+import { useReservedArea } from './reservedAreas';
 import type { UIState } from './uiState';
 
 /** Leaving a level the hint lingers a little longer on its way out: it should melt away, not vanish. */
@@ -12,15 +13,17 @@ const VEHICLE_KEYS = GAME_CONFIG.controls.keyboardMapping === 'vehicle';
 
 /**
  * Control hint, bottom center: on screen the whole time a level is played, in every level (it never fades out on its
- * own). The move row and, in levels with storage racks (`racks`), the fork row under it, in one soft panel.
+ * own). The move row and, in levels with storage racks (`racks`), the fork row under it, in one soft panel. It
+ * reserves the bottom band up to its top edge: the camera frames the level above it.
  */
 export function ControlHint({ store, show }: { store: Store<UIState>; show: boolean }) {
   const racks = useStore(store, (s) => s.racks);
   // On its way out (to the title, whose level may differ) it keeps the rows it showed.
   const forkRow = useFrozen(racks, !show);
+  const reserveBottom = useReservedArea<HTMLDivElement>('bottom');
   return (
     <Presence show={show} className="hint-layer" exitMs={HINT_EXIT_MS}>
-      <div className={`hint ui-enter ui-enter--d4${forkRow ? ' hint--rows' : ''}`} role="note">
+      <div ref={reserveBottom} className={`hint ui-enter ui-enter--d4${forkRow ? ' hint--rows' : ''}`} role="note">
         <MoveRow />
         {forkRow && <ForkRow />}
       </div>

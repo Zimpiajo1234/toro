@@ -250,6 +250,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (`rotateDurationSec`). Idle orbit on title: extremely slow yaw drift. Never shake, never snap. The camera
   never zooms in during a Q/E turn or the idle orbit: the frame stays at least as wide as the blend of the two
   diagonal (45° + k·90°) framings around the current yaw.
+  The fit frames the canvas minus the bands the DOM overlay keeps over the scene while playing (HUD pills at the
+  top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts`, measured by a ResizeObserver on
+  change → `GameActions.setViewInsets` → `GameRenderer.setViewInsets` → `CameraRig.setInsets`, eased on a
+  critically damped spring, ≤ half the canvas): held while the completion card is up, none on the title.
 - `WebGLRenderer({ antialias: true, alpha: true })`, transparent clear (CSS gradient shows through),
   `outputColorSpace = SRGB`, `toneMapping = NeutralToneMapping`, pixel ratio ≤ 2. Soft shadows from one
   warm directional "window" light (PCFSoft, map 2048, tight shadow camera fitted to the level) + hemisphere.

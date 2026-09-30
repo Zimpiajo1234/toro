@@ -2,7 +2,7 @@ import { NeutralToneMapping, PCFShadowMap, SRGBColorSpace, Scene, WebGLRenderer 
 import type { GameEvent, GameSnapshot } from '../core/types';
 import type { Theme } from '../themes';
 import { GAME_CONFIG, type GameConfig } from '../config';
-import { CameraRig } from './CameraRig';
+import { CameraRig, type ViewInsets } from './CameraRig';
 import { LevelView } from './LevelView';
 import { Lighting } from './Lighting';
 
@@ -114,6 +114,15 @@ export class GameRenderer {
   /** Title-screen mode: very slow orbit of the diorama. Turning it off glides back to a 45° view. */
   setIdleOrbit(enabled: boolean): void {
     this.rig.setIdleOrbit(enabled);
+  }
+
+  /**
+   * Screen bands the DOM overlay keeps over the scene (CSS px from each canvas edge): the camera frames the level in
+   * the rest, easing there (`immediate`: at once, when nothing is framed on screen yet).
+   */
+  setViewInsets(insets: ViewInsets, immediate = false): void {
+    if (this.disposed) return;
+    this.rig.setInsets(insets, immediate);
   }
 
   /** Counters of the last rendered frame (dev / diagnostics). */

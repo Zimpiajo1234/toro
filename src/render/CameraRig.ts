@@ -18,6 +18,37 @@ interface Fit {
   centerY: number;
 }
 
+/**
+ * Screen bands covered by overlay pieces that stay over the scene (HUD pills, control hint), in CSS px from each
+ * canvas edge — the unit of setAspect(). The fit frames the level in the rest of the canvas.
+ */
+export interface ViewInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/** A critically damped spring, stepped exactly for any dt: it starts and settles gently and never overshoots from rest. */
+class Spring {
+  value = 0;
+  private velocity = 0;
+
+  step(target: number, omega: number, dt: number): void {
+    if (dt <= 0) return;
+    const offset = this.value - target;
+    const decay = Math.exp(-omega * dt);
+    const k = (this.velocity + omega * offset) * dt;
+    this.velocity = (this.velocity - omega * k) * decay;
+    this.value = target + (offset + k) * decay;
+  }
+
+  snap(target: number): void {
+    this.value = target;
+    this.velocity = 0;
+  }
+}
+
 const newFit = (): Fit => ({ halfW: 0, halfH: 0, centerX: 0, centerY: 0 });
 
 function blendFits(a: Fit, b: Fit, t: number, out: Fit): Fit {
@@ -30,12 +61,22 @@ const QUARTER = Math.PI / 2;
 /** Idle orbit: one full turn every four minutes. */
 const ORBIT_SPEED = TAU / 240;
 const DISTANCE = 60;
+/**
+ * Overlay bands ease in and out (a new hint row, the HUD arriving, a resize) on a critically damped spring: ≈ 95 %
+ * there in 0.95 s, about as long as the hint takes to fade in. Title → play (both bands at once, 1280×800) peaks at
+ * ≈ 0.7 % zoom per frame.
+ */
+const INSET_OMEGA = 5;
+/** Overlays never reserve more than this share of the canvas height (or width): they squeeze the level, never hide it. */
+const MAX_RESERVED = 0.5;
+const band = (px: number): number => (Number.isFinite(px) && px > 0 ? px : 0);
 
 /**
  * Orthographic diorama camera. Yaw ψ follows docs/ARCHITECTURE.md: the camera sits in horizontal
  * direction (sin ψ, cos ψ) from its target. Pitch is fixed. Every frame the frustum is fitted to the
  * FitBoxes for the current yaw and aspect, so the whole warehouse stays visible at any angle, without
- * breathing in and out while it turns (see place()).
+ * breathing in and out while it turns (see place()). The fit uses the canvas minus the overlay bands (setInsets):
+ * the frustum still covers the whole canvas, off-center so the level sits in the free area.
  */
 export class CameraRig {
   readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, DISTANCE * 2.5);
@@ -58,7 +99,16 @@ export class CameraRig {
   private orbitOffset = 0;
 
   private aspect = 1;
+  /** Canvas size in CSS px (0 until known), the unit of the insets. */
+  private width = 0;
+  private height = 0;
   private fitBoxes: readonly FitBox[] = [];
+  /** Overlay bands asked for (px), and the eased share of the canvas each one takes. */
+  private readonly insets: ViewInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+  private readonly insetTop = new Spring();
+  private readonly insetRight = new Spring();
+  private readonly insetBottom = new Spring();
+  private readonly insetLeft = new Spring();
 
   private readonly right = new Vector3();
   private readonly up = new Vector3();
@@ -86,8 +136,25 @@ export class CameraRig {
     return this.base + this.orbitOffset;
   }
 
+  /** Canvas size in CSS px. */
   setAspect(width: number, height: number): void {
-    if (width > 0 && height > 0) this.aspect = width / height;
+    if (!(width > 0 && height > 0)) return;
+    this.aspect = width / height;
+    this.width = width;
+    this.height = height;
+  }
+
+  /**
+   * Overlay bands to keep the level clear of (CSS px from each canvas edge). The frame eases to them (no zoom jumps),
+   * or jumps right there with `immediate` (nothing framed on screen yet). Call on change, not every frame.
+   */
+  setInsets(insets: ViewInsets, immediate = false): void {
+    const own = this.insets;
+    own.top = band(insets.top);
+    own.right = band(insets.right);
+    own.bottom = band(insets.bottom);
+    own.left = band(insets.left);
+    if (immediate) this.stepInsets(0, true);
   }
 
   setFitBoxes(boxes: readonly FitBox[]): void {
@@ -124,7 +191,40 @@ export class CameraRig {
       this.base %= TAU; // keep numbers small over very long sessions
     }
     if (Math.abs(this.orbitOffset) > TAU * 4) this.orbitOffset %= TAU;
+    this.stepInsets(dt, false);
     this.place();
+  }
+
+  /** Ease each overlay band's share of the canvas toward the one asked for (or `snap` there). Allocation-free. */
+  private stepInsets(dt: number, snap: boolean): void {
+    const { top, right, bottom, left } = this.insets;
+    const w = this.width;
+    const h = this.height;
+    let t = h > 0 ? top / h : 0;
+    let b = h > 0 ? bottom / h : 0;
+    let l = w > 0 ? left / w : 0;
+    let r = w > 0 ? right / w : 0;
+    const vertical = t + b;
+    if (vertical > MAX_RESERVED) {
+      t *= MAX_RESERVED / vertical;
+      b *= MAX_RESERVED / vertical;
+    }
+    const horizontal = l + r;
+    if (horizontal > MAX_RESERVED) {
+      l *= MAX_RESERVED / horizontal;
+      r *= MAX_RESERVED / horizontal;
+    }
+    if (snap) {
+      this.insetTop.snap(t);
+      this.insetRight.snap(r);
+      this.insetBottom.snap(b);
+      this.insetLeft.snap(l);
+      return;
+    }
+    this.insetTop.step(t, INSET_OMEGA, dt);
+    this.insetRight.step(r, INSET_OMEGA, dt);
+    this.insetBottom.step(b, INSET_OMEGA, dt);
+    this.insetLeft.step(l, INSET_OMEGA, dt);
   }
 
   private startTween(from: number, velocity: number, to: number, duration: number): void {
@@ -146,6 +246,8 @@ export class CameraRig {
    * yaw alone would zoom in and back out on every turn. Instead the frame never gets tighter than a
    * blend of the framings at the two anchor yaws around the current one (the tween's ends, or the
    * canonical diagonals while orbiting / at rest), while the live fit still guarantees containment.
+   * All of it frames the free area (the canvas minus the overlay bands): the frustum then widens to the whole canvas,
+   * off-center, so the level's center lands on the free area's center.
    */
   private place(): void {
     const yaw = this.yaw;
@@ -159,10 +261,20 @@ export class CameraRig {
       this.diagonalFit(yaw, floor);
     }
 
+    const t = this.insetTop.value;
+    const r = this.insetRight.value;
+    const b = this.insetBottom.value;
+    const l = this.insetLeft.value;
+    const freeW = 1 - l - r;
+    const freeH = 1 - t - b;
+    const aspect = (this.aspect * freeW) / freeH;
     let halfW = Math.max(live.halfW, floor.halfW) * this.padding;
     let halfH = Math.max(live.halfH, floor.halfH) * this.padding;
-    if (halfW / halfH > this.aspect) halfH = halfW / this.aspect;
-    else halfW = halfH * this.aspect;
+    if (halfW / halfH > aspect) halfH = halfW / aspect;
+    else halfW = halfH * aspect;
+    // Half extents of the whole canvas at that scale.
+    halfW /= freeW;
+    halfH /= freeH;
 
     this.orient(yaw);
     const cam = this.camera;
@@ -170,10 +282,10 @@ export class CameraRig {
     cam.position.copy(this.target).addScaledVector(this.back, DISTANCE);
     cam.up.set(0, 1, 0);
     cam.lookAt(this.target);
-    cam.left = -halfW;
-    cam.right = halfW;
-    cam.top = halfH;
-    cam.bottom = -halfH;
+    cam.left = -halfW * (1 + l - r);
+    cam.right = halfW * (1 - l + r);
+    cam.top = halfH * (1 + t - b);
+    cam.bottom = -halfH * (1 - t + b);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
   }
