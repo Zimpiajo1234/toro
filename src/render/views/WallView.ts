@@ -18,8 +18,10 @@ const SHAFT_MIN_VISIBILITY = 0.05;
  */
 export class WallView {
   readonly group = new Group();
+  /** Its whole volume (world space), framed at full height even while it is sunk: the sink never moves the camera. */
   readonly fitBox: FitBox;
   private visibility = 1;
+  private scale = 1;
   private shafts: Mesh | null = null;
   private shaftMaterial: MeshBasicMaterial | null = null;
 
@@ -28,7 +30,12 @@ export class WallView {
     fitMin: Vector3,
     fitMax: Vector3,
   ) {
-    this.fitBox = { min: fitMin, max: fitMax, heightScale: 1 };
+    this.fitBox = { min: fitMin, max: fitMax };
+  }
+
+  /** Its height scale this frame: 1 standing, 0 sunk (views may follow the sink; the camera never does). */
+  get heightScale(): number {
+    return this.scale;
   }
 
   /**
@@ -54,7 +61,7 @@ export class WallView {
     this.group.scale.y = Math.max(s, 1e-4);
     this.group.scale.z = Math.max(Math.min(1, s / THIN_FROM), 1e-4);
     this.group.visible = s > HIDE_SCALE;
-    this.fitBox.heightScale = s;
+    this.scale = s;
     if (this.shafts && this.shaftMaterial) {
       this.shaftMaterial.opacity = shaftGain * v * v;
       this.shafts.visible = v > SHAFT_MIN_VISIBILITY;

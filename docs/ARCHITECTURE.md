@@ -268,10 +268,24 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (`rotateDurationSec`). Idle orbit on title: extremely slow yaw drift. Never shake, never snap. The auto-fit
   never zooms in during a Q/E turn or the idle orbit: the frame stays at least as wide as the blend of the two
   diagonal (45° + k·90°) framings around the current yaw (the player's zoom, below, is a separate factor on top).
+  **The camera never reframes on its own** (user rule 2026-09-30): the framing changes only with the player's input (a
+  Q/E turn, the zoom, a canvas / window resize), the title's orbit and its glide to the nearest canonical yaw as a
+  level starts from it (1.44 s), and a freshly loaded level (a cut). The fit boxes (`CameraRig` `FitBox`) are static:
+  the floor up to `DIORAMA.contentHeight`, each back wall whole, racks, docks (truck + sign). A wall is framed at full
+  height even while it is sunk: it then stands on the camera's side of the room, where its top never reaches the edge
+  of the frame, so the framing at rest is bit for bit the settled sink's (every level, any room ≥ 2 × 2) and nothing
+  clips mid-turn; walls sinking or rising, forks, loads and trucks never move the frame. Every ease lands exactly
+  (zoom, followed point, bands; the yaw sheds whole turns only as a turn starts), so at rest the camera is
+  bit-identical frame to frame (`CameraRig.test.ts`, «never moves on its own»).
   The fit frames the canvas minus the bands the DOM overlay keeps over the scene while playing (HUD pills at the
-  top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts`, measured by a ResizeObserver on
-  change → `GameActions.setViewInsets` → `GameRenderer.setViewInsets` → `CameraRig.setInsets`, eased on a
-  critically damped spring, ≤ half the canvas): held while the completion card is up, none on the title.
+  top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts` → `GameActions.setViewInsets` →
+  `GameRenderer.setViewInsets` → `CameraRig.setInsets`, ≤ half the canvas). They are reported once as a level starts
+  (entering play, or a new level while playing: read right after the DOM commit, in a layout effect, so they reach
+  the camera before the level's first frame is painted) and again only on a viewport resize: a piece that changes
+  size mid-level (a hint row or its wording, a pill, fonts) is measured but waits for the next level or resize, and
+  a restart of the same level keeps them. The camera takes them at once (the renderer redraws right away), except
+  with the title's orbit and its glide into a level, where they glide in over the same 1.44 s (hermite, exact end):
+  one calm motion. Held while the completion card is up, none on the title.
 - Player zoom (user request 2026-09-30): `GameRenderer.zoomBy(deltaLog2)` (a step; + = closer, in log2 "stops", +1 =
   twice as close), `zoomTrack(deltaLog2)` (zoom that follows the input as it moves) and `resetZoom()` → `CameraRig`,
   fed by Game while playing from `InputSample.zoomStep` (a + / − tap's small step on the press, a Ctrl + mouse wheel
@@ -284,8 +298,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   after the release instead of gliding on to a goal that ran ahead of the view (it used to overrun ≈ 0.3 stops). While
   the page itself is still pinch-zoomed (`visualViewport.scale` > 1.01, e.g. after a pinch over the title) pinches stay
   the browser's even while playing, so the player can pinch it back to 1. As the zoom grows the framing target blends from the level centre to the
-  forklift (followed with `zoomFollowSec`), clamped so the visible free area stays over the (padded) level; zooming
-  fully out returns to the centred full view. Q/E turns pivot around that target; the reserved bands (`setInsets`) and
+  forklift (followed with `zoomFollowSec`; once it stops the followed point lands exactly on it, 0.1 mm), clamped so
+  the visible free area stays over the (padded) level; zooming fully out returns to the centred full view, and at zoom
+  1 the forklift never moves the frame. Q/E turns pivot around that target; the reserved bands (`setInsets`) and
   occlusion ghosting compose with it (a dock's truck is static and always framed: it never moves the frame). Reset to
   1 on a level change and on the title (the idle orbit stays unzoomed); kept across a restart of the same level.
   `zoomRate` (stops / s held) and `zoomStep` (stops per tap) tune the keys. The plain mouse wheel never zooms: it

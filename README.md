@@ -49,8 +49,12 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 distribución, y las del teclado numérico), igual que pellizcar en el trackpad o en la pantalla táctil. Sube y baja con
 suavidad, sin tirones ni rebote. Con
 el zoom a 1 se ve el almacén entero, como siempre (nunca se aleja más); acercada (hasta unas 2,5×) la cámara sigue a
-la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E, las bandas del HUD y el
-fundido de lo que tapa la carretilla siguen igual. El zoom se mantiene al reiniciar el nivel y vuelve a 1 al cambiar
+la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E y el fundido de lo que
+tapa la carretilla siguen igual. **La cámara nunca se reencuadra sola**: solo se mueve cuando giras (Q / E), haces
+zoom o cambias el tamaño de la ventana (y, acercada, para seguir a la carretilla); ni las paredes que se hunden, ni el
+camión, ni la horquilla, ni la pista de controles la mueven. El almacén queda libre del HUD y de la pista tal como
+están al empezar el nivel, y al salir del título la cámara se asienta en su sitio con un único giro suave. El zoom se
+mantiene al reiniciar el nivel y vuelve a 1 al cambiar
 de nivel y en el título (su órbita lenta nunca se acerca). La **rueda del ratón sola no hace zoom**: sigue siendo de
 la horquilla (Ctrl + rueda, lo que manda un pellizco en el trackpad, sí acerca y aleja). La pista de controles lo
 recuerda con "+ − zoom" al final de su primera fila. Al soltar la tecla (o los dedos) la cámara se para

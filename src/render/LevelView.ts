@@ -284,14 +284,15 @@ export class LevelView {
     const { width: w, depth: d } = level.size;
     const t = DIORAMA.wallThickness + DIORAMA.capOverhang;
     this.shadowBounds.set(new Vector3(-w / 2 - t, -DIORAMA.slabThickness, -d / 2 - t), new Vector3(w / 2, DIORAMA.wallHeight, d / 2));
+    // The camera frames these static volumes only (CameraRig FitBox): the walls whole (buildWalls), the floor up to the
+    // content height; nothing animated (a sinking wall, the forks, a load) ever moves the frame.
     this.fitBoxes.unshift({
       min: new Vector3(-w / 2, -DIORAMA.slabThickness, -d / 2),
       max: new Vector3(w / 2, DIORAMA.contentHeight, d / 2),
-      heightScale: 1,
     });
     // Racks stand taller than the rest of the content: keep them in frame and inside the shadow volume.
     for (const rack of this.racks) {
-      this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone(), heightScale: 1 });
+      this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone() });
       this.shadowBounds.union(rack.bounds);
     }
     // …and so do the docks: the truck outside and the sign over its door, always (they never sink).
@@ -407,7 +408,7 @@ export class LevelView {
 
     const shaftGain = 1 + 0.2 * warmth;
     for (let i = 0; i < this.walls.length; i++) this.walls[i].sync(cameraYaw, dt, false, shaftGain);
-    for (let i = 0; i < this.trucks.length; i++) this.trucks[i].followWall(this.truckWalls[i].fitBox.heightScale);
+    for (let i = 0; i < this.trucks.length; i++) this.trucks[i].followWall(this.truckWalls[i].heightScale);
     this.glassMaterial.color.setScalar(1 + 0.06 * warmth);
   }
 
@@ -989,7 +990,7 @@ export class LevelView {
           this.truckOfSlot.set(id, view);
         });
       });
-      view.followWall(wall.view.fitBox.heightScale);
+      view.followWall(wall.view.heightScale);
       this.addOccluder(view.occluder);
       this.trucks.push(view);
       this.truckWalls.push(wall.view);

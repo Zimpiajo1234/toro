@@ -327,7 +327,10 @@ export class Game implements GameActions {
     });
   }
 
-  /** The overlay's reserved bands changed: the camera eases to frame the level clear of them (plumbing only). */
+  /**
+   * The overlay's reserved bands, reported as a level starts, on a resize and for the title (never mid-level): the
+   * camera frames the level clear of them (plumbing only; GameRenderer / CameraRig decide how).
+   */
   setViewInsets(insets: ScreenInsets): void {
     this.viewInsets = { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left };
     this.rt?.renderer.setViewInsets(this.viewInsets);

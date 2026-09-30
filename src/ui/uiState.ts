@@ -117,8 +117,9 @@ export interface GameActions {
    */
   startBenchmark(): void;
   /**
-   * The overlay's reserved bands changed (HUD pills at the top, control hint at the bottom; ui/reservedAreas.ts,
-   * measured on change): the camera frames the level clear of them. All zero on the title.
+   * The overlay's reserved bands (HUD pills at the top, control hint at the bottom; ui/reservedAreas.ts), reported as
+   * a level starts and on a viewport resize, never mid-level: the camera frames the level clear of them. All zero on
+   * the title.
    */
   setViewInsets?(insets: ScreenInsets): void;
 }

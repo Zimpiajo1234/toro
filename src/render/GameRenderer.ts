@@ -155,12 +155,18 @@ export class GameRenderer {
   }
 
   /**
-   * Screen bands the DOM overlay keeps over the scene (CSS px from each canvas edge): the camera frames the level in
-   * the rest, easing there (`immediate`: at once, when nothing is framed on screen yet).
+   * Screen bands the DOM overlay keeps over the scene (CSS px from each canvas edge), reported when a level starts, on a
+   * resize and for the title, never mid-level: the camera frames the level in the rest. It glides there with the
+   * title's orbit and the glide into a level, else takes them at once (`immediate`: always at once); a level on screen
+   * is redrawn right away, so the frame being painted (a new level's first, a resize's) already has them.
    */
   setViewInsets(insets: ViewInsets, immediate = false): void {
     if (this.disposed) return;
     this.rig.setInsets(insets, immediate);
+    if (this.level && this.sized) {
+      this.rig.update(0);
+      this.renderer.render(this.scene, this.rig.camera);
+    }
   }
 
   /** Counters of the last rendered frame (dev / diagnostics). */

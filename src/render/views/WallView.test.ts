@@ -28,7 +28,10 @@ describe('WallView', () => {
     }
     expect(wall.group.visible).toBe(false);
     expect(mesh.visible).toBe(false);
-    expect(wall.fitBox.heightScale).toBeLessThan(0.001);
+    expect(wall.heightScale).toBeLessThan(0.001);
+    // The camera still frames it whole: its fit box never follows the sink.
+    expect(wall.fitBox.min.toArray()).toEqual([0, 0, -0.2]);
+    expect(wall.fitBox.max.toArray()).toEqual([8, 2.2, 0]);
   });
 
   it('rises back with its shafts at the warmth-scaled strength', () => {

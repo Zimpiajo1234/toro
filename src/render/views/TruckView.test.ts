@@ -185,6 +185,8 @@ const boxMesh = (view: LevelView, id: string) => boxGroup(view, id).children[0] 
 const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => c.userData[tag]) as Unlit;
 /** The dock's fit box (the only one reaching down to the driveway). */
 const truckFit = (view: LevelView) => view.fitBoxes.find((f) => f.min.y < DOCK.apronTop)!;
+/** A wall of the view is sunk this frame (its group squashed flat, WallView). */
+const wallSunk = (view: LevelView) => view.root.children.some((c) => c.scale.y < 0.01);
 const slotOf = (snap: GameSnapshot, id: string) => snap.truckSlots!.find((s) => s.id === id)!;
 const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
 const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
@@ -863,20 +865,18 @@ T = camión muelle norte: lavanda | coral + caja coral ◆
       const fit = truckFit(view);
       const before = { min: fit.min.clone(), max: fit.max.clone() };
       const bodyBounds = new Box3().setFromPoints(vertices(body(view)));
-      expect(fit.heightScale).toBe(1);
       expect(new Box3(fit.min, fit.max).containsBox(bodyBounds)).toBe(true);
       const loaded = snap.boxes.find((b) => b.truckSlotId);
       const behind = behindOf(truck.wall);
       let sank = false;
       for (let i = 0; i < 240; i++) {
         view.update(snap, 1 / 60, i / 60, behind, 0);
-        sank ||= view.fitBoxes.some((f) => f !== fit && f.heightScale < 0.01);
+        sank ||= wallSunk(view);
         for (const mesh of [body(view), plate(view), signFrame(view)]) {
           expect(mesh.visible).toBe(true);
           expect(mesh.scale.y).toBe(1);
         }
         expect(fit.min.equals(before.min) && fit.max.equals(before.max)).toBe(true);
-        expect(fit.heightScale).toBe(1);
       }
       expect(sank).toBe(true);
       // A box on the bed stays on the bed (never left floating over a sunk truck).
@@ -917,7 +917,8 @@ T = camión muelle norte: lavanda | coral + caja coral ◆
   });
 
   it('keeps the frame calm on the Benchmark while its dock wall sinks and rises: idle orbit and Q/E turns, truck in frame', () => {
-    // The truck is static and always framed: only the walls move the fit (≈ 0.7 % per frame at most).
+    // Everything framed is static (the truck, the walls whole): only the yaw moves the frame, gently (≈ 0.4 % per frame
+    // at most), and at rest it never moves while the dock wall finishes sinking or rising.
     const MAX_STEP = 0.015;
     const bench = getSpecialLevel(BENCHMARK_ID)!;
     const runs: [string, number, (rig: CameraRig, frame: number) => void][] = [
@@ -939,13 +940,24 @@ T = camión muelle norte: lavanda | coral + caja coral ◆
         let worst = 0;
         let spill = 0;
         let sank = false;
+        // At rest (the yaw still): frames seen, and frames where the camera moved all the same.
+        const last = { yaw: rig.yaw, projection: rig.camera.projectionMatrix.clone(), position: rig.camera.position.clone() };
+        let rest = 0;
+        let restMoves = 0;
         for (let f = 0; f < frames; f++) {
           drive(rig, f);
           rig.update(1 / 60);
           view.update(snap, 1 / 60, f / 60, rig.yaw, 0);
           worst = Math.max(worst, Math.abs(rig.camera.top / prev - 1));
           prev = rig.camera.top;
-          sank ||= view.fitBoxes.some((fb) => fb.heightScale < 0.01);
+          sank ||= wallSunk(view);
+          if (rig.yaw === last.yaw) {
+            rest++;
+            if (!rig.camera.projectionMatrix.equals(last.projection) || !rig.camera.position.equals(last.position)) restMoves++;
+          }
+          last.yaw = rig.yaw;
+          last.projection.copy(rig.camera.projectionMatrix);
+          last.position.copy(rig.camera.position);
           if (f % 10 !== 0) continue;
           rig.camera.updateMatrixWorld(true);
           for (let i = 0; i < 8; i++) {
@@ -958,6 +970,9 @@ T = camión muelle norte: lavanda | coral + caja coral ◆
         expect(sank, label).toBe(true);
         expect(worst, label).toBeLessThan(MAX_STEP);
         expect(spill, label).toBeLessThanOrEqual(1);
+        // Between the turns (the wall still easing for ≈ 0.6 s of it) the camera stays exactly still.
+        if (name !== 'orbit') expect(rest, label).toBeGreaterThan(300);
+        expect(restMoves, label).toBe(0);
         view.dispose();
       }
     }

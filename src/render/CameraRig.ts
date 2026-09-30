@@ -3,11 +3,15 @@ import type { GameConfig } from '../config';
 import { TAU, clamp, damp, degToRad, lerp } from '../core/math';
 import { hermite, hermiteSlope } from './tween';
 
-/** An axis-aligned volume the camera keeps in frame. `heightScale` shrinks max.y (walls sinking). */
+/**
+ * An axis-aligned volume the camera keeps in frame, whole and static: nothing animated reaches the fit. A back wall is
+ * framed at full height even while it is sunk (the camera behind it): it then stands on the camera's side of the room,
+ * where its top never reaches the edge of the frame, so the framing at rest is the same and never moves as it sinks
+ * or rises.
+ */
 export interface FitBox {
-  min: Vector3;
-  max: Vector3;
-  heightScale: number;
+  readonly min: Vector3;
+  readonly max: Vector3;
 }
 
 /** Projected half extents and center of the fit boxes for one yaw (view-plane units). */
@@ -62,6 +66,43 @@ class Spring {
   }
 }
 
+/**
+ * A value gliding to a goal on a cubic ease-in-out over a set time: a gentle start and an exact stop (no tail).
+ * Retargeted mid-way it keeps its velocity. Asked again for the goal it already has, it changes nothing.
+ */
+class Glide {
+  value = 0;
+  private from = 0;
+  private goal = 0;
+  /** hermite()'s start slope (per whole glide): the velocity kept from a glide retargeted mid-way. */
+  private slope = 0;
+  private t = 1;
+  private duration = 1;
+
+  glideTo(goal: number, duration: number): void {
+    if (goal === this.goal) return;
+    const velocity = this.t < 1 ? hermiteSlope(this.from, this.goal, this.slope, this.t) / this.duration : 0;
+    this.from = this.value;
+    this.goal = goal;
+    this.duration = duration;
+    this.slope = velocity * duration;
+    this.t = 0;
+  }
+
+  snap(goal: number): void {
+    if (goal === this.goal) return;
+    this.value = this.from = this.goal = goal;
+    this.slope = 0;
+    this.t = 1;
+  }
+
+  step(dt: number): void {
+    if (this.t >= 1 || !(dt > 0)) return;
+    this.t = Math.min(1, this.t + dt / this.duration);
+    this.value = hermite(this.from, this.goal, this.slope, this.t);
+  }
+}
+
 const newFit = (): Fit => ({ halfW: 0, halfH: 0, centerX: 0, centerY: 0 });
 
 function blendFits(a: Fit, b: Fit, t: number, out: Fit): Fit {
@@ -73,13 +114,13 @@ function blendFits(a: Fit, b: Fit, t: number, out: Fit): Fit {
 const QUARTER = Math.PI / 2;
 /** Idle orbit: one full turn every four minutes. */
 const ORBIT_SPEED = TAU / 240;
-const DISTANCE = 60;
 /**
- * Overlay bands ease in and out (a new hint row, the HUD arriving, a resize) on a critically damped spring: ≈ 95 %
- * there in 0.95 s, about as long as the hint takes to fade in. Title → play (both bands at once, 1280×800) peaks at
- * ≈ 0.7 % zoom per frame.
+ * Leaving the idle orbit (a level starting from the title), the camera glides to the nearest canonical yaw over this
+ * many Q/E turn durations (1.44 s), and the overlay bands that arrive with the level glide in over the same time: one
+ * calm motion that ends exactly. Title → play (both bands at once, 1280×800) peaks at ≈ 0.5 % zoom per frame.
  */
-const INSET_OMEGA = 5;
+const ORBIT_GLIDE = 1.6;
+const DISTANCE = 60;
 /** Overlays never reserve more than this share of the canvas height (or width): they squeeze the level, never hide it. */
 const MAX_RESERVED = 0.5;
 const band = (px: number): number => (Number.isFinite(px) && px > 0 ? px : 0);
@@ -100,6 +141,11 @@ const ZOOM_REST = 1e-4;
 const trackTauFor = (sec: number): number => Math.max(0.01, Number.isFinite(sec) ? sec : 0.15) / 3;
 /** Height of the followed point: the forklift's body, not the floor under its wheels. */
 export const FOLLOW_HEIGHT = 0.5;
+/**
+ * The eased followed point lands exactly on the forklift within this (0.1 mm, far below a pixel) once it has stopped:
+ * a zoomed view at rest stays exactly still.
+ */
+const FOLLOW_REST = 1e-4;
 /**
  * The zoomed framing glides to a stop at the level's edge over this last share of the visible half extent (a smooth
  * brake, C¹, never past the edge) instead of stopping dead there.
@@ -126,6 +172,11 @@ function softClamp(offset: number, bound: number, soft: number): number {
  * FitBoxes for the current yaw and aspect, so the whole warehouse stays visible at any angle, without
  * breathing in and out while it turns (see place()). The fit uses the canvas minus the overlay bands (setInsets):
  * the frustum still covers the whole canvas, off-center so the level sits in the free area.
+ *
+ * The camera never reframes on its own: the framing is a pure function of the yaw (Q/E turns, the title's orbit and
+ * its glide into a level), the canvas size, the overlay bands (taken when a level starts and on a resize) and the
+ * player zoom with its followed point. The fit boxes are static, so nothing animated in the scene (walls sinking,
+ * forks rising, a truck) ever moves it, and every ease lands exactly: at rest the camera is bit-identical frame to frame.
  *
  * Player zoom (zoomBy / zoomTrack / resetZoom) is a factor on top of that fit: 1 = the full view (exactly the fit
  * above, and the floor: never further out), up to `camera.zoomMax`. A step (zoomBy: a key tap, a wheel notch) eases on
@@ -156,18 +207,19 @@ export class CameraRig {
   private orbitEnabled = false;
   private orbitVelocity = 0;
   private orbitOffset = 0;
+  /** The tween under way is the glide out of the idle orbit (a level starting from the title). */
+  private orbitGlide = false;
 
   private aspect = 1;
   /** Canvas size in CSS px (0 until known), the unit of the insets. */
   private width = 0;
   private height = 0;
   private fitBoxes: readonly FitBox[] = [];
-  /** Overlay bands asked for (px), and the eased share of the canvas each one takes. */
-  private readonly insets: ViewInsets = { top: 0, right: 0, bottom: 0, left: 0 };
-  private readonly insetTop = new Spring();
-  private readonly insetRight = new Spring();
-  private readonly insetBottom = new Spring();
-  private readonly insetLeft = new Spring();
+  /** Overlay bands the frame keeps clear (CSS px): taken at once, or gliding in with the title's orbit (setInsets). */
+  private readonly insetTop = new Glide();
+  private readonly insetRight = new Glide();
+  private readonly insetBottom = new Glide();
+  private readonly insetLeft = new Glide();
 
   /** Player zoom, in log2 "stops" (0 = the full view): the goal asked for and the eased value shown. */
   private readonly zoomMax: number;
@@ -299,16 +351,18 @@ export class CameraRig {
   }
 
   /**
-   * Overlay bands to keep the level clear of (CSS px from each canvas edge). The frame eases to them (no zoom jumps),
-   * or jumps right there with `immediate` (nothing framed on screen yet). Call on change, not every frame.
+   * Overlay bands to keep the level clear of (CSS px from each canvas edge), as the overlay reports them: when a level
+   * starts, on a resize and for the title (ui/reservedAreas.ts), never on its own mid-level. With the title's idle
+   * orbit, or while the camera glides out of it into a level, the frame glides to them with that motion; anywhere else
+   * (a new level, a resize) it takes them at once, and so it does with `immediate`. The bands already in force, asked
+   * for again, change nothing.
    */
   setInsets(insets: ViewInsets, immediate = false): void {
-    const own = this.insets;
-    own.top = band(insets.top);
-    own.right = band(insets.right);
-    own.bottom = band(insets.bottom);
-    own.left = band(insets.left);
-    if (immediate) this.stepInsets(0, true);
+    const glide = !immediate && (this.orbitEnabled || this.orbitGlide);
+    this.takeInset(this.insetTop, insets.top, glide);
+    this.takeInset(this.insetRight, insets.right, glide);
+    this.takeInset(this.insetBottom, insets.bottom, glide);
+    this.takeInset(this.insetLeft, insets.left, glide);
   }
 
   setFitBoxes(boxes: readonly FitBox[]): void {
@@ -318,6 +372,7 @@ export class CameraRig {
   /** Rotate by 90°. direction 1 = clockwise seen from above (yaw decreases), -1 = counter-clockwise. */
   rotate(direction: -1 | 1): void {
     const goal = (this.tweenT < 1 ? this.tweenTo : this.base) - direction * QUARTER;
+    this.orbitGlide = false; // a turn of the player's own now
     this.startTween(this.base, this.baseVelocity(), goal, this.rotateDuration);
   }
 
@@ -325,6 +380,7 @@ export class CameraRig {
     if (enabled === this.orbitEnabled) return;
     this.orbitEnabled = enabled;
     if (enabled) {
+      this.orbitGlide = false;
       this.resetZoom(); // the title's orbit is always the whole diorama: ease back out
       return;
     }
@@ -335,7 +391,8 @@ export class CameraRig {
     this.orbitOffset = 0;
     this.orbitVelocity = 0;
     const steps = Math.round((current + velocity * 0.4 - this.canonicalYaw) / QUARTER);
-    this.startTween(current, velocity, this.canonicalYaw + steps * QUARTER, this.rotateDuration * 1.6);
+    this.orbitGlide = true;
+    this.startTween(current, velocity, this.canonicalYaw + steps * QUARTER, this.rotateDuration * ORBIT_GLIDE);
   }
 
   update(dt: number): void {
@@ -344,16 +401,20 @@ export class CameraRig {
     if (this.tweenT < 1) {
       this.tweenT = Math.min(1, this.tweenT + dt / this.tweenDuration);
       this.base = hermite(this.tweenFrom, this.tweenTo, this.tweenSlope, this.tweenT);
-    } else if (Math.abs(this.base) > TAU * 4) {
-      this.base %= TAU; // keep numbers small over very long sessions
+      if (this.tweenT >= 1) this.orbitGlide = false;
     }
-    if (Math.abs(this.orbitOffset) > TAU * 4) this.orbitOffset %= TAU;
-    this.stepInsets(dt, false);
+    if (Math.abs(this.orbitOffset) > TAU * 4) this.orbitOffset %= TAU; // only while orbiting (0 otherwise)
+    this.insetTop.step(dt);
+    this.insetRight.step(dt);
+    this.insetBottom.step(dt);
+    this.insetLeft.step(dt);
     this.pourZoom(dt);
     this.zoomLog.step(this.zoomGoal, this.zoomResetting ? this.zoomResetOmega : this.zoomOmega, dt);
     this.zoomLog.settle(this.zoomGoal, ZOOM_REST);
     this.followX.step(this.followGoalX, this.followOmega, dt);
     this.followZ.step(this.followGoalZ, this.followOmega, dt);
+    this.followX.settle(this.followGoalX, FOLLOW_REST);
+    this.followZ.settle(this.followGoalZ, FOLLOW_REST);
     this.place();
   }
 
@@ -377,41 +438,18 @@ export class CameraRig {
     this.zoomResetting = false;
   }
 
-  /** Ease each overlay band's share of the canvas toward the one asked for (or `snap` there). Allocation-free. */
-  private stepInsets(dt: number, snap: boolean): void {
-    const { top, right, bottom, left } = this.insets;
-    const w = this.width;
-    const h = this.height;
-    let t = h > 0 ? top / h : 0;
-    let b = h > 0 ? bottom / h : 0;
-    let l = w > 0 ? left / w : 0;
-    let r = w > 0 ? right / w : 0;
-    const vertical = t + b;
-    if (vertical > MAX_RESERVED) {
-      t *= MAX_RESERVED / vertical;
-      b *= MAX_RESERVED / vertical;
-    }
-    const horizontal = l + r;
-    if (horizontal > MAX_RESERVED) {
-      l *= MAX_RESERVED / horizontal;
-      r *= MAX_RESERVED / horizontal;
-    }
-    if (snap) {
-      this.insetTop.snap(t);
-      this.insetRight.snap(r);
-      this.insetBottom.snap(b);
-      this.insetLeft.snap(l);
-      return;
-    }
-    this.insetTop.step(t, INSET_OMEGA, dt);
-    this.insetRight.step(r, INSET_OMEGA, dt);
-    this.insetBottom.step(b, INSET_OMEGA, dt);
-    this.insetLeft.step(l, INSET_OMEGA, dt);
+  private takeInset(inset: Glide, px: number, glide: boolean): void {
+    if (glide) inset.glideTo(band(px), this.rotateDuration * ORBIT_GLIDE);
+    else inset.snap(band(px));
   }
 
   private startTween(from: number, velocity: number, to: number, duration: number): void {
-    this.tweenFrom = from;
-    this.tweenTo = to;
+    // Keep numbers small over very long sessions: whole turns come off every angle at once, here as the camera starts to
+    // move anyway (never at rest, where the rounding would still show in the last bits of the matrices).
+    const turns = Math.abs(from) > TAU * 4 ? Math.round(from / TAU) * TAU : 0;
+    this.base -= turns;
+    this.tweenFrom = from - turns;
+    this.tweenTo = to - turns;
     this.tweenDuration = duration;
     this.tweenSlope = velocity * duration;
     this.tweenT = 0;
@@ -444,10 +482,23 @@ export class CameraRig {
       this.diagonalFit(yaw, floor);
     }
 
-    const t = this.insetTop.value;
-    const r = this.insetRight.value;
-    const b = this.insetBottom.value;
-    const l = this.insetLeft.value;
+    // Each band's share of the canvas.
+    const w = this.width;
+    const h = this.height;
+    let t = h > 0 ? band(this.insetTop.value) / h : 0;
+    let b = h > 0 ? band(this.insetBottom.value) / h : 0;
+    let l = w > 0 ? band(this.insetLeft.value) / w : 0;
+    let r = w > 0 ? band(this.insetRight.value) / w : 0;
+    const vertical = t + b;
+    if (vertical > MAX_RESERVED) {
+      t *= MAX_RESERVED / vertical;
+      b *= MAX_RESERVED / vertical;
+    }
+    const horizontal = l + r;
+    if (horizontal > MAX_RESERVED) {
+      l *= MAX_RESERVED / horizontal;
+      r *= MAX_RESERVED / horizontal;
+    }
     const freeW = 1 - l - r;
     const freeH = 1 - t - b;
     const aspect = (this.aspect * freeW) / freeH;
@@ -543,9 +594,8 @@ export class CameraRig {
     let maxY = -Infinity;
     for (let b = 0; b < this.fitBoxes.length; b++) {
       const box = this.fitBoxes[b];
-      const top = Math.max(box.min.y, box.max.y * box.heightScale);
       for (let i = 0; i < 8; i++) {
-        this.corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? top : box.min.y, i & 4 ? box.max.z : box.min.z);
+        this.corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
         const x = this.corner.dot(this.right);
         const y = this.corner.dot(this.up);
         if (x < minX) minX = x;

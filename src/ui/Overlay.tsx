@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type RefCallback } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, type RefCallback } from 'react';
 import { useStore, type Store } from '../core/store';
 import { CompletionCard } from './CompletionCard';
 import { ControlHint } from './ControlHint';
@@ -10,8 +10,9 @@ import { UnsupportedCard } from './UnsupportedCard';
 import type { GameActions, Screen, UIState } from './uiState';
 
 /**
- * Playing: the HUD pills and the hint are reserved (the camera frames the level clear of them). The completion card
- * keeps those bands (the camera stays put under the card). Anywhere else nothing is (the title frames the whole canvas).
+ * Playing: the HUD pills and the hint are reserved (the camera frames the level clear of them, as they are when the
+ * level starts). The completion card keeps those bands (the camera stays put under the card). Anywhere else nothing is
+ * (the title frames the whole canvas).
  */
 function reserveMode(screen: Screen): ReserveMode {
   if (screen === 'playing') return 'track';
@@ -27,6 +28,8 @@ function reserveMode(screen: Screen): ReserveMode {
 export function Overlay({ store, actions }: { store: Store<UIState>; actions: GameActions }) {
   const screen = useStore(store, (s) => s.screen);
   const inLevel = screen === 'playing' || screen === 'complete';
+  // The level on screen: a new one while playing (a "Modo prueba" jump) takes its own bands.
+  const level = useStore(store, (s) => (s.benchmark ? 'benchmark' : s.levelIndex));
 
   const [areas] = useState(() => new ReservedAreas());
   const rootRef = useCallback<RefCallback<HTMLDivElement>>(
@@ -42,7 +45,8 @@ export function Overlay({ store, actions }: { store: Store<UIState>; actions: Ga
     areas.connect(report);
     return () => areas.connect(null);
   }, [areas, actions]);
-  useEffect(() => areas.setMode(reserveMode(screen)), [areas, screen]);
+  // After the commit, before the paint: a level's bands reach the camera before its first frame shows.
+  useLayoutEffect(() => areas.setMode(reserveMode(screen), level), [areas, screen, level]);
 
   return (
     <ReservedAreasProvider value={areas}>
