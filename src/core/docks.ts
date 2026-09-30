@@ -3,10 +3,22 @@
  * each truck (floor, inside the map), the bed column beyond each one (outside the map, past the wall), the guard rails
  * beside each door, truck slot ids and the flattened slot / column lists. A truck reads like a storage rack loaded
  * from TRUCK_FACING[wall] whose cells lie one step beyond the wall (its front cells are the door cells), so the
- * core/racks helpers do the geometry. Pure.
+ * core/racks helpers do the geometry. Pure. core/storage builds the `door` access of every storage unit on it
+ * (docs/STORAGE.md); the level helpers here (`trucksOf`, `hasTrucks`, `truckColumnsOf`, `truckSlotsOf`,
+ * `usesTargetRules`) are views of `level.storage` until phase 7.
  */
-import { TRUCK_FACING, type CellPos, type Facing, type LevelData, type LevelTruck, type TruckCue, type WallSide } from './types';
-import { FACING_X, FACING_Z, hasRacks, inwardHeading, rackCellOf } from './racks';
+import {
+  TRUCK_FACING,
+  type CellPos,
+  type Facing,
+  type LevelData,
+  type LevelStorage,
+  type LevelTruck,
+  type StorageAccess,
+  type TruckCue,
+  type WallSide,
+} from './types';
+import { FACING_X, FACING_Z, inwardHeading, rackCellOf } from './racks';
 
 /**
  * The jambs of a dock door (u): the opening the carried load passes is this much narrower than its run of door cells
@@ -47,38 +59,66 @@ export interface DockRail {
   to: number;
 }
 
-/** The guard rails of every dock door of a level: truck by truck, each door's first end, then its last one. */
-export function dockRailsOf(level: Pick<LevelData, 'trucks' | 'size'>): DockRail[] {
+/** A storage unit loaded through a dock door (docs/STORAGE.md access `door`: the truck). */
+type DoorUnit = LevelStorage & { access: Extract<StorageAccess, { kind: 'door' }> };
+
+function isDoor(unit: LevelStorage): unit is DoorUnit {
+  return unit.access.kind === 'door';
+}
+
+/**
+ * The guard rails of every dock door of a level (the `door` access, docs/STORAGE.md): door by door in storage order
+ * (`truckIndex` = the door's index among them, which is its trucksOf index: the truck is the one skin with a door),
+ * each door's first end, then its last one.
+ */
+export function dockRailsOf(level: Pick<LevelData, 'storage' | 'size'>): DockRail[] {
   const out: DockRail[] = [];
-  trucksOf(level).forEach((truck, truckIndex) => {
-    const north = truck.wall === 'north';
-    const first = north ? truck.x : truck.z;
-    const last = first + truck.w;
-    const cell = (along: number): CellPos => (north ? { x: along, z: truck.z } : { x: truck.x, z: along });
+  (level.storage ?? []).filter(isDoor).forEach((unit, truckIndex) => {
+    const { wall } = unit.access;
+    const north = wall === 'north';
+    const first = north ? unit.x : unit.z;
+    const last = first + unit.w;
+    const cell = (along: number): CellPos => (north ? { x: along, z: unit.z } : { x: unit.x, z: along });
     const rail = (end: 0 | 1, side: number, line: number, outward: number) =>
-      out.push({ truckIndex, wall: truck.wall, end, side: cell(side), line, outer: line + outward * DOCK_RAIL.thickness, from: 0, to: 1 });
+      out.push({ truckIndex, wall, end, side: cell(side), line, outer: line + outward * DOCK_RAIL.thickness, from: 0, to: 1 });
     if (first > 0) rail(0, first - 1, first + DOOR_JAMB, -1);
     if (last < (north ? level.size.width : level.size.depth)) rail(1, last, last - DOOR_JAMB, 1);
   });
   return out;
 }
 
-/** A level's trucks (none → an empty list). */
-export function trucksOf(level: Pick<LevelData, 'trucks'>): readonly LevelTruck[] {
-  return level.trucks ?? [];
-}
-
-/** The level has at least one loading dock (the rules of docs/DOCKS.md apply). */
-export function hasTrucks(level: Pick<LevelData, 'trucks'>): boolean {
-  return (level.trucks?.length ?? 0) > 0;
+/** A storage unit of skin `truck` (always door access: validateLevel checks it). */
+function isTruck(unit: LevelStorage): unit is DoorUnit {
+  return unit.skin === 'truck' && isDoor(unit);
 }
 
 /**
- * The level follows the target rules of docs/RACKS.md «niveles con estanterías» (destined boxes, locks, soft buzz,
- * strong pulse): it has storage racks or trucks (docs/DOCKS.md rule 10). Levels with neither play exactly as before.
+ * A level's trucks (none → an empty list): its storage units of skin `truck`, in storage order, as LevelTruck. A view
+ * of `level.storage` until phase 7 (docs/STORAGE.md), derived anew on every call.
  */
-export function usesTargetRules(level: Partial<Pick<LevelData, 'racks' | 'trucks'>>): boolean {
-  return hasRacks(level) || hasTrucks(level);
+export function trucksOf(level: Pick<LevelData, 'storage'>): readonly LevelTruck[] {
+  const out: LevelTruck[] = [];
+  for (const unit of level.storage ?? []) {
+    if (!isTruck(unit)) continue;
+    // Every truck level asks for something until phase 6 (no «libre» in a truck yet: docs/STORAGE.md «Huecos» 3).
+    const columns = unit.columns.map((levels) => levels.map((cue) => (cue === null ? {} : { ...cue })));
+    out.push({ id: unit.id, wall: unit.access.wall, x: unit.x, z: unit.z, w: unit.w, columns });
+  }
+  return out;
+}
+
+/** The level has at least one loading dock (the rules of docs/DOCKS.md apply). A view of `level.storage` until phase 7. */
+export function hasTrucks(level: Pick<LevelData, 'storage'>): boolean {
+  return (level.storage ?? []).some(isTruck);
+}
+
+/**
+ * The level follows the target rules (docs/STORAGE.md rules 4–6: destined boxes, locks, soft buzz, strong pulse): it
+ * has storage. The old name of core/storage `hasStorage` (the same test, written here because this module sits below
+ * core/storage), kept for its callers until phase 7. Levels without storage play exactly as before.
+ */
+export function usesTargetRules(level: Pick<LevelData, 'storage'>): boolean {
+  return (level.storage?.length ?? 0) > 0;
 }
 
 /** Side a truck is loaded from (its bed columns' front cells lie that way). */
@@ -130,8 +170,8 @@ export interface TruckColumnRef {
   firstSlot: number;
 }
 
-/** Every bed column of a level, truck by truck, column by column. */
-export function truckColumnsOf(level: Pick<LevelData, 'trucks'>): TruckColumnRef[] {
+/** Every bed column of a level, truck by truck, column by column (a view of `level.storage` until phase 7). */
+export function truckColumnsOf(level: Pick<LevelData, 'storage'>): TruckColumnRef[] {
   const out: TruckColumnRef[] = [];
   let firstSlot = 0;
   trucksOf(level).forEach((truck, truckIndex) => {
@@ -166,8 +206,11 @@ export interface TruckSlotRef {
   cue: TruckCue;
 }
 
-/** Every truck slot of a level: truck by truck, column by column, bottom → top (the order of snapshot.truckSlots). */
-export function truckSlotsOf(level: Pick<LevelData, 'trucks'>): TruckSlotRef[] {
+/**
+ * Every truck slot of a level: truck by truck, column by column, bottom → top (the order of snapshot.truckSlots; a view
+ * of `level.storage` until phase 7: core/storage `storageSlotsOf`).
+ */
+export function truckSlotsOf(level: Pick<LevelData, 'storage'>): TruckSlotRef[] {
   const out: TruckSlotRef[] = [];
   for (const col of truckColumnsOf(level)) {
     col.cues.forEach((cue, lvl) =>

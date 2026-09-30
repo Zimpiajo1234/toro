@@ -10,8 +10,8 @@
 import { Box3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
-import { dockRailsOf, truckColumnsOf, truckSlotsOf } from '../core/docks';
-import { FACING_X, FACING_Z, frontCellOf, rackCellOf, slotsOf } from '../core/racks';
+import { dockRailsOf, truckColumnsOf, truckSlotsOf, trucksOf } from '../core/docks';
+import { FACING_X, FACING_Z, frontCellOf, rackCellOf, racksOf, slotsOf } from '../core/racks';
 import { assignmentsOf, cueOf, levelDestinies, sortableOf, targetsOf } from '../core/sorting';
 import type { GameEvent } from '../core/types';
 import { formatLevel, renderLevel } from '../data/asciiLevel';
@@ -56,7 +56,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
   });
 
   it('three trucks, no hardcoding: two in the north wall one potted plant apart, one in the west wall, rails and a plant at every door end', () => {
-    const trucks = level.trucks!;
+    const trucks = trucksOf(level);
     expect(trucks.map((t) => [t.id, t.wall, t.x, t.z, t.w])).toEqual([
       ['t1', 'north', 1, 0, 2],
       ['t2', 'north', 4, 0, 1],
@@ -99,7 +99,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
   });
 
   it('a rack of 2 levels and a rack of 3, loaded from the front; a box starts parked in the free top slot of the first', () => {
-    const racks = level.racks!;
+    const racks = racksOf(level);
     expect(racks.map((r) => [r.id, r.facing, r.columns.map((c) => c.length)])).toEqual([
       ['r1', 'south', [2]],
       ['r2', 'north', [3]],

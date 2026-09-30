@@ -119,7 +119,8 @@ sin reparto completo (señala la caja) o con más de uno (señala la zona o el h
 
 ## Datos (`src/core/types.ts`)
 
-- `LevelData.racks?: LevelRack[]` (ausente sin estanterías). `LevelRack { id, x, z, w, facing, columns: RackSlot[][] }`:
+- Desde la fase 2 de docs/STORAGE.md, las estanterías son unidades `rack` de `LevelData.storage` y se leen con
+  `racksOf(level)`: `LevelRack[]` (vacío sin estanterías). `LevelRack { id, x, z, w, facing, columns: RackSlot[][] }`:
   (x, z) es la primera casilla; `columns[col][nivel]`, nivel 0 = abajo; `RackSlot { color?, symbol? }` (ninguno = libre).
 - Caja que empieza en un hueco: `LevelBox` con (x, z) = su casilla de estantería y `level` = el hueco.
 - Geometría compartida: `src/core/racks.ts` (`rackCellOf`, `frontCellOf`, `inwardHeading`, `slotsOf`, `slotIdOf`,

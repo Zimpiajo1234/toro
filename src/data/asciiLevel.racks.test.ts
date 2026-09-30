@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import racksDoc from '../../docs/RACKS.md?raw';
+import { racksOf } from '../core/racks';
 import { LevelFormatError, formatLevel, parseLevel, renderLevel } from './asciiLevel';
 import { validateLevel } from './validateLevel';
 
@@ -66,14 +67,14 @@ const TWO = [
 describe('storage racks in .level files', () => {
   it('parses a rack: cells, front, columns of slots bottom → top, cues and «libre»', () => {
     const level = parseLevel(text(ONE)).level;
-    expect(level.racks).toEqual([{ id: 'r1', x: 3, z: 0, w: 1, facing: 'south', columns: [[{ color: 'blue' }, { color: 'mint' }, {}]] }]);
+    expect(racksOf(level)).toEqual([{ id: 'r1', x: 3, z: 0, w: 1, facing: 'south', columns: [[{ color: 'blue' }, { color: 'mint' }, {}]] }]);
     expect(level.boxes.map((b) => b.id)).toEqual(['b1', 'b2']);
     expect(level.zones).toEqual([]);
   });
 
   it('a multi-column rack is one run of its character, one legend column per cell («|»), along its front', () => {
     const level = parseLevel(text(TWO)).level;
-    expect(level.racks).toEqual([
+    expect(racksOf(level)).toEqual([
       {
         id: 'r1',
         x: 6,
@@ -107,7 +108,7 @@ describe('storage racks in .level files', () => {
   it('keeps explicit ids of racks and of boxes in slots, and writes them back only when not generated', () => {
     const lines = replace(TWO, 16, 'R = estantería frente oeste (alta): azul ● / ▲ + caja azul ● (b9) | menta ▲ / libre');
     const level = parseLevel(text(lines)).level;
-    expect(level.racks![0].id).toBe('alta');
+    expect(racksOf(level)[0].id).toBe('alta');
     expect(level.boxes.at(-1)!.id).toBe('b9');
     expect(renderLevel(level)).toBe(text(lines));
     expect(parseLevel(renderLevel(level)).level).toStrictEqual(level);
@@ -129,7 +130,7 @@ describe('storage racks in .level files', () => {
       'R = estantería frente sur: azul ▲ / azul ●',
     ];
     const level = parseLevel(text(lines)).level;
-    expect(level.racks!.map((r) => [r.id, r.x])).toEqual([
+    expect(racksOf(level).map((r) => [r.id, r.x])).toEqual([
       ['r1', 1],
       ['r2', 7],
     ]);
@@ -139,7 +140,7 @@ describe('storage racks in .level files', () => {
     expect(renderLevel(level)).toContain('S = estantería frente sur: azul ▲ / azul ●');
   });
 
-  it('racks mix with shelves, plants, zones and floor stacks; levels without racks get no `racks` key', () => {
+  it('racks mix with shelves, plants, zones and floor stacks; levels without racks or trucks get no `storage` key', () => {
     const lines = [
       '# 4 · Todo junto',
       'id: todo-junto',
@@ -160,7 +161,7 @@ describe('storage racks in .level files', () => {
     expect(parsed.level.stackLimit).toBe(3);
     expect(parsed.level.shelves).toEqual([{ x: 1, z: 0, w: 2, d: 1, tiers: 2 }]);
     expect(renderLevel(parsed.level)).toBe(text(lines));
-    expect('racks' in parseLevel(text(['# 5 · Sin', 'id: sin', '', '..1..', '.a...', '..^..', '', '1 = zona azul', 'a = caja azul'])).level).toBe(false);
+    expect('storage' in parseLevel(text(['# 5 · Sin', 'id: sin', '', '..1..', '.a...', '..^..', '', '1 = zona azul', 'a = caja azul'])).level).toBe(false);
   });
 
   it('docs/RACKS.md: its example is a valid level with racks', () => {
@@ -168,7 +169,7 @@ describe('storage racks in .level files', () => {
     const example = blocks.find((b) => b.startsWith('# '));
     expect(example).toBeDefined();
     const level = parseLevel(example!).level;
-    expect(level.racks?.length).toBeGreaterThan(0);
+    expect(racksOf(level).length).toBeGreaterThan(0);
     expect(renderLevel(level)).toBe(example);
   });
 });
@@ -250,7 +251,7 @@ describe('storage rack validation (Spanish at the place to fix)', () => {
     expectError(zone, 13, 1, /hay más de un reparto: la zona «1» puede llevar la caja azul ● o la azul ▲/);
     // Identical boxes are interchangeable: two «azul» slots and two plain blue boxes are one assignment.
     const identical = replace(replace(ONE, 11, 'a = caja azul       b = caja azul'), 12, 'R = estantería frente sur: azul / azul / libre');
-    expect(parseLevel(text(identical)).level.racks).toHaveLength(1);
+    expect(racksOf(parseLevel(text(identical)).level)).toHaveLength(1);
   });
 
   it('must not start solved', () => {
@@ -277,7 +278,7 @@ describe('storage rack validation (Spanish at the place to fix)', () => {
     expect(level.stackLimit).toBe(3);
     // Without the rack the same boxes break the sorting chapter's rule.
     expect(() =>
-      validateLevel({ ...level, racks: undefined, zones: [{ id: 'z1', symbol: 'circle', x: 5, z: 1 }, { id: 'z2', symbol: 'triangle', x: 5, z: 2 }] }),
+      validateLevel({ ...level, storage: undefined, zones: [{ id: 'z1', symbol: 'circle', x: 5, z: 1 }, { id: 'z2', symbol: 'triangle', x: 5, z: 2 }] }),
     ).toThrow(/does not stack yet/);
   });
 });
@@ -301,9 +302,9 @@ describe('validateLevel: raw racks (JSON)', () => {
 
   it('fills id and w, keeps key order stable', () => {
     const level = validateLevel(base);
-    expect(level.racks).toEqual([{ id: 'r1', x: 3, z: 0, w: 1, facing: 'south', columns: [[{ color: 'blue' }, { color: 'mint' }, {}]] }]);
-    expect(Object.keys(level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'racks', 'decor', 'stackLimit', 'theme']);
-    expect(Object.keys(validateLevel({ ...base, racks: [], zones: [{ id: 'z1', color: 'blue', x: 1, z: 1 }, { id: 'z2', color: 'mint', x: 2, z: 1 }] }))).not.toContain('racks');
+    expect(racksOf(level)).toEqual([{ id: 'r1', x: 3, z: 0, w: 1, facing: 'south', columns: [[{ color: 'blue' }, { color: 'mint' }, {}]] }]);
+    expect(Object.keys(level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'storage', 'decor', 'stackLimit', 'theme']);
+    expect(Object.keys(validateLevel({ ...base, racks: [], zones: [{ id: 'z1', color: 'blue', x: 1, z: 1 }, { id: 'z2', color: 'mint', x: 2, z: 1 }] }))).not.toContain('storage');
   });
 
   it('rejects malformed racks', () => {

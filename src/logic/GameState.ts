@@ -15,7 +15,7 @@ import {
 } from '../core/types';
 import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from '../core/sorting';
 import { FACING_X, columnFrame, inwardHeading, slotsOf } from '../core/racks';
-import { hasTrucks, truckSlotsOf, usesTargetRules } from '../core/docks';
+import { hasTrucks, truckSlotsOf, trucksOf, usesTargetRules } from '../core/docks';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
 import { forkRiseRate } from './forkRise';
@@ -230,7 +230,7 @@ export class GameState {
       this.truckCenters.push(cellToWorld(column.cell, size));
       this.truckHeadings.push(inwardHeading(column.facing));
     }
-    for (const truck of level.trucks ?? []) this.dockWalls[truck.wall] = true;
+    for (const truck of trucksOf(level)) this.dockWalls[truck.wall] = true;
     this.openLevels = new Int8Array(this.grid.columns.length).fill(-1);
     const boxes: BoxState[] = level.boxes.map((b, i) => {
       const zi = this.grid.zoneAt(b.x, b.z);

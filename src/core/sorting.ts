@@ -10,12 +10,12 @@ import {
   type LevelData,
   type LevelZone,
   type RackSlot,
+  type StorageSkin,
   type SymbolId,
   type ZoneCriteria,
   type ZoneState,
 } from './types';
-import { racksOf, slotsOf } from './racks';
-import { trucksOf, truckSlotsOf, usesTargetRules } from './docks';
+import { hasStorage, storageOf, storageSlotsOf } from './storage';
 
 /** What sorting looks at on a box: its colour and symbol (boxes alike in both are interchangeable). */
 export type Sortable = ColorSymbol;
@@ -83,29 +83,24 @@ export function matchKind(criteria: ZoneCriteria): MatchKind {
 }
 
 /**
- * Match kind of every zone of a level, by zone id, of every rack slot with a cue, by slot id, and of every truck slot
- * (docs/DOCKS.md), by truck slot id.
+ * Match kind of every zone of a level, by zone id, and of every storage slot with a cue (docs/STORAGE.md: rack slots,
+ * truck levels), by slot id.
  */
-export function zoneMatchKinds(level: Pick<LevelData, 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): Map<string, MatchKind> {
+export function zoneMatchKinds(level: Pick<LevelData, 'zones' | 'storage'>): Map<string, MatchKind> {
   const kinds = new Map(level.zones.map((zone) => [zone.id, matchKind(criteriaOf(zone))]));
-  for (const slot of slotsOf(level)) {
-    const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
-    if (cue) kinds.set(slot.id, matchKind(cue));
-  }
-  for (const slot of truckSlotsOf(level)) kinds.set(slot.id, matchKind(slot.cue));
+  for (const slot of storageSlotsOf(level)) if (slot.cue) kinds.set(slot.id, matchKind(slot.cue));
   return kinds;
 }
 
 /**
- * A level sorts by symbol when any of its boxes, zones, rack slot cues or truck cues names a symbol (levels 1–18
- * never do).
+ * A level sorts by symbol when any of its boxes, zones or storage cues (rack slots, truck levels) names a symbol
+ * (levels 1–18 never do).
  */
-export function usesSymbols(level: Pick<LevelData, 'boxes' | 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): boolean {
+export function usesSymbols(level: Pick<LevelData, 'boxes' | 'zones' | 'storage'>): boolean {
   return (
     level.boxes.some((b) => b.symbol !== undefined) ||
     level.zones.some((z) => z.symbol !== undefined) ||
-    racksOf(level).some((rack) => rack.columns.some((slots) => slots.some((slot) => slot.symbol !== undefined))) ||
-    trucksOf(level).some((truck) => truck.columns.some((levels) => levels.some((cue) => cue.symbol !== undefined)))
+    storageOf(level).some((unit) => unit.columns.some((levels) => levels.some((cue) => cue?.symbol !== undefined)))
   );
 }
 
@@ -233,56 +228,67 @@ export function assignmentsOf(boxes: readonly Sortable[], targets: readonly Zone
 }
 
 /**
- * A target of a level with racks or trucks: a floor zone, a rack slot with a cue («libre» slots are never targets) or
- * a truck slot (every level of a truck bed column, docs/DOCKS.md).
+ * A target of a level with storage (docs/STORAGE.md rule 4): a floor zone, or a storage slot with a cue («libre» slots
+ * are never targets) — a rack slot (kind 'slot') or a truck level (kind 'truck': every one has a cue until phase 6).
  */
 export interface LevelTarget {
   kind: 'zone' | 'slot' | 'truck';
-  /** Zone id, slot id or truck slot id. */
+  /** Zone id or slot id. */
   id: string;
-  /** Index in level.zones, in the flattened slot list (core/racks `slotsOf`) or in core/docks `truckSlotsOf`. */
+  /** Index in level.zones, in core/racks `slotsOf` (kind 'slot') or in core/docks `truckSlotsOf` (kind 'truck'). */
   index: number;
   criteria: ZoneCriteria;
 }
 
+/** The target kind of a slot of each skin (the shapes of LevelTarget / LevelDestinies stay until phase 3). */
+const SLOT_TARGET: { readonly [S in StorageSkin]: 'slot' | 'truck' } = { rack: 'slot', truck: 'truck' };
+
+/** How many slots of each skin a level has (each skin's slots are the index space of its targets). */
+function slotCounts(level: Pick<LevelData, 'storage'>): Record<StorageSkin, number> {
+  const counts: Record<StorageSkin, number> = { rack: 0, truck: 0 };
+  for (const unit of storageOf(level)) for (const levels of unit.columns) counts[unit.skin] += levels.length;
+  return counts;
+}
+
 /**
- * Every target of a level: its zones (level order), then its slots with a cue (core/racks `slotsOf` order), then its
- * truck slots (core/docks `truckSlotsOf` order).
+ * Every target of a level: its zones (level order), then its storage slots with a cue (core/storage `storageSlotsOf`
+ * order: its rack slots, then its truck levels).
  */
-export function targetsOf(level: Pick<LevelData, 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): LevelTarget[] {
+export function targetsOf(level: Pick<LevelData, 'zones' | 'storage'>): LevelTarget[] {
   const targets: LevelTarget[] = level.zones.map((zone, index) => ({ kind: 'zone', id: zone.id, index, criteria: criteriaOf(zone) }));
-  slotsOf(level).forEach((slot, index) => {
-    const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
-    if (cue) targets.push({ kind: 'slot', id: slot.id, index, criteria: cue });
-  });
-  truckSlotsOf(level).forEach((slot, index) => targets.push({ kind: 'truck', id: slot.id, index, criteria: criteriaOf(slot.cue) }));
+  const next: Record<StorageSkin, number> = { rack: 0, truck: 0 };
+  for (const slot of storageSlotsOf(level)) {
+    const index = next[slot.unit.skin]++;
+    if (slot.cue) targets.push({ kind: SLOT_TARGET[slot.unit.skin], id: slot.id, index, criteria: criteriaOf(slot.cue) });
+  }
   return targets;
 }
 
-/** The destined box kind of every target of a level with racks or trucks (docs/RACKS.md, docs/DOCKS.md). */
+/** The destined box kind of every target of a level with storage (docs/STORAGE.md rule 4). */
 export interface LevelDestinies {
   /** Per zone, in level.zones order. */
   zones: Sortable[];
-  /** Per slot, in core/racks `slotsOf` order: its destined kind, null for a «libre» slot. */
+  /** Per rack slot, in core/racks `slotsOf` order: its destined kind, null for a «libre» slot. */
   slots: (Sortable | null)[];
   /** Per truck slot, in core/docks `truckSlotsOf` order (empty without trucks). */
   trucks: Sortable[];
 }
 
 /**
- * Levels with racks or trucks: the kind of box the level's unique complete assignment puts on every zone, slot and
- * truck slot (identical boxes are interchangeable, so a destiny is a kind, not a box id). null for a level with
- * neither, or one with no complete assignment or more than one (validateLevel refuses those).
+ * Levels with storage: the kind of box the level's unique complete assignment puts on every zone and storage slot
+ * with a cue (identical boxes are interchangeable, so a destiny is a kind, not a box id). null for a level without
+ * storage, or one with no complete assignment or more than one (validateLevel refuses those).
  */
-export function levelDestinies(level: Pick<LevelData, 'boxes' | 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): LevelDestinies | null {
-  if (!usesTargetRules(level)) return null;
+export function levelDestinies(level: Pick<LevelData, 'boxes' | 'zones' | 'storage'>): LevelDestinies | null {
+  if (!hasStorage(level)) return null;
   const targets = targetsOf(level);
   const { count, found } = assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria));
   if (count !== 1) return null;
   const [assignment] = found;
+  const counts = slotCounts(level);
   const zones = new Array<Sortable>(level.zones.length);
-  const slots = new Array<Sortable | null>(slotsOf(level).length).fill(null);
-  const trucks = new Array<Sortable>(truckSlotsOf(level).length);
+  const slots = new Array<Sortable | null>(counts.rack).fill(null);
+  const trucks = new Array<Sortable>(counts.truck);
   targets.forEach((t, i) => {
     if (t.kind === 'zone') zones[t.index] = assignment[i];
     else if (t.kind === 'slot') slots[t.index] = assignment[i];

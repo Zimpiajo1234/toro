@@ -5,6 +5,7 @@
  * reverse gear (S), a box loaded on top of a locked one, every truck level lit once and never lifted again.
  */
 import { describe, expect, it } from 'vitest';
+import { trucksOf } from '../core/docks';
 import type { GameEvent } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
 import { autopilot } from './autopilot';
@@ -84,7 +85,7 @@ describe('truck levels are playable with the real controls', () => {
     expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
     // No fork keys at a truck: the height is automatic, as on a floor stack.
     expect(out.controls.forkSteps).toBe(0);
-    const truckSlots = lvl.trucks!.flatMap((t) => t.columns.flatMap((levels, column) => levels.map((_, k) => `${t.id}:${column}:${k}`)));
+    const truckSlots = trucksOf(lvl).flatMap((t) => t.columns.flatMap((levels, column) => levels.map((_, k) => `${t.id}:${column}:${k}`)));
     const onTruck = drops(out.events).filter((d) => d.truckSlotId !== undefined);
     const correct = onTruck.filter((d) => d.correct);
     const started = lvl.boxes.filter((b) => b.level !== undefined).length;

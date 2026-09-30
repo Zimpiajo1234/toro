@@ -2,7 +2,7 @@ import { Box3, Color, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, Vector
 import type { GameConfig } from '../config';
 import { dockRailsOf, hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
 import { degToRad } from '../core/math';
-import { hasRacks } from '../core/racks';
+import { hasRacks, racksOf } from '../core/racks';
 import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
 import {
   COLOR_IDS,
@@ -752,7 +752,7 @@ export class LevelView {
     const floor = new PartList();
     addFloor(floor, level, theme);
     // The loading line in front of every rack column is paint on the floor.
-    for (const rack of level.racks ?? []) addRackLines(floor, rack, level, theme);
+    for (const rack of racksOf(level)) addRackLines(floor, rack, level, theme);
     this.root.add(this.mesh(floor.build(), mats.painted, false));
 
     // Each shelf is its own mesh (it may fade out of the way); plants stay merged.
@@ -871,7 +871,8 @@ export class LevelView {
       material.roughness = 0.72;
       return material;
     };
-    for (const rack of level.racks ?? []) {
+    const racks = racksOf(level);
+    for (const rack of racks) {
       const bays = buildRackBays(rack, level, theme).map((g) => this.bag.track(g));
       const view = new RackView(rack.id, bays, frameMaterial, this.depthOnly, DROP_GLIDE_SEC);
       byId.set(rack.id, view);
@@ -879,7 +880,7 @@ export class LevelView {
       for (const bay of view.bays) this.addOccluder(bay);
       this.root.add(view.group);
     }
-    const rackById = new Map((level.racks ?? []).map((r) => [r.id, r]));
+    const rackById = new Map(racks.map((r) => [r.id, r]));
     let panel: BufferGeometry | null = null;
     let band: BufferGeometry | null = null;
     const cueByLook = new Map<string, BufferGeometry>();

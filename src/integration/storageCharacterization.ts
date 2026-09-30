@@ -9,8 +9,8 @@
  * renames or merges an API, it ports the functions of this file and the JSON stays byte for byte the same.
  *
  * Sections per level (test: ./storageCharacterization.test.ts):
- * - storage: the units as the planned LevelStorage (id, skin, first cell, width, access, cues bottom → top, null =
- *   «libre»), every box at the start and every storage slot in snapshot order;
+ * - storage: the units as LevelStorage (id, skin, first cell, width, access, cues bottom → top, null = «libre»; since
+ *   phase 2 read straight from `level.storage`), every box at the start and every storage slot in snapshot order;
  * - targets: the target rules, the targets with their destined kind and chime timbre, the unique assignment;
  * - metrics: the level metrics of `npm run levels` (no dead-end check: benchmark.test.ts and storageFixture.test.ts run
  *   it);
@@ -24,10 +24,11 @@
  *   Remove-Item Env:TORO_CARACTERIZAR)
  * With the variable set the test only rewrites the file; `-u` alone never touches it.
  */
-import { TRUCK_FACING, type BoxState, type Facing, type LevelData, type WallSide, type ZoneCriteria } from '../core/types';
-import { hasRacks, racksOf, slotsOf } from '../core/racks';
-import { truckColumnsOf, truckSlotsOf, trucksOf, usesTargetRules } from '../core/docks';
-import { assignmentsOf, criteriaOf, cueOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
+import type { BoxState, Facing, LevelData, WallSide, ZoneCriteria } from '../core/types';
+import { hasRacks, slotsOf } from '../core/racks';
+import { truckColumnsOf } from '../core/docks';
+import { hasStorage, storageOf, storageSlotsOf } from '../core/storage';
+import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
 import { levelMetrics } from '../data/levels/metrics';
@@ -130,32 +131,23 @@ function boxAt(box: BoxState): string {
 /* Sections                                                            */
 /* ------------------------------------------------------------------ */
 
-/** The units, the boxes at the start (LevelData) and every storage slot (core geometry), in snapshot order. */
+/** The units, the boxes at the start (LevelData) and every storage slot (core/storage geometry), in snapshot order. */
 export function storageSection(level: LevelData): LevelCharacterization['storage'] {
-  const units: StorageUnitView[] = [
-    ...racksOf(level).map((rack): StorageUnitView => ({
-      id: rack.id,
-      skin: 'rack',
-      x: rack.x,
-      z: rack.z,
-      w: rack.w,
-      access: { kind: 'front', facing: rack.facing },
-      columns: rack.columns.map((slots) => slots.map((slot) => cueOf(slot))),
-    })),
-    ...trucksOf(level).map((truck): StorageUnitView => ({
-      id: truck.id,
-      skin: 'truck',
-      x: truck.x,
-      z: truck.z,
-      w: truck.w,
-      access: { kind: 'door', wall: truck.wall },
-      columns: truck.columns.map((levels) => levels.map((cue) => criteriaOf(cue))),
-    })),
-  ];
+  const units = storageOf(level).map(
+    (unit): StorageUnitView => ({
+      id: unit.id,
+      skin: unit.skin,
+      x: unit.x,
+      z: unit.z,
+      w: unit.w,
+      access: { ...unit.access },
+      columns: unit.columns.map((levels) => levels.map((cue) => (cue === null ? null : { ...cue }))),
+    }),
+  );
+  const storageSlots = storageSlotsOf(level);
   // A box in storage names its slot; a floor box its cell and its height in the stack there (list order).
   const slotAt = new Map<string, string>();
-  for (const s of slotsOf(level)) slotAt.set(`${cellText(s.cell)}@${s.level}`, s.id);
-  for (const s of truckSlotsOf(level)) slotAt.set(`${cellText(s.cell)}@${s.level}`, s.id);
+  for (const s of storageSlots) slotAt.set(`${cellText(s.cell)}@${s.level}`, s.id);
   const zoneAt = new Map(level.zones.map((z) => [cellText(z), z.id]));
   const height = new Map<string, number>();
   const boxes = level.boxes.map((b) => {
@@ -167,10 +159,7 @@ export function storageSection(level: LevelData): LevelCharacterization['storage
     const zone = zoneAt.get(cellText(b));
     return `${b.id} ${kind} ${cellText(b)}@${h}${zone === undefined ? '' : `[${zone}]`}`;
   });
-  const slots = [
-    ...slotsOf(level).map((s) => `${s.id} cell ${cellText(s.cell)} front ${cellText(s.front)} ${s.rack.facing} · ${cueText(cueOf(s.rack.columns[s.column][s.level]))}`),
-    ...truckSlotsOf(level).map((s) => `${s.id} cell ${cellText(s.cell)} front ${cellText(s.front)} ${TRUCK_FACING[s.truck.wall]} · ${cueText(criteriaOf(s.cue))}`),
-  ];
+  const slots = storageSlots.map((s) => `${s.id} cell ${cellText(s.cell)} front ${cellText(s.front)} ${s.facing} · ${cueText(s.cue)}`);
   return { units, boxes, slots };
 }
 
@@ -182,7 +171,7 @@ export function targetsSection(level: LevelData): LevelCharacterization['targets
   const destinyOf = (t: (typeof targets)[number]): Sortable | null | undefined =>
     t.kind === 'zone' ? destinies?.zones[t.index] : t.kind === 'slot' ? destinies?.slots[t.index] : destinies?.trucks[t.index];
   return {
-    rules: { targetRules: usesTargetRules(level), symbols: usesSymbols(level), forkRow: hasRacks(level) },
+    rules: { targetRules: hasStorage(level), symbols: usesSymbols(level), forkRow: hasRacks(level) },
     counts: {
       zones: targets.filter((t) => t.kind === 'zone').length,
       slots: targets.filter((t) => t.kind === 'slot').length,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import docksDoc from '../../docs/DOCKS.md?raw';
+import { trucksOf } from '../core/docks';
+import { racksOf } from '../core/racks';
+import { storageOf } from '../core/storage';
 import type { LevelData } from '../core/types';
 import { LevelFormatError, formatLevel, parseLevel, parseLevelDraft, renderLevel } from './asciiLevel';
 import { validateLevel } from './validateLevel';
@@ -78,7 +81,17 @@ const NORTH_LEVEL: LevelData = {
   ],
   zones: [],
   shelves: [],
-  trucks: [{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] }],
+  storage: [
+    {
+      id: 't1',
+      skin: 'truck',
+      x: 2,
+      z: 0,
+      w: 2,
+      access: { kind: 'door', wall: 'north' },
+      columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]],
+    },
+  ],
   decor: {
     plants: [
       { x: 1, z: 0, variant: 0 },
@@ -152,7 +165,7 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
 
   it('a west truck runs along column 0; a box loaded at the start has its bed cell (x = -1) and level, after the floor boxes', () => {
     const level = levelOf(WEST);
-    expect(level.trucks).toStrictEqual([{ id: 't1', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'blue' }], [{ symbol: 'triangle' }]] }]);
+    expect(trucksOf(level)).toStrictEqual([{ id: 't1', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'blue' }], [{ symbol: 'triangle' }]] }]);
     expect(level.boxes.map((b) => b.id)).toEqual(['b1', 'b2', 'b3']);
     expect(level.boxes[2]).toStrictEqual({ id: 'b3', color: 'mint', symbol: 'triangle', x: -1, z: 1, level: 0, kind: 'standard' });
     expect(level.boxes.slice(0, 2).every((b) => b.level === undefined)).toBe(true);
@@ -185,14 +198,14 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
       'T = camión muelle norte (grande): azul / ▲ | coral ◆ + caja menta ▲ (b9)',
     );
     const level = levelOf(lines);
-    expect(level.trucks![0].id).toBe('grande');
+    expect(trucksOf(level)[0].id).toBe('grande');
     expect(level.boxes.at(-1)).toStrictEqual({ id: 'b9', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 0, kind: 'standard' });
     expect(renderLevel(level)).toBe(text(lines));
   });
 
   it('two trucks with one character are two trucks (reading order), rendered with a character each', () => {
     const level = levelOf(TWIN);
-    expect(level.trucks!.map((t) => [t.id, t.x])).toEqual([
+    expect(trucksOf(level).map((t) => [t.id, t.x])).toEqual([
       ['t1', 1],
       ['t2', 5],
     ]);
@@ -201,13 +214,13 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
     expect(again).toContain('T C = camión muelle norte: azul ●');
   });
 
-  it('trucks mix with racks, zones, plants and windows (racks first); levels without trucks get no `trucks` key', () => {
+  it('trucks mix with racks, zones, plants and windows (racks first); levels without racks or trucks get no `storage` key', () => {
     const level = levelOf(MIXED);
-    expect(level.racks).toHaveLength(1);
-    expect(level.trucks).toStrictEqual([{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }], [{ color: 'yellow' }]] }]);
+    expect(racksOf(level)).toHaveLength(1);
+    expect(trucksOf(level)).toStrictEqual([{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }], [{ color: 'yellow' }]] }]);
     const plain = ['# 5 · Sin', 'id: sin', '', '..1..', '.a...', '..^..', '', '1 = zona azul', 'a = caja azul'];
-    expect('trucks' in draftOf(plain).raw).toBe(false);
-    expect('trucks' in parseLevel(text(plain)).level).toBe(false);
+    expect('storage' in draftOf(plain).raw).toBe(false);
+    expect('storage' in parseLevel(text(plain)).level).toBe(false);
   });
 
   it('docs/DOCKS.md: its example parses and is canonical', () => {
@@ -215,7 +228,7 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
     const example = blocks.find((b) => b.startsWith('# '));
     expect(example).toBeDefined();
     const level = asLevel(parseLevelDraft(example!).raw);
-    expect(level.trucks?.length).toBeGreaterThan(0);
+    expect(trucksOf(level).length).toBeGreaterThan(0);
     expect(renderLevel(level)).toBe(example);
   });
 });
@@ -274,14 +287,14 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
 });
 
 describe('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
-  it('validateLevel keeps `trucks`', () => {
-    expect(validateLevel(draftOf(NORTH).raw).trucks).toHaveLength(1);
+  it('validateLevel keeps the truck', () => {
+    expect(trucksOf(validateLevel(draftOf(NORTH).raw))).toHaveLength(1);
   });
 
   it('parse(render(level)) = level, render(parse(text)) = text', () => {
     for (const lines of [NORTH, WEST, MIXED]) {
       const parsed = parseLevel(text(lines));
-      expect(parsed.level.trucks?.length).toBeGreaterThan(0);
+      expect(trucksOf(parsed.level).length).toBeGreaterThan(0);
       expect(renderLevel(parsed.level, parsed)).toBe(text(lines));
       expect(parseLevel(renderLevel(parsed.level)).level).toStrictEqual(parsed.level);
       expect(formatLevel(text(lines))).toBe(text(lines));
@@ -291,8 +304,10 @@ describe('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
     expect(parseLevel(renderLevel(twin)).level).toStrictEqual(twin);
   });
 
-  it('keeps the key order: `trucks` right after `racks`', () => {
-    expect(Object.keys(parseLevel(text(MIXED)).level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'racks', 'trucks', 'decor', 'stackLimit', 'theme']);
+  it('keeps the key order: `storage` right after `shelves`, its trucks right after its racks', () => {
+    const level = parseLevel(text(MIXED)).level;
+    expect(Object.keys(level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'storage', 'decor', 'stackLimit', 'theme']);
+    expect(storageOf(level).map((unit) => unit.skin)).toEqual(['rack', 'truck']);
   });
 
   it('docs/DOCKS.md: its example is a valid level', () => {

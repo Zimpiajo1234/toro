@@ -64,9 +64,9 @@ export interface ColorSymbol {
 /**
  * A box of a level. Stacked starts: boxes listed with the same (x, z) form a stack, bottom → top in list order (the
  * first one on the floor, the next on top of it, …; a `.level` file writes it «pila azul,menta»). No height field for
- * floor boxes. A box that starts in a storage rack slot has (x, z) = its rack cell and `level` = the slot; one that
- * starts loaded on a truck (docs/DOCKS.md) has (x, z) = its bed cell, outside the map beyond the dock door (core/docks
- * `truckCellOf`: z = -1 for a north dock, x = -1 for a west one), and `level` = its truck level.
+ * floor boxes. A box that starts stored (docs/STORAGE.md) has (x, z) = the cell of its storage column (core/storage
+ * `cellOf`: a storage rack's own cell; a truck's bed cell, outside the map beyond the dock door, z = -1 for a north
+ * dock, x = -1 for a west one) and `level` = its level there (a rack slot, a truck level).
  */
 export interface LevelBox {
   id: string;
@@ -91,7 +91,7 @@ export interface LevelBox {
 export const FACINGS = ['north', 'east', 'south', 'west'] as const;
 export type Facing = (typeof FACINGS)[number];
 
-/** Most slots a storage rack column holds (floor slot + 2). */
+/** Most slots a storage rack column holds (floor slot + 2): core/storage `STORAGE_SKINS.rack.maxLevels`. */
 export const MAX_RACK_SLOTS = 3;
 
 /**
@@ -110,6 +110,8 @@ export interface RackSlot {
  * visible from both faces. Its cells are solid for the forklift body and for floor boxes; the carried load enters a
  * column's cell only from the front, at the selected slot level, into an empty slot. A rack facing north / south runs
  * along x from (x, z); one facing east / west runs along z.
+ * The view of a LevelStorage of skin `rack` that core/racks `racksOf` derives (docs/STORAGE.md: until phase 7); a JSON
+ * level may still list its racks this way (`racks`, turned into `storage` by validateLevel).
  */
 export interface LevelRack {
   id: string;
@@ -177,11 +179,15 @@ export interface LevelPlant {
 
 /**
  * Most levels a truck bed column holds (docs/DOCKS.md): the bed + 1 («solo hasta 2 alturas»). Nothing stands over or
- * between the bed columns: the cues are on the framed sign above the dock door.
+ * between the bed columns: the cues are on the framed sign above the dock door. core/storage
+ * `STORAGE_SKINS.truck.maxLevels`.
  */
 export const MAX_TRUCK_LEVELS = 2;
 
-/** Most bed columns a truck has (docs/DOCKS.md): its door is 1 to 3 cells wide; the sign above it grows with it. */
+/**
+ * Most bed columns a truck has (docs/DOCKS.md): its door is 1 to 3 cells wide; the sign above it grows with it.
+ * core/storage `STORAGE_SKINS.truck.maxColumns`.
+ */
 export const MAX_TRUCK_COLUMNS = 3;
 
 /**
@@ -209,6 +215,8 @@ export type TruckCue = ZoneCriteria;
  * exactly like a floor stack (automatic fork height), bottom → top, up to its number of levels; its body never passes
  * the wall line. 1‥MAX_TRUCK_COLUMNS columns of 1‥MAX_TRUCK_LEVELS levels. A box that starts loaded is a LevelBox with
  * (x, z) = its bed cell (outside) and `level` = its truck level.
+ * The view of a LevelStorage of skin `truck` that core/docks `trucksOf` derives (docs/STORAGE.md: until phase 7); a
+ * JSON level may still list its trucks this way (`trucks`, turned into `storage` by validateLevel).
  */
 export interface LevelTruck {
   id: string;
@@ -223,6 +231,57 @@ export interface LevelTruck {
   columns: TruckCue[][];
 }
 
+/* ------------------------------------------------------------------ */
+/* Storage units (docs/STORAGE.md): one model, a skin per look          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The skin of a storage unit (docs/STORAGE.md «Modelo»): its drawing plus the few properties its row of core/storage
+ * `STORAGE_SKINS` declares (support, heights, columns, access, id prefix, map letters, fill, sound). The logic is one.
+ */
+export type StorageSkin = 'rack' | 'truck';
+
+/**
+ * How the levels of a unit's column hold boxes (`STORAGE_SKINS[skin].support`): `shelves` = every level is a slot of
+ * its own, filled and emptied in any order and satisfied alone (a rack); `stack` = the boxes sit on each other from the
+ * bottom up, and a level is satisfied only on satisfied levels (a truck bed).
+ */
+export type StorageSupport = 'shelves' | 'stack';
+
+/**
+ * Where a unit is loaded from (docs/STORAGE.md «Acceso»). `front`: from the floor cell next to each column on the
+ * `facing` side; the unit's cells are map cells, solid (a rack). `door`: from the door cell of each column, a map cell of
+ * row 0 / column 0 against `wall`; the column's cell lies one step beyond the wall, outside the map (a truck).
+ */
+export type StorageAccess = { kind: 'front'; facing: Facing } | { kind: 'door'; wall: WallSide };
+
+/**
+ * A storage unit of a level (docs/STORAGE.md «Modelo», rules 1–3): a straight run of 1‥maxColumns columns, one per
+ * cell, each of 1‥maxLevels levels (its skin's row in core/storage `STORAGE_SKINS`; a stack never taller than
+ * `stackLimit`). Level data's one source of truth for storage: core/racks `racksOf` and core/docks `trucksOf` derive
+ * the old per-skin views from it until phase 7. The geometry of every unit: core/storage (`cellOf`, `frontOf`,
+ * `facingOf`, `storageSlotsOf`).
+ */
+export interface LevelStorage {
+  /** Unique among all the level's units; generated: `idPrefix` + its number within its skin (r1, r2… / t1, t2…). */
+  id: string;
+  skin: StorageSkin;
+  /**
+   * First cell: a front unit's first own cell (the west-most of a run along x, the north-most of one along z); a door
+   * unit's first door cell (the west-most of a north door, z = 0; the north-most of a west door, x = 0).
+   */
+  x: number;
+  z: number;
+  /** Columns along the run, one per cell (= columns.length). */
+  w: number;
+  access: StorageAccess;
+  /**
+   * Per column (first cell first), the cue of each level bottom → top: a colour, a symbol or both, like a zone; null =
+   * «libre» (asks for nothing, never a target). An empty cue is always null here.
+   */
+  columns: (ZoneCriteria | null)[][];
+}
+
 export interface LevelData {
   id: string;
   /** Sort key. Levels are played in ascending order. */
@@ -235,16 +294,13 @@ export interface LevelData {
   zones: LevelZone[];
   shelves: LevelShelf[];
   /**
-   * Storage racks (docs/RACKS.md). Omitted when the level has none (validateLevel never adds an empty list, so the
-   * levels without racks are exactly as before).
+   * Storage units (docs/STORAGE.md): storage racks (docs/RACKS.md), then dock trucks (docs/DOCKS.md) — skin by skin in
+   * `STORAGE_SKINS` order, each skin in legend order (rule 12: the order of box ids, targets, snapshot and solver
+   * positions). Omitted when the level has none (validateLevel never adds an empty list, so the levels without storage
+   * are exactly as before). A level with storage follows the target rules (destined boxes, locks, soft buzz: core/storage
+   * `hasStorage`).
    */
-  racks?: LevelRack[];
-  /**
-   * Loading docks (docs/DOCKS.md). Omitted when the level has none (validateLevel never adds an empty list, so the
-   * levels without docks are exactly as before). A level with trucks follows the rules of docs/RACKS.md for levels with
-   * racks (destined boxes, locks, soft buzz), with or without racks.
-   */
-  trucks?: LevelTruck[];
+  storage?: LevelStorage[];
   decor: {
     plants: LevelPlant[];
     windows: LevelWindow[];

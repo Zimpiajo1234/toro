@@ -1,9 +1,10 @@
 # Almacenaje común: estanterías, camiones y los aspectos que vengan
 
-**Estado: fase 1 de 7** (diseño y red de seguridad). El juego no ha cambiado: el código sigue con las dos
-implementaciones de abajo. Este documento fija el modelo al que van, sus reglas y contratos, y cómo se comprueba que
-por el camino nada cambia. Lo propio de cada aspecto sigue en docs/RACKS.md (estanterías almacenables) y docs/DOCKS.md
-(muelles de carga).
+**Estado: fase 2 de 7** (modelo común en core y datos). El juego no ha cambiado. Los datos del nivel ya son un solo
+modelo (`LevelData.storage`, `core/storage.ts`, «Fase 2: lo entregado»); la lógica, el solver y el render siguen con las
+dos implementaciones de abajo, que leen `racksOf` / `trucksOf` (vistas de `level.storage` hasta la fase 7). Este
+documento fija el modelo, sus reglas y contratos, y cómo se comprueba que por el camino nada cambia. Lo propio de cada
+aspecto sigue en docs/RACKS.md (estanterías almacenables) y docs/DOCKS.md (muelles de carga).
 
 Ojo con el nombre: `src/storage/` es el progreso guardado (ProgressStore), nada que ver con esto. Lo nuevo va en
 `src/core/storage.ts` y `src/render/storage/`.
@@ -25,8 +26,8 @@ Decisiones (2026-09-30):
   bloquea, zumba ni se ilumina con las pistas (P). Cada columna del camión admite `min(2, limit)` cajas: sus pistas de
   abajo arriba y el resto, libre.
 - **D. La gramática del `.level` no cambia**: una letra de la leyenda por unidad («3 camiones = T, U, V»: tres
-  camiones, tres letras; la forma canónica de hoy escribe T, C, U, ver «Huecos», 1); `libre` escrito también vale en
-  un camión.
+  camiones, tres letras; la forma canónica escribe T, C, U, ver «Huecos», 1); `libre` escrito también vale en un
+  camión.
 - **E. Se queda todo lo aprobado**: camiones fuera de los muros norte y oeste, casillas de puerta, cartel sobre la
   puerta, barandillas naranjas con planta (docs/DOCKS.md); placas transparentes en los extremos de las estanterías,
   caja fija y zumbido (docs/RACKS.md); pistas P apagadas por defecto; la cámara nunca se reencuadra sola; la luz ámbar
@@ -71,18 +72,23 @@ interface LevelStorage {
   x: number; z: number;                             // primera casilla: de la estantería / primera de puerta
   w: number;                                        // columnas, una por casilla
   access: StorageAccess;
-  columns: (ZoneCriteria | null)[][];               // por columna, de abajo arriba; null = «libre»
+  columns: (ZoneCriteria | null)[][];               // por columna, de abajo arriba; null = «libre» (nunca `{}`)
 }
 
 // core/storage.ts (fase 2): una fila por aspecto; añadir uno = una fila + su render.
-const STORAGE_SKINS = {
-  rack:  { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r',
-           chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
-  truck: { support: 'stack',   maxLevels: 2, maxColumns: 3,        access: 'door',  idPrefix: 't',
-           chars: 'TCUVWXYZKLMNO',  fillToMax: true,  sound: 'wood'  },
-} as const;
-// fillToMax: la columna se completa con «libre» hasta min(maxLevels, limit) (fase 6). chars: letras de la forma
-// canónica, las de hoy (RACK_CHARS / TRUCK_CHARS; ver «Huecos», 1).
+const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
+  rack:  { support: 'shelves', maxLevels: MAX_RACK_SLOTS /* 3 */, maxColumns: Infinity, access: 'front',
+           idPrefix: 'r', chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
+  truck: { support: 'stack', maxLevels: MAX_TRUCK_LEVELS /* 2 */, maxColumns: MAX_TRUCK_COLUMNS /* 3 */,
+           access: 'door', idPrefix: 't', chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
+};
+const STORAGE_SKIN_ORDER = Object.keys(STORAGE_SKINS);   // ['rack', 'truck']: el orden de la regla 12
+// fillToMax: la columna se completa con «libre» hasta min(maxLevels, limit) (fase 6). sound: fase 5. chars: letras de
+// la forma canónica, las de antes (RACK_CHARS / TRUCK_CHARS; ver «Huecos», 1).
+// La geometría, una para todos (fase 2): facingOf(unit), cellOf(unit, col), frontOf(unit, col), inwardHeading(facing),
+// slotIdOf; y, aplanadas en el orden de la regla 12:
+interface StorageColumnRef { unit; unitIndex; column; cell; front; facing; cues; firstSlot }   // storageColumnsOf
+interface StorageSlotRef { id; unit; unitIndex; column; level; cell; front; facing; cue }       // storageSlotsOf
 
 // core/types.ts (fase 3): snapshot.storageSlots, unidad a unidad, columna a columna, de abajo arriba.
 interface StorageSlotState {
@@ -158,16 +164,31 @@ interface StorageSlotState {
 
 ## Contratos por capa
 
-- **core** (fase 2): `core/storage.ts` con `STORAGE_SKINS`, `storageOf(level)`, `hasStorage(level)` (hoy
-  `usesTargetRules`) y la geometría genérica: `cellOf(unit, col)`, `frontOf(unit, col)`, `facingOf(unit)`,
-  `inwardHeading`, `slotIdOf`, `storageColumnsOf`, `storageSlotsOf` (reutilizan las cuentas de `core/racks` y
-  `core/docks`). `dockRailsOf` es del acceso `door`. `core/sorting` saca objetivos y destinos de `storageSlotsOf`.
-  `racksOf` / `trucksOf` / `slotsOf` / `truckSlotsOf` quedan como envoltorios hasta la fase 7.
-- **data**: `asciiLevel.ts` con la misma gramática (`estantería frente …`, `camión muelle …`), una letra por unidad y la
-  misma forma canónica; produce `level.storage` (fase 2); `libre` en camiones (fase 6). `validateLevel.ts`: las reglas
-  comunes salen de la fila del aspecto (niveles, columnas, pila ≤ `limit`, reparto único) y aparte van las propias de
-  cada acceso (`front`: el frente es suelo; `door`: la fila 0 / columna 0, las casillas laterales con obstáculo, nada
-  de ventana en la puerta); los mensajes en inglés, intactos (asciiLevel los traduce y los coloca).
+- **core** (fase 2, hecho): `core/storage.ts` con `STORAGE_SKINS`, `STORAGE_SKIN_ORDER`, `storageOf(level)`,
+  `hasStorage(level)` y la geometría genérica: `cellOf(unit, col)`, `frontOf(unit, col)`, `facingOf(unit)`,
+  `inwardHeading(facing)` y `slotIdOf` (los de `core/racks`, reexportados), `storageColumnsOf`, `storageSlotsOf`
+  (sobre `rackCellOf` / `frontCellOf` / `truckCellOf` / `truckFrontOf` / `TRUCK_FACING`). `core/storage` está por
+  encima de `core/racks` y `core/docks` (sin ciclos): sus envoltorios leen `level.storage` a mano y
+  `usesTargetRules` (core/docks) es la misma prueba que `hasStorage`, con su nombre de antes. `dockRailsOf` es del
+  acceso `door`: recorre las unidades con puerta (`truckIndex` = su índice entre ellas = el de `trucksOf`).
+  `core/sorting` saca objetivos, destinos, `zoneMatchKinds` y `usesSymbols` de `storageSlotsOf` / `storageOf`, con las
+  formas de antes (`LevelTarget.kind` `'slot'` / `'truck'` según el aspecto, `index` dentro de su aspecto;
+  `LevelDestinies.slots` / `.trucks`) hasta la fase 3. `racksOf` / `trucksOf` / `hasRacks` / `hasTrucks` / `slotsOf` /
+  `truckSlotsOf` / `truckColumnsOf` quedan como vistas de `level.storage` hasta la fase 7 (derivadas en cada llamada;
+  un «libre» sale `{}`); `LevelRack` / `LevelTruck` / `RackSlot` / `TruckCue`, solo como sus tipos.
+- **data** (fase 2, hecho): `asciiLevel.ts` con la misma gramática (`estantería frente …`, `camión muelle …`), una
+  letra por unidad (de `STORAGE_SKINS[skin].chars`) y la misma forma canónica; lee las unidades aspecto a aspecto (regla
+  12, aunque la leyenda ponga antes un camión) y su borrador (`parseLevelDraft`) ya trae `storage`; `libre` en camiones
+  (fase 6). `validateLevel.ts` lee `storage` (la forma de `LevelData`: `validateLevel(level)` devuelve el nivel) o, de
+  un nivel JSON antiguo, `racks` y `trucks` (nunca los dos a la vez), ordena las unidades por aspecto (orden estable) y
+  da `storage`; las reglas comunes salen de la fila del aspecto (niveles, columnas, id por defecto, ids únicos entre
+  aspectos, pila ≤ `limit` y cajas una sobre otra según el soporte, reparto único) y aparte van las propias de cada
+  acceso (`front`: sus casillas y el frente es suelo; `door`: la fila 0 / columna 0, las casillas laterales con
+  obstáculo, nada de ventana en la puerta). Los mensajes en inglés, intactos (asciiLevel los traduce y los coloca):
+  cada unidad se nombra por su aspecto (`racks[i]` / `trucks[i]` = la i-ésima de ese aspecto, también desde `storage`;
+  sus palabras en `SKIN_WORDS`). Nuevos, solo para `storage`: `storage and the legacy racks / trucks lists do not mix…`,
+  `storage[i].skin must be rack or truck`, `racks[i].access.kind must be "front"…`, `racks[i].access.facing …` /
+  `trucks[i].access.wall …`. Hasta la fase 6, un camión sin pista sigue siendo un error (`must ask for something`).
 - **logic**: un solo enganche (`refreshStorageAim` + `STORAGE_ACCESS`), un solo paso de carga (aberturas genéricas por
   columna en `CollisionWorld`, la celda dentro o fuera del mapa), un solo camino de coger / dejar y `refreshColumn`
   según el soporte; `LevelGrid` con columnas dentro o fuera del mapa; `snapshot.storageSlots`, `box.slotId`, eventos
@@ -196,9 +217,10 @@ interface StorageSlotState {
 1. **Fila en `STORAGE_SKINS`**: soporte, `maxLevels`, `maxColumns`, acceso (`front` / `door` u otro nuevo),
    `idPrefix` (distinto de los demás: los ids de nivel no pueden chocar), `chars`, `fillToMax`, `sound`.
 2. **Gramática**: la cabeza de su entrada en la leyenda (`asciiLevel.ts`: como `estantería frente …` / `camión muelle
-   …`); columnas `|`, niveles `/`, `pista [+ caja]` y `libre` ya son comunes. Forma canónica, un ejemplo en su doc y sus
-   errores en español.
-3. **Validación**: solo lo propio de su sitio en el mapa; lo común sale de la fila.
+   …`) y sus palabras en `UNIT_WORDS` (el nombre, el artículo, la concordancia); columnas `|`, niveles `/`,
+   `pista [+ caja]` y `libre` ya son comunes. Forma canónica, un ejemplo en su doc y sus errores en español.
+3. **Validación**: solo lo propio de su sitio en el mapa; lo común sale de la fila. Sus palabras en inglés en
+   `SKIN_WORDS` (`validateLevel.ts`) y, si trae mensajes nuevos, su sitio en `explainValidation`.
 4. **Acceso**: si es nuevo, una fila en `STORAGE_ACCESS` (encarar, mantener, alcance, paso de la carga) y su abertura en
    `CollisionWorld`; si no, nada en la lógica.
 5. **Render**: un adaptador en `src/render/storage/<aspecto>.ts` con la interfaz común y su registro; medidas en
@@ -224,7 +246,9 @@ interface StorageSlotState {
   - `autopilot60` / `autopilot20`: el piloto a 60 y 20 fps (movimientos, frames hasta terminar, pulsaciones de F / V,
     frames marcha atrás y cada movimiento de caja).
 - **Regla para las fases 2–5**: esos tests no se tocan. Si una fase renombra o junta una API, adapta
-  `storageCharacterization.ts`; el JSON se queda byte a byte igual. Si falla, algo cambió: se arregla el código.
+  `storageCharacterization.ts`; el JSON se queda byte a byte igual. Si falla, algo cambió: se arregla el código. (Fase
+  2: `storageSection` lee ya `storageOf` / `storageSlotsOf` y `targetsSection`, `hasStorage`; el JSON y su test, tal
+  cual, y pasan: el modelo nuevo da justo las unidades y los niveles congelados en la fase 1.)
 - **Fase 6**: la única que lo regenera, a propósito, revisando el diff:
   `TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u` (PowerShell:
   `$env:TORO_CARACTERIZAR = '1'; npx vitest run src/integration/storageCharacterization.test.ts -u;
@@ -269,17 +293,41 @@ U = camión muelle oeste: amarillo ■ + caja amarillo ■ / ✚
   20 fps (F / V en las dos estanterías, marcha atrás del camión C). El render construye los tres camiones sin que se
   toquen (0,2 entre los accesos de T y C) y las dos estanterías.
 
-## Huecos para las fases siguientes (encontrados en la fase 1)
+## Fase 2: lo entregado (2026-09-30)
 
-El código de hoy aguanta el nivel de prueba sin cambios: varios camiones, norte y oeste a la vez (`doorWalls`,
-`dockWalls`), una planta compartida entre dos puertas, una estantería de 2 alturas. Nada que arreglar en la fase 1.
-Queda anotado:
-1. **Letras canónicas**: tres camiones se escriben T, C, U, no T, U, V (`TRUCK_CHARS = 'TCUVW…'`, después de las
-   letras de las estanterías; con tres estanterías, C, U, V). Cualquier letra se lee; solo cambia cuál escribe
-   `levels:fmt`. Decidir en la fase 2 (`chars` por aspecto); cambiarlo reescribe los niveles con 2 camiones o más (hoy
-   ninguno del juego: solo el nivel de prueba y tests como el de `asciiLevel.docks.test.ts`, «T C»).
-2. **Orden de las unidades** (regla 12): `level.storage` tiene que salir estanterías primero y luego camiones, no en el
-   orden de la leyenda mezclado (un `.level` no canónico puede escribir el camión antes).
+- **Datos**: `LevelData.storage?: LevelStorage[]` es la única fuente del almacenaje en los datos del nivel (en lugar de
+  `racks?` / `trucks?`, en su sitio: justo después de `shelves`). Los tipos de «Modelo», en `core/types.ts`.
+- **core**: `core/storage.ts` y `core/storage.test.ts` (la tabla, el orden, `storageOf` / `hasStorage`, la geometría y
+  las listas aplanadas, probadas con un nivel sintético de cuatro estanterías, los cuatro frentes, y dos camiones, los
+  dos muros; las vistas y `core/sorting` contra él). `core/racks` y `core/docks`: sus funciones de nivel, vistas de
+  `level.storage`. `core/sorting`: desde `storageSlotsOf`.
+- **data**: `asciiLevel.ts` (una sola lectura de unidades, `checkRun` por acceso, las letras y los ids por la tabla) y
+  `validateLevel.ts` (las dos formas de entrada, reglas por fila y por acceso); `src/data/levelStorage.test.ts`.
+- **Lecturas directas de `level.racks` / `level.trucks`** fuera de core y data: solo dos (`GameState`, `dockWalls`;
+  `LevelView`, las estanterías), ahora `trucksOf` / `racksOf`; en `scripts/` y `dev/`, ninguna.
+- **Tests** adaptados a mano, sin cambiar nada de lo que comprueban: cada lectura de `level.racks` / `level.trucks`,
+  por `racksOf` / `trucksOf` (también dos líneas de `storageFixture.test.ts`); los niveles escritos a mano con
+  `racks:` / `trucks:`, con `storage` (los tests de core/racks, core/docks, `collision.test.ts` y el `NORTH_LEVEL` de
+  `asciiLevel.docks.test.ts`); el orden de claves, `storage`. Los niveles JSON con `racks` / `trucks` (`makeLevel`, los
+  tests de validateLevel) siguen igual.
+- **Decidido**: las letras canónicas no cambian («Huecos», 1); «libre» se escribe `null` en `storage` (`{}` también se
+  lee: la forma antigua) y las vistas lo devuelven `{}`; un JSON trae `storage` o `racks` / `trucks`, nunca los dos.
+- **Medido**: como en la fase 1. 1111 tests (los 1091 de antes y 20 nuevos), dos veces; `npm run levels`, la misma
+  tabla (solo cambian los ms), Benchmark OK 8/8, 14 movimientos, repartos 1, callejones 0 (60); `levels:fmt`, los 4
+  canónicos; los mínimos, al día.
+
+## Huecos para las fases siguientes
+
+Encontrados en la fase 1. El código de entonces aguantaba el nivel de prueba sin cambios: varios camiones, norte y oeste
+a la vez (`doorWalls`, `dockWalls`), una planta compartida entre dos puertas, una estantería de 2 alturas. Quedó
+anotado:
+1. **Letras canónicas** (decidido en la fase 2: se quedan): tres camiones se escriben T, C, U, no T, U, V
+   (`STORAGE_SKINS.truck.chars = 'TCUVW…'`, después de las letras de las estanterías; con tres estanterías, C, U, V).
+   Cualquier letra se lee; solo cambia cuál escribe `levels:fmt`, y así la forma canónica de todos los niveles sigue
+   igual (el nivel de prueba, «T C» en `asciiLevel.docks.test.ts`).
+2. **Orden de las unidades** (regla 12; hecho en la fase 2): `level.storage` sale estanterías primero y luego camiones
+   aunque un `.level` no canónico escriba antes el camión (`asciiLevel` lee aspecto a aspecto, `validateLevel` ordena
+   un `storage` dado a mano; lo prueba `levelStorage.test.ts`).
 3. **Camión sin «libre» por todas partes** (fase 6): `TruckCue` nunca null, `TruckSlotState.accepts` nunca null, el
    cartel pide pista a cada nivel (`LevelView.buildTrucks` → `markOf(cue)`), `Game.matchOf` → `matchKind(accepts)`,
    `zoneMatchKinds`, `validateLevel` («must ask for something») y la gramática («no hay niveles libre»).
@@ -294,14 +342,39 @@ Queda anotado:
 7. **`callejones`** no sirve de objetivo `dificultad:` mientras la búsqueda no recorra todos los estados (sale «≥ 0»):
    el Benchmark y el nivel de prueba lo comprueban en su test con `deadEnds`.
 
+Encontrados en la fase 2:
+8. **Vistas derivadas en cada llamada**: `racksOf` / `trucksOf` / `slotsOf` / `truckSlotsOf` / `truckColumnsOf` crean
+   sus objetos cada vez. Hoy da igual (solo se llaman al construir `GameState`, `LevelGrid`, `CollisionWorld`,
+   `LevelView` y el solver; nada por frame), pero la fase 3 debería leer `storageColumnsOf` / `storageSlotsOf` una vez.
+9. **Un «libre» en un camión, a medias** (fase 6): `trucksOf` lo da como `{}`, una pista que no pide nada, y de ahí
+   `truckSlotsOf` → `TruckSlotState.accepts` = `{}` (con `cueFits`, encaja cualquier caja) y el cartel pediría una
+   pista vacía; `targetsOf` y `zoneMatchKinds` ya lo saltan (null). Antes de abrir «libre» en el camión, sus
+   consumidores tienen que pasar a `storageSlotsOf` (null = «libre»).
+10. **Objetivos con la forma de antes** (fase 3): `LevelTarget.kind` `'slot'` / `'truck'`, su `index` dentro de su
+    aspecto, y `LevelDestinies.slots` / `.trucks`. Mejor un solo índice en `storageSlotsOf` (lo leen `GameState`, el
+    solver, las métricas y la caracterización).
+11. **Mensajes con nombres de aspecto**: `validateLevel` nombra `racks[i]` / `trucks[i]` y varios textos siguen siendo
+    de estantería o de camión (`a level with storage racks or trucks needs one box per target (…)`, `a level needs at
+    least one zone or rack slot with a cue`, `…in a level with storage racks floor stacks only park boxes`, `…is a
+    wall, a shelf, a plant or another rack`); «must ask for something» va por el aspecto `truck` hasta la fase 6. Con dos
+    aspectos basta; un tercero trae sus palabras (`SKIN_WORDS`, `UNIT_WORDS`) y, si hace falta, sus casos en
+    `explainValidation`.
+12. **Gramática por aspecto**: `RACK_WORDS` / `TRUCK_WORDS` (qué es un nivel, si vale «libre»): la fase 6 abre `libre`
+    en el camión.
+13. **`DockRail.truckIndex`**: indexa las unidades con puerta (hoy, los camiones); en las fases 3 / 5, por id de unidad.
+14. **`STORAGE_SKINS.fillToMax` y `.sound`**, declarados y sin leer hasta las fases 6 y 5; `support` y `access` los
+    lee ya la validación.
+15. **`usesTargetRules`** (core/docks) repite `hasStorage`: sus llamadas (`GameState`, `LevelView`, métricas, solver)
+    cambian en sus fases; la fase 7 lo quita.
+
 ## Fases
 
 Cada fase la hace un agente en su copia aparte, desde el commit anterior; se verifica y se trae a `feat/almacenaje`.
 Base: `1142b68` (lo verificado de `feat/pulido-benchmark`).
 
 1. **Diseño y red de seguridad** — hecho: este documento, la caracterización y el nivel de prueba con sus tests.
-2. **Modelo común en core y datos** — pendiente: `core/storage.ts`, `level.storage`, objetivos y destinos desde ahí;
-   `racksOf` / `trucksOf` como envoltorios; los ids no cambian.
+2. **Modelo común en core y datos** — hecho («Fase 2: lo entregado»): `core/storage.ts`, `level.storage`, objetivos y
+   destinos desde ahí; `racksOf` / `trucksOf` como vistas; los ids no cambian.
 3. **Lógica, colisión y estado** — pendiente: un enganche, un paso, un camino de coger / dejar, `refreshColumn` por
    soporte, `snapshot.storageSlots`, `box.slotId`; `autoForks` temporal en el camión.
 4. **Solver, métricas, informe y piloto** — pendiente: una tabla de posiciones, `lockedAt` / `validDrop` /

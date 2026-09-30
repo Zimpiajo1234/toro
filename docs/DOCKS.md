@@ -157,7 +157,8 @@ valores por defecto): los tests de la gramática lo usan para no depender de la 
 
 ## Datos (`src/core/types.ts`)
 
-- `LevelData.trucks?: LevelTruck[]` (ausente sin camiones; en `validateLevel`, justo después de `racks`).
+- Desde la fase 2 de docs/STORAGE.md, los camiones son unidades `truck` de `LevelData.storage` (después de las
+  estanterías) y se leen con `trucksOf(level)`: `LevelTruck[]` (vacío sin camiones).
   `LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: `wall` = `'north' | 'west'` (`WallSide`); (x, z) es la
   primera **casilla de puerta** (muelle norte: `z = 0`, la más al oeste; oeste: `x = 0`, la más al norte); `w` = casillas
   de puerta = columnas; `columns[col][nivel]`, nivel 0 = sobre la plataforma; `TruckCue = ZoneCriteria` (color y / o

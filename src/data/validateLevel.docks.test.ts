@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
+import { trucksOf } from '../core/docks';
 import { LevelFormatError, parseLevel } from './asciiLevel';
 import { validateLevel } from './validateLevel';
 
@@ -61,12 +62,12 @@ const fails = (raw: Raw) => {
 };
 
 describe('validateLevel: trucks', () => {
-  it('fills defaults (id t1, w = columns) and keeps `trucks` right after `racks`; zones are optional with a truck', () => {
+  it('fills defaults (id t1, w = columns) and keeps `storage` right after `shelves`; zones are optional with a truck', () => {
     const level = validateLevel(base(), 'x');
-    expect(level.trucks).toEqual([
+    expect(trucksOf(level)).toEqual([
       { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] },
     ]);
-    expect(Object.keys(level).indexOf('trucks')).toBe(Object.keys(level).indexOf('shelves') + 1);
+    expect(Object.keys(level).indexOf('storage')).toBe(Object.keys(level).indexOf('shelves') + 1);
     expect(level.zones).toEqual([]);
     // A column of 2 levels loads like a floor stack: without `limit`, the level stacks up to the global maximum.
     const raw = base();
@@ -387,9 +388,9 @@ describe('parseLevel: truck validation errors in Spanish, where to fix them', ()
       column: 8,
       reason: expect.stringMatching(/^el camión «T» tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas/),
     });
-    expect(parseLevel(text(replace(7, '0 TTp....')), 'x.level').level.trucks![0]).toMatchObject({ x: 0, z: 0, w: 2 });
+    expect(trucksOf(parseLevel(text(replace(7, '0 TTp....')), 'x.level').level)[0]).toMatchObject({ x: 0, z: 0, w: 2 });
     const right = replace(7, '0 ....pTT').map((l, i) => (i === 3 ? 'ventanas: oeste 1-2' : l));
-    expect(parseLevel(text(right), 'x.level').level.trucks![0]).toMatchObject({ x: 5, z: 0, w: 2 });
+    expect(trucksOf(parseLevel(text(right), 'x.level').level)[0]).toMatchObject({ x: 5, z: 0, w: 2 });
   });
 
   it('beside the door: a missing obstacle, two doors side by side and a rack facing the door point at the cell to fix', () => {

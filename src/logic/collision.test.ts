@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DOCK_RAIL, dockRailsOf } from '../core/docks';
-import type { BoxState, LevelData } from '../core/types';
+import type { BoxState, LevelData, LevelStorage, LevelTruck } from '../core/types';
 import { LEVELS } from '../data/levels';
 import {
   BOX_SETTLE_SPEED,
@@ -215,8 +215,8 @@ describe('CollisionWorld rack column closing on the load', () => {
 });
 
 describe('CollisionWorld dock doors (docs/DOCKS.md)', () => {
-  /** A 6×4 room; `trucks` in its north / west walls. */
-  const room = (trucks: LevelData['trucks']): LevelData => ({
+  /** A 6×4 room; `trucks` in its north / west walls (its storage units). */
+  const room = (trucks: readonly LevelTruck[] | undefined): LevelData => ({
     id: 'x',
     order: 1,
     name: 'x',
@@ -225,7 +225,9 @@ describe('CollisionWorld dock doors (docs/DOCKS.md)', () => {
     boxes: [],
     zones: [],
     shelves: [],
-    ...(trucks ? { trucks } : {}),
+    ...(trucks
+      ? { storage: trucks.map((t): LevelStorage => ({ id: t.id, skin: 'truck', x: t.x, z: t.z, w: t.w, access: { kind: 'door', wall: t.wall }, columns: t.columns })) }
+      : {}),
     decor: { plants: [], windows: [] },
     theme: 'default',
   });

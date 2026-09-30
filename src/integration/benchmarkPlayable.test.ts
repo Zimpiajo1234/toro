@@ -8,7 +8,7 @@
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
  */
 import { describe, expect, it } from 'vitest';
-import { slotsOf } from '../core/racks';
+import { racksOf, slotsOf } from '../core/racks';
 import { truckSlotsOf } from '../core/docks';
 import { cueFits, isDestined } from '../core/sorting';
 import type { GameEvent } from '../core/types';
@@ -44,7 +44,7 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
     // Both racks loaded, the top slots too; boxes taken out of slots, the one parked high in the back rack included.
     const inSlots = drops(out.events).filter((d) => d.slotId !== undefined);
-    for (const rack of level.racks!) expect(inSlots.some((d) => d.slotId!.startsWith(`${rack.id}:`)), rack.id).toBe(true);
+    for (const rack of racksOf(level)) expect(inSlots.some((d) => d.slotId!.startsWith(`${rack.id}:`)), rack.id).toBe(true);
     expect(inSlots.some((d) => d.level === 2)).toBe(true);
     expect(inSlots.every((d) => d.zoneId === null)).toBe(true);
     const fromSlots = picks(out.events).filter((p) => p.fromSlotId !== undefined);

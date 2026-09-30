@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, the doors' guard rails `dockRailsOf`, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `storage.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`, from `storageSlotsOf`); `storage.ts` = the shared storage model (docs/STORAGE.md: `STORAGE_SKINS`, one row per skin; `storageOf`, `hasStorage` = the gate of every «target rule»; one geometry for every unit: `cellOf`, `frontOf`, `facingOf`, `storageColumnsOf`, `storageSlotsOf`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (bed cells beyond the wall, door cells, the doors' guard rails `dockRailsOf`, truck slot ids). Their level helpers (`racksOf`, `hasRacks`, `slotsOf`; `trucksOf`, `hasTrucks`, `truckSlotsOf`, `truckColumnsOf`, `usesTargetRules` = `hasStorage`) are views of `level.storage` until phase 7 of docs/STORAGE.md |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -145,7 +145,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   A level uses symbols iff a box or zone names one (`usesSymbols`); validateLevel then requires stackLimit 1 (no
   recipes, no stacked starts), one box per zone and a complete sorting (`assignBoxes`, augmenting paths). Events keep
   their shape (`boxDropped.correct` = accepted); Game passes the zone's `matchKind` to audio with each event.
-- **Storage racks** (spec: `docs/RACKS.md`; no level of the game uses them yet, only the «Benchmark» special level). `LevelData.racks?` (`LevelRack { id, x, z, w, facing,
+- **Storage units** (spec: `docs/STORAGE.md`, phase 2 of 7): racks and trucks are skins of one unit,
+  `LevelData.storage?: LevelStorage[]` (`{ id, skin, x, z, w, access, columns }`, racks first, then trucks; the one
+  source of storage in level data; a JSON level may still list `racks` / `trucks`, which validateLevel turns into it).
+  Logic, solver and render still read the per-skin views below (`racksOf`, `trucksOf`) until phases 3–5.
+- **Storage racks** (spec: `docs/RACKS.md`; no level of the game uses them yet, only the «Benchmark» special level). The
+  `rack` units of `LevelData.storage`, read as `racksOf(level)` (`LevelRack { id, x, z, w, facing,
   columns: RackSlot[][] }`, slots bottom → top, cue `{ color?, symbol? }`, none = «libre»; a box starting in a slot is a
   `LevelBox` with `level`). Rack cells are solid for the body and for floor boxes; loading / unloading only from the
   front (`facing`), the cues are visible from both faces. Targets = zones + slots with a cue; validateLevel needs one box
@@ -162,8 +167,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   is locked (`BoxState.locked`; never a pick, drop or stack target, picking at it gives the gentle `actionIdle`), and
   `boxDropped.wrongTarget` is true when a box lands on a floor zone or a cued slot that is not its destiny («libre»
   slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`. Every «rack level»
-  rule here also holds in a level with trucks (below), with or without racks: the gate is `usesTargetRules(level)`.
-- **Loading docks** (spec: `docs/DOCKS.md`, 2026-09-30; only the «Benchmark» has one). `LevelData.trucks?`
+  rule here also holds in a level with trucks (below), with or without racks: the gate is `hasStorage(level)` (its old
+  name `usesTargetRules`).
+- **Loading docks** (spec: `docs/DOCKS.md`, 2026-09-30; only the «Benchmark» has one). The `truck` units of
+  `LevelData.storage`, read as `trucksOf(level)`
   (`LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: a truck parked OUTSIDE a door of the north or west wall,
   its rear against the wall's outer face; (x, z) and `w` are its door cells, a straight run of plain floor cells along
   that wall, row z = 0 or column x = 0, each with one bed column just beyond the wall, outside the map (`core/docks`

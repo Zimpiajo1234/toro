@@ -22,6 +22,9 @@ puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark
 muelle de carga (`docs/DOCKS.md`).
 
 - Parser y renderer: `src/data/asciiLevel.ts` (texto → `validateLevel` → `LevelData`, y `LevelData` → texto canónico).
+  Las estanterías almacenables y los camiones van juntos en `LevelData.storage` (docs/STORAGE.md: estanterías primero,
+  luego camiones, cada grupo en el orden de la leyenda); un `*.json` lo trae en `storage` o, como antes, en `racks` /
+  `trucks`.
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
 - Métricas: `src/data/levels/metrics.ts` · Informe: `src/data/levels/report.ts` · Objetivos: `src/data/difficulty.ts`.
 

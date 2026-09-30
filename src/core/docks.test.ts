@@ -15,7 +15,7 @@ import {
   usesTargetRules,
 } from './docks';
 import { levelDestinies, targetsOf, usesSymbols, zoneMatchKinds } from './sorting';
-import { cellToWorld, forwardOf, type LevelData, type LevelTruck } from './types';
+import { cellToWorld, forwardOf, type LevelData, type LevelStorage, type LevelTruck } from './types';
 import { columnFrame } from './racks';
 
 /*
@@ -27,14 +27,21 @@ import { columnFrame } from './racks';
 const NORTH: LevelTruck = { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] };
 const WEST: LevelTruck = { id: 't2', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'mint' }], [{ symbol: 'square' }]] };
 
-const level: Pick<LevelData, 'boxes' | 'zones' | 'trucks'> = {
+/** A level whose storage is these trucks (level data keeps them as LevelStorage; core/docks trucksOf gives them back). */
+const withTrucks = (...trucks: LevelTruck[]): Pick<LevelData, 'storage'> => ({
+  storage: trucks.map(
+    (truck): LevelStorage => ({ id: truck.id, skin: 'truck', x: truck.x, z: truck.z, w: truck.w, access: { kind: 'door', wall: truck.wall }, columns: truck.columns.map((levels) => levels.map((cue) => ({ ...cue }))) }),
+  ),
+});
+
+const level: Pick<LevelData, 'boxes' | 'zones' | 'storage'> = {
   boxes: [
     { id: 'b1', color: 'blue', symbol: 'triangle', x: 1, z: 2 },
     { id: 'b2', color: 'coral', symbol: 'diamond', x: 5, z: 2 },
     { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 0 },
   ],
   zones: [],
-  trucks: [NORTH],
+  ...withTrucks(NORTH),
 };
 
 describe('core/docks geometry', () => {
@@ -77,7 +84,7 @@ describe('core/docks geometry', () => {
   });
 
   it('flattens columns and slots truck by truck, column by column, bottom → top, with ids «truck:column:level»', () => {
-    const both = { trucks: [NORTH, WEST] };
+    const both = withTrucks(NORTH, WEST);
     expect(truckColumnsOf(both).map((c) => [c.truck.id, c.column, c.cues.length, c.firstSlot])).toEqual([
       ['t1', 0, 2, 0],
       ['t1', 1, 1, 2],
@@ -97,28 +104,28 @@ describe('core/docks geometry', () => {
     const size = { width: 7, depth: 5 };
     const T = DOCK_RAIL.thickness;
     // A north door over x 2‥4: its side cells (1,0) and (4,0), its rails just inside the ends of the run.
-    expect(dockRailsOf({ trucks: [NORTH], size })).toEqual([
+    expect(dockRailsOf({ ...withTrucks(NORTH), size })).toEqual([
       { truckIndex: 0, wall: 'north', end: 0, side: { x: 1, z: 0 }, line: 2 + DOOR_JAMB, outer: 2 + DOOR_JAMB - T, from: 0, to: 1 },
       { truckIndex: 0, wall: 'north', end: 1, side: { x: 4, z: 0 }, line: 4 - DOOR_JAMB, outer: 4 - DOOR_JAMB + T, from: 0, to: 1 },
     ]);
     // A west door over z 1‥3: along column 0, from the west wall's inner face (x = 0) one cell in.
-    expect(dockRailsOf({ trucks: [NORTH, WEST], size }).slice(2)).toEqual([
+    expect(dockRailsOf({ ...withTrucks(NORTH, WEST), size }).slice(2)).toEqual([
       { truckIndex: 1, wall: 'west', end: 0, side: { x: 0, z: 0 }, line: 1 + DOOR_JAMB, outer: 1 + DOOR_JAMB - T, from: 0, to: 1 },
       { truckIndex: 1, wall: 'west', end: 1, side: { x: 0, z: 3 }, line: 3 - DOOR_JAMB, outer: 3 - DOOR_JAMB + T, from: 0, to: 1 },
     ]);
     // A run that reaches a corner of the room has no side cell (and no rail) at that end.
-    expect(dockRailsOf({ trucks: [{ ...NORTH, x: 0 }], size }).map((r) => [r.end, r.side])).toEqual([[1, { x: 2, z: 0 }]]);
-    expect(dockRailsOf({ trucks: [{ ...NORTH, x: 5 }], size }).map((r) => [r.end, r.side])).toEqual([[0, { x: 4, z: 0 }]]);
-    expect(dockRailsOf({ trucks: [{ ...WEST, z: 0 }], size }).map((r) => r.end)).toEqual([1]);
-    expect(dockRailsOf({ trucks: [{ ...WEST, z: 3 }], size }).map((r) => r.end)).toEqual([0]);
+    expect(dockRailsOf({ ...withTrucks({ ...NORTH, x: 0 }), size }).map((r) => [r.end, r.side])).toEqual([[1, { x: 2, z: 0 }]]);
+    expect(dockRailsOf({ ...withTrucks({ ...NORTH, x: 5 }), size }).map((r) => [r.end, r.side])).toEqual([[0, { x: 4, z: 0 }]]);
+    expect(dockRailsOf({ ...withTrucks({ ...WEST, z: 0 }), size }).map((r) => r.end)).toEqual([1]);
+    expect(dockRailsOf({ ...withTrucks({ ...WEST, z: 3 }), size }).map((r) => r.end)).toEqual([0]);
     expect(dockRailsOf({ size })).toEqual([]);
   });
 
   it('the target rules apply with racks or trucks, never without both', () => {
     expect(usesTargetRules({})).toBe(false);
-    expect(usesTargetRules({ racks: [], trucks: [] })).toBe(false);
-    expect(usesTargetRules({ trucks: [NORTH] })).toBe(true);
-    expect(usesTargetRules({ racks: [{ id: 'r1', x: 0, z: 0, w: 1, facing: 'south', columns: [[{}]] }] })).toBe(true);
+    expect(usesTargetRules({ storage: [] })).toBe(false);
+    expect(usesTargetRules(withTrucks(NORTH))).toBe(true);
+    expect(usesTargetRules({ storage: [{ id: 'r1', skin: 'rack', x: 0, z: 0, w: 1, access: { kind: 'front', facing: 'south' }, columns: [[null]] }] })).toBe(true);
   });
 });
 
@@ -139,14 +146,14 @@ describe('truck levels as targets (core/sorting)', () => {
         { color: 'coral', symbol: 'diamond' },
       ],
     });
-    expect(levelDestinies({ ...level, trucks: undefined })).toBeNull();
+    expect(levelDestinies({ ...level, storage: undefined })).toBeNull();
   });
 
   it('truck cues count for symbols and match kinds (by truck slot id)', () => {
     const plain = { boxes: [{ id: 'b', color: 'blue' as const, x: 0, z: 0 }], zones: [] };
-    expect(usesSymbols({ ...plain, trucks: [{ ...NORTH, columns: [[{ color: 'blue' }]] }] })).toBe(false);
-    expect(usesSymbols({ ...plain, trucks: [NORTH] })).toBe(true);
-    const kinds = zoneMatchKinds({ zones: [], trucks: [NORTH] });
+    expect(usesSymbols({ ...plain, ...withTrucks({ ...NORTH, columns: [[{ color: 'blue' }]] }) })).toBe(false);
+    expect(usesSymbols({ ...plain, ...withTrucks(NORTH) })).toBe(true);
+    const kinds = zoneMatchKinds({ zones: [], ...withTrucks(NORTH) });
     expect([...kinds]).toEqual([
       ['t1:0:0', 'color'],
       ['t1:0:1', 'symbol'],

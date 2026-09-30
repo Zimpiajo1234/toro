@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { runsAlongX, frontCellOf, rackCellOf, slotsOf, FACING_X, FACING_Z } from '../../core/racks';
-import { dockRailsOf, truckColumnsOf, truckSlotsOf } from '../../core/docks';
+import { runsAlongX, frontCellOf, rackCellOf, racksOf, slotsOf, FACING_X, FACING_Z } from '../../core/racks';
+import { dockRailsOf, truckColumnsOf, truckSlotsOf, trucksOf } from '../../core/docks';
 import { assignmentsOf, criteriaOf, cueOf, levelDestinies, matchKind, meets, sameKind, sortableOf, targetsOf, type Sortable } from '../../core/sorting';
 import { MAX_TRUCK_COLUMNS, MAX_TRUCK_LEVELS, type LevelData } from '../../core/types';
 import { parseLevel, renderLevel } from '../asciiLevel';
@@ -85,7 +85,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
   });
 
   it('has one loading dock: a truck of 2 bed columns at its door, one column 2 levels high, clear of the windows', () => {
-    const trucks = level.trucks!;
+    const trucks = trucksOf(level);
     expect(trucks).toHaveLength(1);
     const [truck] = trucks;
     expect(truck.columns).toHaveLength(2);
@@ -106,7 +106,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
   });
 
   it('has two racks of 3 slots per column, one front toward the default camera and one back to it, a wooden shelf one cell past an end', () => {
-    const racks = level.racks!;
+    const racks = racksOf(level);
     expect(racks).toHaveLength(2);
     for (const rack of racks) for (const column of rack.columns) expect(column).toHaveLength(3);
     // The default camera sits toward +x / +z: a front facing south or east looks at it, north or west turns its back.
@@ -124,7 +124,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
   });
 
   it('the truck waits outside: its bed columns lie beyond the north wall, its door cells (row 0) are floor and start empty', () => {
-    const [truck] = level.trucks!;
+    const [truck] = trucksOf(level);
     expect(truck).toMatchObject({ wall: 'north', x: 1, z: 0, w: 2 });
     for (const bed of beds) {
       const door = bed.front;
@@ -150,7 +150,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
 
   it('every column can be loaded: its front (door) cell and the cell behind it are floor, and no zone stands there', () => {
     const columns = [
-      ...level.racks!.flatMap((rack) => rack.columns.map((_, column) => ({ id: `${rack.id}:${column}`, front: frontCellOf(rack, column), facing: rack.facing }))),
+      ...racksOf(level).flatMap((rack) => rack.columns.map((_, column) => ({ id: `${rack.id}:${column}`, front: frontCellOf(rack, column), facing: rack.facing }))),
       ...beds.map((bed) => ({ id: `${bed.truck.id}:${bed.column}`, front: bed.front, facing: bed.facing })),
     ];
     for (const { id, front, facing } of columns) {

@@ -1,9 +1,10 @@
 /**
  * Storage rack geometry (docs/RACKS.md), shared by validation, logic, the level solver and render: which cell each
  * column occupies, where its front is, which way is "into the rack", and slot ids. Pure, no allocation in the helpers
- * that take an `out` argument.
+ * that take an `out` argument. core/storage builds the geometry of every storage unit on it (docs/STORAGE.md); the
+ * level helpers here (`racksOf`, `hasRacks`, `slotsOf`) are views of `level.storage` until phase 7.
  */
-import type { CellPos, Facing, LevelData, LevelRack, Vec2 } from './types';
+import type { CellPos, Facing, LevelData, LevelRack, LevelStorage, StorageAccess, Vec2 } from './types';
 
 /** Outward unit vector of each facing (from the rack cell toward its front cell). North is −z, west is −x. */
 export const FACING_X: Readonly<Record<Facing, number>> = { north: 0, east: 1, south: 0, west: -1 };
@@ -35,14 +36,31 @@ export function slotIdOf(rackId: string, column: number, level: number): string 
   return `${rackId}:${column}:${level}`;
 }
 
-/** A level's racks (none → an empty list). */
-export function racksOf(level: Pick<LevelData, 'racks'>): readonly LevelRack[] {
-  return level.racks ?? [];
+/** A storage unit of skin `rack` (always front access: validateLevel checks it). */
+function isRack(unit: LevelStorage): unit is LevelStorage & { access: Extract<StorageAccess, { kind: 'front' }> } {
+  return unit.skin === 'rack' && unit.access.kind === 'front';
 }
 
-/** The level has at least one storage rack (the rules of docs/RACKS.md apply). */
-export function hasRacks(level: Pick<LevelData, 'racks'>): boolean {
-  return (level.racks?.length ?? 0) > 0;
+/**
+ * A level's racks (none → an empty list): its storage units of skin `rack`, in storage order, as LevelRack (a «libre»
+ * slot is `{}`). A view of `level.storage` until phase 7 (docs/STORAGE.md), derived anew on every call.
+ */
+export function racksOf(level: Pick<LevelData, 'storage'>): readonly LevelRack[] {
+  const out: LevelRack[] = [];
+  for (const unit of level.storage ?? []) {
+    if (!isRack(unit)) continue;
+    const columns = unit.columns.map((slots) => slots.map((cue) => (cue === null ? {} : { ...cue })));
+    out.push({ id: unit.id, x: unit.x, z: unit.z, w: unit.w, facing: unit.access.facing, columns });
+  }
+  return out;
+}
+
+/**
+ * The level has at least one storage rack (docs/RACKS.md; the F / V row and fork steps key off it until phase 6). A
+ * view of `level.storage` until phase 7.
+ */
+export function hasRacks(level: Pick<LevelData, 'storage'>): boolean {
+  return (level.storage ?? []).some(isRack);
 }
 
 /** One slot of a level, flattened: every rack, column by column, bottom → top (the order of GameSnapshot.slots). */
@@ -56,8 +74,8 @@ export interface SlotRef {
   front: CellPos;
 }
 
-/** Every slot of a level in snapshot order. */
-export function slotsOf(level: Pick<LevelData, 'racks'>): SlotRef[] {
+/** Every slot of a level in snapshot order (a view of `level.storage` until phase 7: core/storage `storageSlotsOf`). */
+export function slotsOf(level: Pick<LevelData, 'storage'>): SlotRef[] {
   const out: SlotRef[] = [];
   racksOf(level).forEach((rack, rackIndex) => {
     rack.columns.forEach((slots, column) => {
