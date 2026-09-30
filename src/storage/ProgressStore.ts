@@ -3,6 +3,7 @@ import {
   createEmptyProgress,
   insertTime,
   isValidIndex,
+  isValidMoves,
   isValidTime,
   parseProgress,
   serializeProgress,
@@ -23,6 +24,15 @@ export interface RecordResult {
   rank: number;
 }
 
+/** What `recordMoves` reports: the level's fewest moves after this attempt. */
+export interface MovesRecordResult {
+  /** Fewest moves now on record (null only when nothing valid was ever recorded). */
+  bestMoves: number | null;
+  /** Strictly fewer moves than the previous record, or the first record. */
+  isNewBest: boolean;
+  previousBestMoves: number | null;
+}
+
 /** Ids of the game's levels in play order. */
 function defaultLevelIds(): string[] {
   return LEVELS.map((level) => level.id);
@@ -38,7 +48,7 @@ function browserStorage(): Storage | null {
 }
 
 /**
- * Local persistence (best times, local ranking, unlocked levels, settings).
+ * Local persistence (best times, local ranking, fewest moves, unlocked levels, settings).
  * Must never throw: storage may be unavailable (private mode) — fall back to memory.
  *
  * Everything lives in one versioned JSON document under `key`; every change is written through, and a failed
@@ -99,6 +109,29 @@ export class ProgressStore {
       previousBestMs,
       rank,
     };
+  }
+
+  /** Fewest box moves a level was finished in (the move counter's record), or null. */
+  getBestMoves(levelId: string): number | null {
+    this.sync();
+    return this.data.bestMoves.get(levelId) ?? null;
+  }
+
+  /**
+   * Records the move count of a finished attempt; it replaces the record only when strictly fewer. Invalid counts
+   * (not a non-negative integer) are ignored. A move record is never progress: only times (`record`) unlock levels,
+   * so Game records moves exactly where it records times (never for the Benchmark or a level only test mode opened).
+   */
+  recordMoves(levelId: string, moves: number): MovesRecordResult {
+    this.sync();
+    const previousBestMoves = this.data.bestMoves.get(levelId) ?? null;
+    if (!isValidMoves(moves)) return { bestMoves: previousBestMoves, isNewBest: false, previousBestMoves };
+    const isNewBest = previousBestMoves === null || moves < previousBestMoves;
+    if (isNewBest) {
+      this.data.bestMoves.set(levelId, moves);
+      this.save();
+    }
+    return { bestMoves: isNewBest ? moves : previousBestMoves, isNewBest, previousBestMoves };
   }
 
   /** Ascending list of the best times (ms) for a level, max 5. */
@@ -176,6 +209,10 @@ export class ProgressStore {
     }
     if (typeof patch.showTimer === 'boolean' && patch.showTimer !== settings.showTimer) {
       settings.showTimer = patch.showTimer;
+      changed = true;
+    }
+    if (typeof patch.showMoves === 'boolean' && patch.showMoves !== settings.showMoves) {
+      settings.showMoves = patch.showMoves;
       changed = true;
     }
     if (typeof patch.testMode === 'boolean' && patch.testMode !== settings.testMode) {

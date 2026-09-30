@@ -7,6 +7,9 @@
  *   npm run levels -- 3 --callejones 2000   explore more states in the dead-end check (default 60 per level)
  *   npm run levels:fmt               rewrite every src/data/levels/*.level and especiales/*.level in canonical form
  *   npm run levels:fmt -- --check    only report the files that are not canonical (exit code 1)
+ *   npm run levels -- --minimos      recompute src/data/levelMinimums.json: every level's fewest box moves, read by the
+ *                                    game's move counter (src/data/levels/minimums.ts); with --estados N, a bigger
+ *                                    budget (kept in the file); with --check, only report whether it is stale (exit 1)
  *
  * The TypeScript sources are loaded through Vite's SSR module loader (TS, extensionless imports, import.meta.glob and
  * ?raw work exactly as in the game). No port, no HMR, no file watcher and its own cache dir, so it never disturbs a
@@ -21,12 +24,13 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const argv = process.argv.slice(2);
 const fmt = argv.includes('--fmt');
 const check = argv.includes('--check');
+const minimums = argv.includes('--minimos');
 let maxWork;
 let deadEndStates;
 const names = [];
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i];
-  if (arg === '--fmt' || arg === '--check') continue;
+  if (arg === '--fmt' || arg === '--check' || arg === '--minimos') continue;
   if (arg === '--estados') {
     maxWork = Number(argv[++i]);
     if (!Number.isInteger(maxWork) || maxWork < 1) fail('--estados necesita un número entero, p. ej. --estados 2000000');
@@ -37,9 +41,11 @@ for (let i = 0; i < argv.length; i++) {
     if (!Number.isInteger(deadEndStates) || deadEndStates < 1) fail('--callejones necesita un número entero, p. ej. --callejones 2000');
     continue;
   }
-  if (arg.startsWith('--')) fail(`opción desconocida ${arg} (usa --estados N, --callejones N, o --check con levels:fmt)`);
+  if (arg.startsWith('--')) fail(`opción desconocida ${arg} (usa --estados N, --callejones N, --minimos, o --check con levels:fmt)`);
   names.push(arg);
 }
+if (minimums && fmt) fail('--minimos y --fmt van por separado');
+if (minimums && names.length > 0) fail('--minimos recalcula todos los niveles: no nombres ninguno');
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -86,6 +92,44 @@ try {
         changed.length === 0
           ? `${files.length} archivos .level: ya estaban en forma canónica\n`
           : `Reescritos en forma canónica:\n${changed.map((f) => `  ${f}\n`).join('')}`,
+      );
+    }
+  } else if (minimums) {
+    const { LEVEL_SOURCES, SPECIAL_LEVEL_SOURCES } = await server.ssrLoadModule('/src/data/levels/index.ts');
+    const { DEFAULT_MINIMUM_WORK, MINIMUMS_PATH, computeMinimums, formatMinimums, minimumsChanges } = await server.ssrLoadModule(
+      '/src/data/levels/minimumsBuild.ts',
+    );
+    const file = path.join(root, MINIMUMS_PATH);
+    const current = await readFile(file, 'utf8').catch(() => null);
+    let stored = null;
+    try {
+      stored = current === null ? null : JSON.parse(current);
+    } catch {
+      stored = null; // unreadable: rewritten from scratch
+    }
+    // The budget sticks: the one given now, else the file's, else the solver's default.
+    const budget = maxWork ?? (Number.isInteger(stored?.maxWork) ? stored.maxWork : DEFAULT_MINIMUM_WORK);
+    const levels = [...LEVEL_SOURCES, ...SPECIAL_LEVEL_SOURCES].map((s) => s.level);
+    const fresh = computeMinimums(levels, budget);
+    // Keep the file's line endings (the checkout may have turned them into CRLF).
+    const eol = current !== null && current.includes('\r\n') ? '\r\n' : '\n';
+    const text = formatMinimums(fresh).replace(/\n/g, eol);
+    const same = current !== null && current === text;
+    const changes = minimumsChanges(stored, fresh);
+    const lines = (items) => items.map((item) => `  ${item}\n`).join('');
+    const rows = Object.entries(fresh.levels).map(([id, m]) => `${id}: ${m.exact ? `${m.moves} (exacto)` : `≥ ${m.moves} (cota inferior: sube --estados)`}`);
+    if (check) {
+      process.stdout.write(
+        same
+          ? `${MINIMUMS_PATH} al día (${rows.length} niveles, presupuesto ${budget})\n`
+          : `${MINIMUMS_PATH} desfasado (npm run levels -- --minimos lo reescribe):\n${lines(changes.length > 0 ? changes : ['formato'])}`,
+      );
+      if (!same) process.exitCode = 1;
+    } else {
+      if (!same) await writeFile(file, text, 'utf8');
+      process.stdout.write(
+        `${same ? 'Sin cambios' : 'Reescrito'}: ${MINIMUMS_PATH} (presupuesto ${budget})\n${lines(rows)}` +
+          (changes.length > 0 ? `Cambios:\n${lines(changes)}` : ''),
       );
     }
   } else {

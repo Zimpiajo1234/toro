@@ -96,6 +96,18 @@
     translate: 0 3px;
   }
 }
+/* A counted value that just grew (the move counter): it settles in from a touch above, like a box set down. */
+.ui-tick {
+  display: inline-block;
+  animation: ui-tick 420ms var(--ui-ease) backwards;
+}
+@keyframes ui-tick {
+  from {
+    opacity: 0.35;
+    translate: 0 -4px;
+    scale: 1.14;
+  }
+}
 
 /* ---------- Surfaces ------------------------------------------------------ */
 
@@ -314,8 +326,10 @@
   border-color: var(--ui-border-strong);
 }
 
-/* Hidden timer: a small quiet clock glyph on a faint disc — discreet, yet findable again (≥ 3:1). */
-.hud-timer.is-hidden {
+/* Hidden timer / move counter: a small quiet glyph (clock / box) on a faint disc — discreet, yet findable again
+   (≥ 3:1). */
+.hud-timer.is-hidden,
+.hud-moves.is-hidden {
   min-width: 0;
   padding: 0;
   color: var(--ui-text);
@@ -327,7 +341,9 @@
   backdrop-filter: none;
 }
 .hud-timer.is-hidden:hover,
-.hud-timer.is-hidden:focus-visible {
+.hud-timer.is-hidden:focus-visible,
+.hud-moves.is-hidden:hover,
+.hud-moves.is-hidden:focus-visible {
   opacity: 1;
   background: var(--ui-panel);
   border-color: var(--ui-panel-border);
@@ -335,6 +351,68 @@
 .hud-timer__icon {
   width: 17px;
   height: 17px;
+}
+
+/* Move counter: the timer's sibling (same pill, tabular numbers, hidden glyph) with a box glyph before the count and
+   the level's minimum after it, smaller and softer: "12 · mín. 10". */
+.hud-moves {
+  position: relative;
+  isolation: isolate;
+  gap: 7px;
+  min-width: 80px;
+  padding: 0 18px 0 15px;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.hud-moves__icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--ui-text-soft);
+  transition: color 400ms var(--ui-ease);
+}
+.hud-moves.is-hidden .hud-moves__icon {
+  color: inherit;
+}
+.hud-moves__value {
+  transition: opacity 400ms var(--ui-ease);
+}
+.hud-moves.is-idle .hud-moves__value {
+  opacity: 0.8;
+}
+.hud-moves__min {
+  color: var(--ui-text-soft);
+  font-size: 14px;
+}
+.hud-moves:not(.is-hidden):hover,
+.hud-moves:not(.is-hidden):focus-visible {
+  border-color: var(--ui-border-strong);
+}
+/* Finished at the minimum: a soft accent wash eases in behind the count, the edge and glyph (a sparkle) take the
+   theme's gentle accent. Never a warning tone: more moves are simply more moves. */
+.hud-moves::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--ui-accent-soft);
+  opacity: 0;
+  transition: opacity 700ms var(--ui-ease);
+}
+.hud-moves.is-minimum::before {
+  opacity: 1;
+}
+.hud-moves.is-minimum {
+  border-color: var(--ui-accent);
+}
+.hud-moves.is-minimum .hud-moves__icon {
+  width: 13px;
+  height: 13px;
+  color: var(--ui-accent-strong);
 }
 
 /* Pills sit over the scene: a panel halo keeps the focus ring readable over any box or shelf. */
@@ -787,7 +865,17 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.005em;
 }
-/* A "Modo prueba" run has no best time: its one tile keeps the usual size, centred. */
+/* The level's record under each value, small and soft ("mejor 0:38.9", "récord 11"). One tile per metric keeps the
+   stats a single row, so the card stays below the middle of the diorama. */
+.card__stat dd.card__stat-record {
+  margin: 1px 0 0;
+  color: var(--ui-text-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+/* Only one metric shown (the other display hidden, or a practice run of it): its one tile keeps the usual size,
+   centred. */
 .card__stats--single {
   grid-template-columns: minmax(0, calc(50% - 4px));
   justify-content: center;
@@ -797,22 +885,30 @@
   margin-top: 8px;
 }
 
-.card__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 0 0;
-  padding: 5px 13px 5px 10px;
-  border-radius: 999px;
-  background: var(--ui-accent-soft);
-  color: var(--ui-text);
+/* The minimum after the move count, small and soft ("12 · mín. 10"; "10 ✦ mínimo" once reached). */
+.card__stat-note {
+  margin-left: 6px;
+  color: var(--ui-text-soft);
   font-size: 13px;
   font-weight: 700;
+  letter-spacing: 0;
 }
-.card__badge-icon {
-  width: 12px;
-  height: 12px;
+.card__stat-icon {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 4px;
   color: var(--ui-accent-strong);
+}
+/* Finished at the minimum, or a new record ("✦ nuevo récord" under the value): the tile takes a soft accent wash, the
+   celebration inside the tile rather than a row of tags under it. */
+.card__stat.is-minimum,
+.card__stat.is-record {
+  background: var(--ui-accent-soft);
+}
+.card__stat.is-minimum .card__stat-note,
+.card__stat.is-record .card__stat-record {
+  color: var(--ui-text);
 }
 
 /* One row keeps the card low: the primary action leads and takes the room, "Repetir" stays quiet. */
@@ -859,6 +955,15 @@
     padding: 0 14px;
     font-size: 16px;
   }
+  .hud-moves {
+    gap: 6px;
+    min-width: 70px;
+    padding: 0 14px 0 12px;
+    font-size: 16px;
+  }
+  .hud-moves__min {
+    font-size: 13px;
+  }
   .hint {
     gap: 6px;
     padding: 8px 14px;
@@ -882,6 +987,19 @@
   }
   .notice {
     top: calc(max(var(--ui-gap), env(safe-area-inset-top, 0px)) + 52px);
+  }
+}
+
+/* Phone-width windows: level + ↺ and moves + time no longer fit one row, so the move counter steps under the time,
+   still in its corner (the corner reserves the taller band itself); the mute pill moves down past it. */
+@media (max-width: 480px) {
+  .hud__corner--end {
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .notice {
+    top: calc(max(var(--ui-gap), env(safe-area-inset-top, 0px)) + 100px);
   }
 }
 
@@ -929,8 +1047,9 @@
     margin-top: 1px;
     font-size: 20px;
   }
-  .card__badge {
-    margin-top: 8px;
+  .card__stat dd.card__stat-record {
+    margin-top: 0;
+    font-size: 12px;
   }
   .card__actions {
     margin-top: 12px;
@@ -943,7 +1062,9 @@
   }
 }
 
-/* Short windows (e.g. 800×450): stats read on one line and the card stays in the lower third. */
+/* Short windows (e.g. 800×450): each stat reads on one line (its record on a second, small one) and the card stays in
+   the lower third. The spacing is a little tighter than elsewhere so the record line costs almost no height: at
+   740×360 the card's top edge stays below the middle of the framed diorama. */
 @media (max-height: 560px) {
   .title__wordmark {
     font-size: clamp(48px, 14vh, 80px);
@@ -962,7 +1083,7 @@
     padding-bottom: max(clamp(10px, 3vh, 16px), env(safe-area-inset-bottom, 0px));
   }
   .card {
-    padding: 12px 16px 10px;
+    padding: 10px 16px 8px;
   }
   .card__eyebrow {
     font-size: 11px;
@@ -978,14 +1099,15 @@
     margin-top: 6px;
   }
   .card__stats {
-    margin-top: 8px;
+    margin-top: 6px;
   }
   .card__stat {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: center;
-    gap: 8px;
-    padding: 5px 8px;
+    gap: 0 8px;
+    padding: 4px 8px;
   }
   .card__stat dt {
     font-size: 11.5px;
@@ -994,13 +1116,14 @@
     margin: 0;
     font-size: 17px;
   }
-  .card__badge {
-    margin-top: 6px;
-    padding: 4px 12px 4px 9px;
-    font-size: 12px;
+  .card__stat dd.card__stat-record {
+    flex-basis: 100%;
+    margin: -1px 0 0;
+    font-size: 11px;
+    line-height: 1.2;
   }
   .card__actions {
-    margin-top: 8px;
+    margin-top: 6px;
   }
   .card__actions .ui-btn {
     min-height: 38px;
@@ -1055,7 +1178,8 @@
   .ui-enter {
     animation-delay: 0ms;
   }
-  .ui-swap {
+  .ui-swap,
+  .ui-tick {
     animation: none;
   }
 }

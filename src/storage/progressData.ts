@@ -10,11 +10,13 @@ export const RANKING_SIZE = 5;
 export interface Settings {
   muted: boolean;
   showTimer: boolean;
+  /** The optional move counter (HUD pill + the card's moves), like the timer. Additive field, default shown. */
+  showMoves: boolean;
   /** "Modo prueba": every level can be started from the title (unlock progress itself is never changed). */
   testMode: boolean;
 }
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: true, testMode: false };
+export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: true, showMoves: true, testMode: false };
 
 /**
  * In-memory model. The best time of a level is always `rankings.get(id)[0]`.
@@ -24,6 +26,11 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = { muted: false, showTimer: t
 export interface ProgressModel {
   /** Ascending top-N times (ms) per level id. A level with a ranking has been completed. */
   rankings: Map<string, number[]>;
+  /**
+   * Fewest box moves a level was finished in, per level id (the move counter's record). Never progress on its own:
+   * only rankings unlock levels.
+   */
+  bestMoves: Map<string, number>;
   highestUnlocked: number;
   lastLevel: number;
   /** Id of the level "Continuar" leads to (null in saves written before ids were stored). */
@@ -35,6 +42,8 @@ export interface ProgressModel {
 interface ProgressJson {
   version: typeof PROGRESS_VERSION;
   rankings: Record<string, number[]>;
+  /** Additive field (same version, like `lastLevelId`): saves written before the move counter simply lack it. */
+  bestMoves: Record<string, number>;
   highestUnlocked: number;
   lastLevel: number;
   /** Additive field (same version): older readers ignore it, older saves simply lack it. */
@@ -45,6 +54,7 @@ interface ProgressJson {
 export function createEmptyProgress(): ProgressModel {
   return {
     rankings: new Map(),
+    bestMoves: new Map(),
     highestUnlocked: 0,
     lastLevel: 0,
     lastLevelId: null,
@@ -55,6 +65,11 @@ export function createEmptyProgress(): ProgressModel {
 /** A usable play time: finite and strictly positive. */
 export function isValidTime(ms: unknown): ms is number {
   return typeof ms === 'number' && Number.isFinite(ms) && ms > 0;
+}
+
+/** A usable move count: a non-negative integer (box moves, docs/LEVELS.md «movimientos»). */
+export function isValidMoves(moves: unknown): moves is number {
+  return typeof moves === 'number' && Number.isInteger(moves) && moves >= 0;
 }
 
 /** A usable level index: non-negative integer. */
@@ -105,13 +120,19 @@ export function parseProgress(json: string | null): ProgressModel {
       if (ranking.length > 0) progress.rankings.set(id, ranking);
     }
   }
+  // Additive field (same version): saves written before the move counter simply lack it (no records yet).
+  if (isRecord(raw.bestMoves)) {
+    for (const [id, moves] of Object.entries(raw.bestMoves)) if (isValidMoves(moves)) progress.bestMoves.set(id, moves);
+  }
   if (isValidIndex(raw.highestUnlocked)) progress.highestUnlocked = raw.highestUnlocked;
   if (isValidIndex(raw.lastLevel)) progress.lastLevel = raw.lastLevel;
   if (typeof raw.lastLevelId === 'string' && raw.lastLevelId !== '') progress.lastLevelId = raw.lastLevelId;
   if (isRecord(raw.settings)) {
-    const { muted, showTimer, testMode } = raw.settings;
+    const { muted, showTimer, showMoves, testMode } = raw.settings;
     if (typeof muted === 'boolean') progress.settings.muted = muted;
     if (typeof showTimer === 'boolean') progress.settings.showTimer = showTimer;
+    // Additive field (same version): saves written before the move counter lack it (default shown).
+    if (typeof showMoves === 'boolean') progress.settings.showMoves = showMoves;
     // Additive field (same version): saves written before it simply lack it (default off).
     if (typeof testMode === 'boolean') progress.settings.testMode = testMode;
   }
@@ -123,6 +144,7 @@ export function serializeProgress(progress: ProgressModel): string {
     version: PROGRESS_VERSION,
     // fromEntries defines own properties, so unusual ids (e.g. "__proto__") round-trip safely.
     rankings: Object.fromEntries(progress.rankings),
+    bestMoves: Object.fromEntries(progress.bestMoves),
     highestUnlocked: progress.highestUnlocked,
     lastLevel: progress.lastLevel,
     lastLevelId: progress.lastLevelId,

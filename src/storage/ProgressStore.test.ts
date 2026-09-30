@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LEVELS } from '../data/levels';
 import { ProgressStore } from './ProgressStore';
-import { insertTime, parseProgress, PROGRESS_VERSION } from './progressData';
+import { insertTime, parseProgress, PROGRESS_VERSION, serializeProgress } from './progressData';
 
 const KEY = 'toro.test';
 /** Level order used by the id-aware tests. */
@@ -139,12 +139,12 @@ describe('ProgressStore — levels & settings', () => {
 
   it('merges settings and returns copies', () => {
     const p = new ProgressStore(new FakeStorage(), KEY, IDS);
-    expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
+    expect(p.getSettings()).toEqual({ muted: false, showTimer: true, showMoves: true, testMode: false });
     p.setSettings({ muted: true });
     p.getSettings().showTimer = false;
-    expect(p.getSettings()).toEqual({ muted: true, showTimer: true, testMode: false });
+    expect(p.getSettings()).toEqual({ muted: true, showTimer: true, showMoves: true, testMode: false });
     p.setSettings({ showTimer: false });
-    expect(p.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
+    expect(p.getSettings()).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: false });
   });
 
   it('only writes when something changes', () => {
@@ -178,7 +178,7 @@ describe('ProgressStore — persistence', () => {
     expect(b.getRanking('lvl-1')).toEqual([29_500, 31_000]);
     expect(b.getHighestUnlocked()).toBe(1);
     expect(b.getLastLevel()).toBe(1);
-    expect(b.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
+    expect(b.getSettings()).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: false });
   });
 
   it('falls back to fresh progress on corrupt JSON or another version', () => {
@@ -187,7 +187,7 @@ describe('ProgressStore — persistence', () => {
       storage.setItem(KEY, bad);
       const p = new ProgressStore(storage, KEY, IDS);
       expect(p.hasProgress()).toBe(false);
-      expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
+      expect(p.getSettings()).toEqual({ muted: false, showTimer: true, showMoves: true, testMode: false });
     }
   });
 
@@ -206,7 +206,7 @@ describe('ProgressStore — persistence', () => {
     expect(p.rankings.has('c')).toBe(false);
     expect(p.highestUnlocked).toBe(0);
     expect(p.lastLevel).toBe(0);
-    expect(p.settings).toEqual({ muted: false, showTimer: false, testMode: false });
+    expect(p.settings).toEqual({ muted: false, showTimer: false, showMoves: true, testMode: false });
   });
 
   it('never throws when storage throws, and keeps working in memory', () => {
@@ -358,7 +358,7 @@ describe('ProgressStore — several tabs', () => {
     expect(b.getBest('b')).toBe(20_000);
     expect(b.getHighestUnlocked()).toBe(2);
     b.setSettings({ muted: true });
-    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: false });
   });
 
   it('keeps unsaved changes in memory when writes fail', () => {
@@ -389,12 +389,12 @@ describe('ProgressStore: modo prueba setting', () => {
     const a = new ProgressStore(storage, KEY, IDS);
     expect(a.getSettings().testMode).toBe(false);
     a.setSettings({ testMode: true });
-    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: false, showTimer: true, testMode: true });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: false, showTimer: true, showMoves: true, testMode: true });
 
     const old = new FakeStorage();
     old.setItem(KEY, JSON.stringify({ version: PROGRESS_VERSION, rankings: { a: [1000] }, highestUnlocked: 1, lastLevel: 1, settings: { muted: true, showTimer: false } }));
     const migrated = new ProgressStore(old, KEY, IDS);
-    expect(migrated.getSettings()).toEqual({ muted: true, showTimer: false, testMode: false });
+    expect(migrated.getSettings()).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: false });
     expect(migrated.getHighestUnlocked()).toBe(1);
     expect(parseProgress(JSON.stringify({ version: PROGRESS_VERSION, settings: { testMode: 'yes' } })).settings.testMode).toBe(false);
   });
@@ -406,5 +406,105 @@ describe('ProgressStore: modo prueba setting', () => {
     p.setSettings({ testMode: true });
     p.setSettings({ testMode: false });
     expect(p.getHighestUnlocked()).toBe(2);
+  });
+});
+
+describe('ProgressStore: move counter', () => {
+  it('shows the counter by default; the setting persists and keeps the others', () => {
+    const storage = new FakeStorage();
+    const a = new ProgressStore(storage, KEY, IDS);
+    expect(a.getSettings().showMoves).toBe(true);
+    a.setSettings({ showMoves: false });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: false, showTimer: true, showMoves: false, testMode: false });
+    a.setSettings({ showTimer: false });
+    expect(new ProgressStore(storage, KEY, IDS).getSettings()).toEqual({ muted: false, showTimer: false, showMoves: false, testMode: false });
+    const writes = storage.writes;
+    a.setSettings({ showMoves: false });
+    expect(storage.writes).toBe(writes); // unchanged: no write
+    expect(parseProgress(JSON.stringify({ version: PROGRESS_VERSION, settings: { showMoves: 'no' } })).settings.showMoves).toBe(true);
+  });
+
+  it('keeps the fewest moves per level: only strictly fewer replaces it', () => {
+    const storage = new FakeStorage();
+    const p = new ProgressStore(storage, KEY, IDS);
+    expect(p.getBestMoves('a')).toBeNull();
+    expect(p.recordMoves('a', 12)).toEqual({ bestMoves: 12, isNewBest: true, previousBestMoves: null });
+    expect(p.recordMoves('a', 14)).toEqual({ bestMoves: 12, isNewBest: false, previousBestMoves: 12 });
+    const writes = storage.writes;
+    expect(p.recordMoves('a', 12)).toEqual({ bestMoves: 12, isNewBest: false, previousBestMoves: 12 });
+    expect(storage.writes).toBe(writes); // a tie or worse writes nothing
+    expect(p.recordMoves('a', 10)).toEqual({ bestMoves: 10, isNewBest: true, previousBestMoves: 12 });
+    p.recordMoves('b', 3);
+    expect(new ProgressStore(storage, KEY, IDS).getBestMoves('a')).toBe(10);
+    expect(new ProgressStore(storage, KEY, IDS).getBestMoves('b')).toBe(3);
+  });
+
+  it('ignores counts that are not a non-negative integer', () => {
+    const storage = new FakeStorage();
+    const p = new ProgressStore(storage, KEY, IDS);
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1, 2.5]) {
+      expect(p.recordMoves('a', bad)).toEqual({ bestMoves: null, isNewBest: false, previousBestMoves: null });
+    }
+    expect(storage.writes).toBe(0);
+    const parsed = parseProgress(
+      JSON.stringify({ version: PROGRESS_VERSION, bestMoves: { a: 4, b: -2, c: 1.5, d: 'x', e: null, f: 0 } }),
+    );
+    expect([...parsed.bestMoves]).toEqual([
+      ['a', 4],
+      ['f', 0],
+    ]);
+    expect(parseProgress(JSON.stringify({ version: PROGRESS_VERSION, bestMoves: [3] })).bestMoves.size).toBe(0);
+  });
+
+  it('a move record is never progress: nothing unlocks and "Continuar" does not appear', () => {
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
+    p.recordMoves('c', 5);
+    expect(p.hasProgress()).toBe(false);
+    expect(p.getHighestUnlocked()).toBe(0);
+  });
+
+  it('saves written before the move counter load fine: no records, counter shown, everything else kept', () => {
+    const storage = new FakeStorage();
+    const raw = JSON.stringify({
+      version: PROGRESS_VERSION,
+      rankings: { a: [31_000], b: [42_000] },
+      highestUnlocked: 2,
+      lastLevel: 2,
+      lastLevelId: 'c',
+      settings: { muted: true, showTimer: false, testMode: true },
+    });
+    storage.setItem(KEY, raw);
+    const p = new ProgressStore(storage, KEY, IDS);
+    expect(p.getBestMoves('a')).toBeNull();
+    expect(p.getBest('a')).toBe(31_000);
+    expect(p.getHighestUnlocked()).toBe(2);
+    expect(p.getLastLevel()).toBe(2);
+    expect(p.getSettings()).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: true });
+    expect(storage.getItem(KEY)).toBe(raw); // reading never rewrites it
+    // The first record adds the field and keeps the rest.
+    p.recordMoves('a', 7);
+    const saved = JSON.parse(storage.getItem(KEY) ?? '{}');
+    expect(saved.bestMoves).toEqual({ a: 7 });
+    expect(saved.rankings).toEqual({ a: [31_000], b: [42_000] });
+    expect(saved.settings).toEqual({ muted: true, showTimer: false, showMoves: true, testMode: true });
+  });
+
+  it("two tabs: a stale tab adds its record without erasing the other tab's", () => {
+    const storage = new FakeStorage();
+    const older = new ProgressStore(storage, KEY, IDS);
+    const newer = new ProgressStore(storage, KEY, IDS);
+    newer.recordMoves('a', 6);
+    older.recordMoves('b', 9);
+    expect(older.recordMoves('a', 8)).toEqual({ bestMoves: 6, isNewBest: false, previousBestMoves: 6 });
+    const reopened = new ProgressStore(storage, KEY, IDS);
+    expect(reopened.getBestMoves('a')).toBe(6);
+    expect(reopened.getBestMoves('b')).toBe(9);
+  });
+
+  it('round-trips through serializeProgress', () => {
+    const model = parseProgress(JSON.stringify({ version: PROGRESS_VERSION, bestMoves: { a: 3 }, settings: { showMoves: false } }));
+    const again = parseProgress(serializeProgress(model));
+    expect(again.bestMoves.get('a')).toBe(3);
+    expect(again.settings.showMoves).toBe(false);
   });
 });

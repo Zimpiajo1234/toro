@@ -3,6 +3,7 @@ import type { GameEvent } from '../core/types';
 import { GAME_CONFIG } from '../config';
 import { hasRacks } from '../core/racks';
 import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
+import { levelMinimum } from '../data/levels/minimums';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
 
@@ -14,7 +15,14 @@ import { Game } from './Game';
 const fakes = vi.hoisted(() => {
   const sim = {
     /** Every simulation Game created, oldest first (a new one = the level was (re)loaded). */
-    states: [] as { level: { id: string }; inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] }[],
+    states: [] as {
+      level: { id: string };
+      inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[];
+      /** Scripts GameSnapshot.moves (box moves so far; a fresh simulation starts at 0). */
+      setMoves(moves: number): void;
+    }[],
+    /** Minimums a test overrides (by level id); every other id reads the real precomputed file. */
+    minimums: new Map<string, { moves: number; exact: boolean } | null>(),
     /** Events the current simulation emits on its next update. */
     queue: [] as unknown[],
     /** Next GameRenderer construction throws (no WebGL context). */
@@ -30,7 +38,7 @@ const fakes = vi.hoisted(() => {
   class FakeGameState {
     readonly level: { id: string };
     readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
-    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { rack: sim.rack } };
+    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { rack: sim.rack }, moves: 0 };
     constructor(level: { id: string }) {
       this.level = level;
       sim.states.push(this);
@@ -38,6 +46,9 @@ const fakes = vi.hoisted(() => {
     getSnapshot() {
       this.snapshot.hint.rack = sim.rack;
       return this.snapshot;
+    }
+    setMoves(moves: number) {
+      this.snapshot.moves = moves;
     }
     update(
       _dt: number,
@@ -94,6 +105,13 @@ const fakes = vi.hoisted(() => {
 vi.mock('../logic/GameState', () => ({ GameState: fakes.FakeGameState }));
 vi.mock('../render/GameRenderer', () => ({ GameRenderer: fakes.FakeRenderer }));
 vi.mock('../audio/AudioEngine', () => ({ AudioEngine: fakes.FakeAudio }));
+vi.mock('../data/levels/minimums', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../data/levels/minimums')>();
+  return {
+    ...real,
+    levelMinimum: (id: string) => (fakes.sim.minimums.has(id) ? fakes.sim.minimums.get(id)! : real.levelMinimum(id)),
+  };
+});
 
 const { sim } = fakes;
 const FRAME_MS = 1000 / 60;
@@ -152,6 +170,7 @@ beforeEach(() => {
   sim.failRenderer = false;
   sim.yaw = Math.PI / 4;
   sim.rack = null;
+  sim.minimums.clear();
   win = fakeWindow();
   rafCallback = null;
   now = 1000;
@@ -1024,5 +1043,192 @@ describe('Game: control hint', () => {
     game.start(1);
     expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[1]) });
     click.mockRestore();
+  });
+});
+
+describe('Game: move counter', () => {
+  const KEY = 'toro.progress.v1';
+  /** Real (fake) localStorage, so the tests can read exactly what was saved. */
+  const withStorage = () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    return items;
+  };
+  const saved = (items: Map<string, string>) => JSON.parse(items.get(KEY) ?? '{}') as Record<string, unknown>;
+  /** Plays the level on screen to its card in `moves` box moves (the count lands with the final drop). */
+  const finishIn = (moves: number) => {
+    emit({ type: 'firstInput' });
+    advance(0.5);
+    current().setMoves(moves);
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+  };
+
+  it('publishes the simulation count; a new attempt starts over at 0, a resumed one keeps it', () => {
+    const { game, store } = setup();
+    game.start(0);
+    expect(store.get()).toMatchObject({ moves: 0, finished: false });
+    current().setMoves(2);
+    advance(1 / 60);
+    expect(store.get().moves).toBe(2);
+
+    tap('Escape', 'Escape'); // suspended behind the title
+    game.start();
+    expect(store.get().moves).toBe(2);
+
+    current().setMoves(3);
+    advance(1 / 60);
+    game.restart();
+    expect(store.get().moves).toBe(0);
+    current().setMoves(1);
+    advance(1 / 60);
+    game.toTitle();
+    game.start(1);
+    expect(store.get().moves).toBe(0);
+  });
+
+  it('publishes the precomputed minimum of the level on screen (the Benchmark too), never solving anything', () => {
+    const { game, store } = setup();
+    for (let i = 0; i < LEVELS.length; i++) {
+      game.toTitle();
+      game.toggleTestMode();
+      game.start(i);
+      expect(store.get().minMoves).toBe(levelMinimum(LEVELS[i].id));
+      expect(store.get().minMoves).not.toBeNull();
+      game.toTitle();
+      game.toggleTestMode();
+    }
+    game.toggleTestMode();
+    game.startBenchmark();
+    expect(store.get().minMoves).toEqual(levelMinimum(BENCHMARK_ID));
+    expect(store.get().minMoves).not.toBeNull();
+  });
+
+  it('a lower bound is shown unless moves.showLowerBound is off; an unknown minimum shows none', () => {
+    const id = LEVELS[0].id;
+    const bound = { moves: 9, exact: false };
+    const setting = GAME_CONFIG.moves.showLowerBound;
+    try {
+      sim.minimums.set(id, bound);
+      const { game, store } = setup();
+      game.start(0);
+      expect(store.get().minMoves).toEqual(bound);
+      GAME_CONFIG.moves.showLowerBound = false;
+      game.restart();
+      expect(store.get().minMoves).toBeNull();
+      sim.minimums.set(id, { moves: 9, exact: true });
+      game.restart();
+      expect(store.get().minMoves).toEqual({ moves: 9, exact: true });
+      sim.minimums.set(id, null);
+      game.restart();
+      expect(store.get().minMoves).toBeNull();
+    } finally {
+      GAME_CONFIG.moves.showLowerBound = setting;
+    }
+  });
+
+  it('N shows / hides it (shown by default), on the title and while playing, persisted like the timer', () => {
+    const items = withStorage();
+    const first = setup();
+    expect(first.store.get().showMoves).toBe(true);
+    tap('KeyN', 'n');
+    expect(first.store.get().showMoves).toBe(false);
+    expect((saved(items).settings as Record<string, unknown>).showMoves).toBe(false);
+    first.game.start(0);
+    tap('KeyN', 'n');
+    expect(first.store.get().showMoves).toBe(true);
+    // T is its own setting.
+    tap('KeyT', 't');
+    expect(first.store.get()).toMatchObject({ showMoves: true, showTimer: false });
+    first.game.toggleMoves(); // the HUD pill's click
+    first.game.dispose();
+
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ showMoves: false, showTimer: false });
+  });
+
+  it('the card gets the moves and minimum; the first clear sets the record, only fewer moves beat it', () => {
+    const items = withStorage();
+    const { game, store } = setup();
+    const id = LEVELS[0].id;
+    const min = levelMinimum(id);
+    game.start(0);
+    finishIn(5);
+    expect(store.get()).toMatchObject({ screen: 'complete', finished: true, moves: 5 });
+    expect(store.get().result).toMatchObject({ moves: 5, bestMoves: 5, isNewBestMoves: false, minMoves: min, practice: false });
+    expect(saved(items).bestMoves).toEqual({ [id]: 5 });
+
+    game.restart();
+    expect(store.get()).toMatchObject({ moves: 0, finished: false, result: null });
+    finishIn(7);
+    expect(store.get().result).toMatchObject({ moves: 7, bestMoves: 5, isNewBestMoves: false });
+
+    game.restart();
+    finishIn(4);
+    expect(store.get().result).toMatchObject({ moves: 4, bestMoves: 4, isNewBestMoves: true });
+    expect(saved(items).bestMoves).toEqual({ [id]: 4 });
+    // Hiding the counter hides it, never stops the record.
+    game.toggleMoves();
+    game.restart();
+    finishIn(3);
+    expect(store.get().result).toMatchObject({ bestMoves: 3, isNewBestMoves: true });
+  });
+
+  it('the Benchmark saves no move record (nor any other); its card still gets its moves and minimum', () => {
+    const items = withStorage();
+    const { game, store } = setup();
+    game.toggleTestMode();
+    const before = { ...saved(items) };
+    delete before.settings;
+    game.startBenchmark();
+    finishIn(16);
+    expect(store.get().result).toMatchObject({
+      moves: 16,
+      bestMoves: null,
+      isNewBestMoves: false,
+      minMoves: levelMinimum(BENCHMARK_ID),
+      practice: true,
+    });
+    const after = { ...saved(items) };
+    delete after.settings;
+    expect(after).toEqual(before);
+    expect(items.get(KEY)).not.toContain(BENCHMARK_ID);
+  });
+
+  it('a level only test mode opened records no moves either', () => {
+    const items = withStorage();
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.start(LEVELS.length - 1);
+    finishIn(6);
+    expect(store.get().result).toMatchObject({ moves: 6, bestMoves: null, practice: true });
+    expect(saved(items).bestMoves ?? {}).toEqual({});
+  });
+
+  it('a save from before the move counter loads fine: counter shown, no records, progress kept', () => {
+    const items = withStorage();
+    items.set(
+      KEY,
+      JSON.stringify({
+        version: 1,
+        rankings: { [LEVELS[0].id]: [40_000] },
+        highestUnlocked: 1,
+        lastLevel: 1,
+        lastLevelId: LEVELS[1].id,
+        settings: { muted: false, showTimer: true, testMode: false },
+      }),
+    );
+    const { game, store } = setup();
+    expect(store.get()).toMatchObject({ showMoves: true, canContinue: true, levelIndex: 1 });
+    game.start(0);
+    finishIn(4);
+    // A first move record: nothing to beat yet, so no "✦ nuevo récord" on the card.
+    expect(store.get().result).toMatchObject({ moves: 4, bestMoves: 4, isNewBestMoves: false });
+    // The old time is still there, next to the new one.
+    expect((saved(items).rankings as Record<string, number[]>)[LEVELS[0].id]).toContain(40_000);
   });
 });

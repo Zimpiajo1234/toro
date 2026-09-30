@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LevelCaption } from './LevelDots';
 import { Overlay } from './Overlay';
-import { createUIStore, type GameActions, type UIState } from './uiState';
+import { createUIStore, type GameActions, type LevelResult, type UIState } from './uiState';
 
 const noopActions: GameActions = {
   start() {},
@@ -12,6 +12,7 @@ const noopActions: GameActions = {
   toTitle() {},
   toggleMute() {},
   toggleTimer() {},
+  toggleMoves() {},
   toggleTestMode() {},
   startBenchmark() {},
 };
@@ -21,6 +22,23 @@ function render(patch: Partial<UIState>): string {
   const store = createUIStore();
   store.set(patch);
   return renderToStaticMarkup(createElement(Overlay, { store, actions: noopActions }));
+}
+
+/** A finished attempt: `patch` sets what a test is about (moves fields default to "no record, no minimum"). */
+function result(patch: Partial<LevelResult>): LevelResult {
+  return {
+    timeMs: 42_300,
+    bestMs: 42_300,
+    isNewBest: false,
+    moves: 12,
+    bestMoves: null,
+    isNewBestMoves: false,
+    minMoves: null,
+    message: 'Buen trabajo',
+    isLast: false,
+    practice: false,
+    ...patch,
+  };
 }
 
 const levels: UIState['levels'] = [
@@ -171,35 +189,38 @@ describe('Overlay', () => {
     expect(html).not.toContain('0:42');
   });
 
-  it('complete: message, precise times, new-best tag, next / repeat; HUD inert', () => {
+  it('complete: message, precise time, new-best mark, next / repeat; HUD inert', () => {
     const html = render({
       screen: 'complete',
       levelIndex: 0,
       levelName: 'Primer pedido',
-      result: { timeMs: 42_300, bestMs: 42_300, isNewBest: true, message: 'Buen trabajo', isLast: false, practice: false },
+      result: result({ isNewBest: true, bestMoves: 12 }),
     });
     expect(html).toContain('Buen trabajo</h2>');
-    expect(html).toContain('<dt>Tiempo</dt><dd>0:42.3</dd>');
-    expect(html).toContain('<dt>Mejor tiempo</dt><dd>0:42.3</dd>');
+    // A new best time lights its own tile ("✦ nuevo récord" in place of the best time, which is this one).
+    expect(html).toMatch(
+      /<div class="card__stat is-record"><dt>Tiempo<\/dt><dd>0:42\.3<\/dd><dd class="card__stat-record ui-enter ui-enter--d3"><svg[^>]*class="card__stat-icon".*?<\/svg>nuevo récord<\/dd><\/div>/,
+    );
+    expect(html).not.toContain('mejor 0:42.3');
     expect(html).not.toContain('no se guarda');
-    expect(html).toContain('Nuevo mejor tiempo');
     expect(html).toContain('>Siguiente almacén</button>');
     expect(html).toContain('>Repetir</button>');
     expect(html).toMatch(/class="ui-layer hud is-dimmed"[^>]*inert=""/);
   });
 
   it('complete, level open only through "Modo prueba": its time, no best time, and a quiet "not kept" note', () => {
-    const result = { timeMs: 42_300, bestMs: 42_300, isNewBest: false, message: 'Buen trabajo', isLast: false, practice: false };
-    const html = render({ screen: 'complete', result: { ...result, practice: true } });
+    // Move counter hidden: the time alone, in one centred tile.
+    const html = render({ screen: 'complete', showMoves: false, result: result({ practice: true }) });
     expect(html).toContain('class="card__stats card__stats--single ui-enter ui-enter--d1"');
-    expect(html).toContain('<dt>Tiempo</dt><dd>0:42.3</dd>');
-    expect(html).not.toContain('Mejor tiempo');
+    expect(html).toContain('<div class="card__stat"><dt>Tiempo</dt><dd>0:42.3</dd></div>');
+    expect(html).not.toContain('card__stat-record');
     expect(html).toContain('>Modo prueba · este tiempo no se guarda</p>');
-    // A genuinely open level (times kept) and a hidden timer (no times at all) carry no note.
-    expect(render({ screen: 'complete', result: { ...result, practice: false } })).not.toContain('no se guarda');
-    const hidden = render({ screen: 'complete', showTimer: false, result: { ...result, practice: true } });
+    // A genuinely open level (times kept) and a hidden timer and counter (nothing shown at all) carry no note.
+    expect(render({ screen: 'complete', showMoves: false, result: result({ practice: false }) })).not.toContain('no se guarda');
+    const hidden = render({ screen: 'complete', showTimer: false, showMoves: false, result: result({ practice: true }) });
     expect(hidden).not.toContain('no se guarda');
     expect(hidden).not.toContain('0:42.3');
+    expect(hidden).not.toContain('card__stats');
   });
 
   it('complete, Benchmark: named, its time only, "sin récord", and the way back to the title', () => {
@@ -209,12 +230,15 @@ describe('Overlay', () => {
       levelName: 'Benchmark',
       benchmark: true,
       testMode: true,
-      result: { timeMs: 95_400, bestMs: 95_400, isNewBest: false, message: 'Buen trabajo', isLast: false, practice: true },
+      result: result({ timeMs: 95_400, bestMs: 95_400, moves: 16, minMoves: { moves: 14, exact: true }, practice: true }),
     });
     expect(html).toContain('<p class="card__eyebrow">Benchmark</p>');
     expect(html).not.toContain('Nivel 5');
-    expect(html).toContain('<dt>Tiempo</dt><dd>1:35.4</dd>');
-    expect(html).not.toContain('Mejor tiempo');
+    expect(html).toContain('<dt>Tiempo</dt><dd>1:35.4</dd></div>');
+    // Its moves against its minimum, and no record under either: time and moves share one row.
+    expect(html).toContain('<dt>Movimientos</dt><dd>16<span class="card__stat-note">· mín. 14</span></dd></div>');
+    expect(html).not.toContain('card__stat-record');
+    expect(html).not.toContain('card__stats--single');
     expect(html).toContain('>Modo prueba · sin récord</p>');
     expect(html).toContain('>Volver al inicio</button>');
     expect(html).not.toContain('Siguiente almacén');
@@ -225,10 +249,159 @@ describe('Overlay', () => {
   it('last level offers the way home', () => {
     const html = render({
       screen: 'complete',
-      result: { timeMs: 50_000, bestMs: 40_000, isNewBest: false, message: 'Todo en su sitio', isLast: true, practice: false },
+      result: result({ timeMs: 50_000, bestMs: 40_000, message: 'Todo en su sitio', isLast: true, bestMoves: 12 }),
     });
     expect(html).toContain('Todos los almacenes están en orden.');
     expect(html).toContain('>Volver al inicio</button>');
-    expect(html).not.toContain('Nuevo mejor tiempo');
+    expect(html).toContain('<dd class="card__stat-record">mejor 0:40.0</dd>');
+    expect(html).not.toContain('nuevo récord');
+  });
+});
+
+describe('Overlay: move counter', () => {
+  const min = { moves: 10, exact: true };
+  /** The move pill's markup (the only element with the hud-moves class). */
+  const pill = (html: string) => html.match(/<button[^>]*class="hud-pill[^"]*hud-moves[^"]*"[^>]*>.*?<\/button>/)?.[0] ?? '';
+
+  it('shows the count against the minimum in a pill like the timer, top-right before the time', () => {
+    const html = render({ screen: 'playing', moves: 12, minMoves: min, elapsedMs: 42_900, timerStarted: true });
+    const moves = pill(html);
+    expect(moves).toContain('class="hud-pill hud-moves ui-enter"');
+    expect(moves).toContain('aria-label="Movimientos 12, mínimo 10. Ocultar movimientos"');
+    expect(moves).toContain('<span class="hud-moves__value ui-tick">12</span><span class="hud-moves__min">· mín. 10</span>');
+    // Same corner as the timer (the corner reserves the top band for the camera), counter first.
+    expect(html).toMatch(/<div class="hud__corner hud__corner--end"><button[^>]*hud-moves[^>]*>.*?<\/button><button[^>]*hud-timer/);
+    expect(html.indexOf('hud-moves')).toBeLessThan(html.indexOf('>0:42</span>'));
+  });
+
+  it('a fresh level reads a soft 0 without a tick; each new count remounts with the tick', () => {
+    const fresh = pill(render({ screen: 'playing', moves: 0, minMoves: min }));
+    expect(fresh).toContain('hud-moves ui-enter is-idle');
+    expect(fresh).toContain('<span class="hud-moves__value">0</span>');
+    expect(pill(render({ screen: 'playing', moves: 1, minMoves: min }))).toContain('<span class="hud-moves__value ui-tick">1</span>');
+  });
+
+  it('a lower bound reads "mín. ≥ N"; without a known minimum only the count shows', () => {
+    const bound = pill(render({ screen: 'playing', moves: 3, minMoves: { moves: 10, exact: false } }));
+    expect(bound).toContain('>· mín. ≥ 10</span>');
+    expect(bound).toContain('aria-label="Movimientos 3, mínimo al menos 10. Ocultar movimientos"');
+    const none = pill(render({ screen: 'playing', moves: 3, minMoves: null }));
+    expect(none).not.toContain('mín.');
+    expect(none).toContain('aria-label="Movimientos 3. Ocultar movimientos"');
+  });
+
+  it('hidden: a faint box glyph that shows it again, no count', () => {
+    const moves = pill(render({ screen: 'playing', moves: 12, minMoves: min, showMoves: false }));
+    expect(moves).toContain('class="hud-pill hud-round hud-moves is-hidden ui-enter"');
+    expect(moves).toContain('aria-label="Mostrar movimientos"');
+    expect(moves).not.toContain('hud-moves__value');
+    expect(moves).not.toContain('mín.');
+  });
+
+  it('a soft accent (sparkle, never a warning) only once the level is finished at the minimum', () => {
+    const done = pill(render({ screen: 'playing', moves: 10, minMoves: min, finished: true }));
+    expect(done).toContain('class="hud-pill hud-moves ui-enter is-minimum"');
+    expect(done).toContain('aria-label="Movimientos 10, mínimo 10, en el mínimo. Ocultar movimientos"');
+    expect(done).not.toContain('<rect'); // the sparkle takes the box glyph's place
+    // Reaching the count mid-level is not finishing; more moves than the minimum is just a count.
+    expect(pill(render({ screen: 'playing', moves: 10, minMoves: min, finished: false }))).not.toContain('is-minimum');
+    expect(pill(render({ screen: 'complete', moves: 11, minMoves: min, finished: true }))).not.toContain('is-minimum');
+    // Without a minimum there is nothing to reach.
+    expect(pill(render({ screen: 'playing', moves: 1, minMoves: null, finished: true }))).not.toContain('is-minimum');
+    // The dimmed HUD under the card keeps it.
+    expect(pill(render({ screen: 'complete', moves: 9, minMoves: min, finished: true }))).toContain('is-minimum');
+  });
+
+  it('title footer names the N key next to T', () => {
+    const html = render({ screen: 'title' });
+    expect(html).toContain('T</kbd> tiempo');
+    expect(html).toContain('N</kbd> movimientos');
+    expect(html.indexOf('N</kbd> movimientos')).toBeGreaterThan(html.indexOf('T</kbd> tiempo'));
+  });
+
+  it('card: one tile per metric, its record under the value (best time; moves beside the minimum, then the fewest)', () => {
+    const html = render({ screen: 'complete', result: result({ bestMs: 38_900, moves: 12, bestMoves: 11, minMoves: min }) });
+    expect(html).toContain(
+      '<dl class="card__stats ui-enter ui-enter--d1">' +
+        '<div class="card__stat"><dt>Tiempo</dt><dd>0:42.3</dd><dd class="card__stat-record">mejor 0:38.9</dd></div>' +
+        '<div class="card__stat"><dt>Movimientos</dt><dd>12<span class="card__stat-note">· mín. 10</span></dd>' +
+        '<dd class="card__stat-record">récord 11</dd></div></dl>',
+    );
+    expect(html).not.toContain('nuevo récord');
+    expect(html).not.toContain('is-minimum');
+    expect(html).not.toContain('is-record');
+  });
+
+  it('card: a new record lights its own tile, never a row of tags under the stats', () => {
+    const html = render({
+      screen: 'complete',
+      result: result({ isNewBest: true, moves: 11, bestMoves: 11, isNewBestMoves: true, minMoves: min }),
+    });
+    expect(html).toMatch(/<div class="card__stat is-record"><dt>Tiempo<\/dt>.*?nuevo récord<\/dd><\/div>/);
+    expect(html).toMatch(
+      /<div class="card__stat is-record"><dt>Movimientos<\/dt><dd>11<span class="card__stat-note">· mín\. 10<\/span><\/dd><dd class="card__stat-record ui-enter ui-enter--d3"><svg[^>]*class="card__stat-icon".*?<\/svg>nuevo récord<\/dd><\/div>/,
+    );
+    expect(html).not.toContain('récord 11');
+    expect(html).not.toContain('card__badge');
+    // Each mark goes with its own display: hiding the counter hides its tile, hiding the timer hides the other.
+    const noMoves = render({ screen: 'complete', showMoves: false, result: result({ isNewBest: true, isNewBestMoves: true, bestMoves: 11 }) });
+    expect(noMoves).toMatch(/<div class="card__stat is-record"><dt>Tiempo<\/dt>/);
+    expect(noMoves).not.toContain('Movimientos');
+    expect(noMoves.match(/nuevo récord/g)).toHaveLength(1);
+    const noTimer = render({ screen: 'complete', showTimer: false, result: result({ isNewBest: true, isNewBestMoves: true, bestMoves: 11 }) });
+    expect(noTimer).not.toContain('Tiempo');
+    expect(noTimer).toMatch(/<div class="card__stat is-record"><dt>Movimientos<\/dt>/);
+    expect(noTimer.match(/nuevo récord/g)).toHaveLength(1);
+  });
+
+  it('card: the stats never take more than one row (at most two tiles), whatever is shown or improved', () => {
+    // The card must stay below the middle of the diorama (ui.css): its 2-column grid may hold one row only.
+    for (const showTimer of [true, false]) {
+      for (const showMoves of [true, false]) {
+        for (const practice of [true, false]) {
+          for (const newRecords of [true, false]) {
+            const html = render({
+              screen: 'complete',
+              showTimer,
+              showMoves,
+              result: result({
+                practice,
+                isLast: true,
+                bestMoves: practice ? null : 11,
+                minMoves: min,
+                isNewBest: !practice && newRecords,
+                isNewBestMoves: !practice && newRecords,
+              }),
+            });
+            const tiles = html.match(/class="card__stat[ "]/g) ?? [];
+            expect(tiles).toHaveLength(Number(showTimer) + Number(showMoves));
+            expect(html).not.toContain('card__badge');
+          }
+        }
+      }
+    }
+  });
+
+  it('card: finishing at the minimum reads "mínimo" on a soft accent tile', () => {
+    const html = render({ screen: 'complete', result: result({ moves: 10, bestMoves: 10, minMoves: min }) });
+    expect(html).toMatch(
+      /<div class="card__stat is-minimum"><dt>Movimientos<\/dt><dd>10<span class="card__stat-note"><svg[^>]*class="card__stat-icon".*?<\/svg>mínimo<\/span><\/dd><dd class="card__stat-record">récord 10<\/dd><\/div>/,
+    );
+    expect(html).not.toContain('mín. 10');
+  });
+
+  it('card: the timer hidden leaves the moves alone; a practice run shows its moves only, not kept', () => {
+    const moves = render({ screen: 'complete', showTimer: false, result: result({ bestMoves: 12, minMoves: min }) });
+    expect(moves).not.toContain('Tiempo');
+    expect(moves).toContain('<dt>Movimientos</dt>');
+    expect(moves).toContain('<dd class="card__stat-record">récord 12</dd></div>');
+    expect(moves).toContain('class="card__stats card__stats--single ui-enter ui-enter--d1"');
+
+    const practice = render({ screen: 'complete', showTimer: false, result: result({ practice: true, minMoves: min }) });
+    expect(practice).toContain('class="card__stats card__stats--single ui-enter ui-enter--d1"');
+    expect(practice).not.toContain('card__stat-record');
+    expect(practice).toContain('>Modo prueba · estos movimientos no se guardan</p>');
+    const both = render({ screen: 'complete', result: result({ practice: true, minMoves: min }) });
+    expect(both).toContain('>Modo prueba · este resultado no se guarda</p>');
   });
 });

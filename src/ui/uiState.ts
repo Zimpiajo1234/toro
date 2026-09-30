@@ -3,10 +3,28 @@ import { createStore, type Store } from '../core/store';
 /** 'unsupported': no WebGL 2 (or the app shell caught a crash): one calm card, nothing else. */
 export type Screen = 'loading' | 'title' | 'playing' | 'complete' | 'unsupported';
 
+/**
+ * Fewest box moves the solver needs for a level (precomputed, src/data/levels/minimums.ts). `exact: false` = the
+ * search was cut and `moves` is only a proven lower bound (shown as "mín. ≥ N", or not at all: gameConfig
+ * `moves.showLowerBound`).
+ */
+export interface MoveMinimum {
+  moves: number;
+  exact: boolean;
+}
+
 export interface LevelResult {
   timeMs: number;
   bestMs: number;
   isNewBest: boolean;
+  /** Box moves of this attempt (a pick and a drop somewhere else = 1, the solver's «movimientos»). */
+  moves: number;
+  /** Fewest moves on record for the level after this attempt; null when nothing is kept (Benchmark, "Modo prueba"). */
+  bestMoves: number | null;
+  /** Fewer moves than a previous record (a first clear has nothing to beat). */
+  isNewBestMoves: boolean;
+  /** The level's minimum as the HUD showed it (null: none known, or a lower bound the config hides). */
+  minMoves: MoveMinimum | null;
   /** Positive message, e.g. "Almacén organizado". */
   message: string;
   /** True when the level just finished was the last one. */
@@ -33,6 +51,14 @@ export interface UIState {
   timerStarted: boolean;
   /** The timer is optional: the player can hide it (persisted). */
   showTimer: boolean;
+  /** Box moves of the current attempt (GameSnapshot.moves; 0 on load / restart, kept on resume). */
+  moves: number;
+  /** The move counter is optional too: the player can hide it (persisted, N key or a click on its pill). */
+  showMoves: boolean;
+  /** The level's move minimum as the HUD shows it (null: none known, or a lower bound the config hides). */
+  minMoves: MoveMinimum | null;
+  /** The level on screen is finished (from its last drop through the card): the move pill may show its accent. */
+  finished: boolean;
   result: LevelResult | null;
   muted: boolean;
   /**
@@ -77,6 +103,8 @@ export interface GameActions {
   toTitle(): void;
   toggleMute(): void;
   toggleTimer(): void;
+  /** Show / hide the optional move counter (persisted, like the timer). */
+  toggleMoves(): void;
   /** Title: turn "Modo prueba" on / off (never changes the real unlock progress). */
   toggleTestMode(): void;
   /**
@@ -99,6 +127,10 @@ export const initialUIState: UIState = {
   elapsedMs: 0,
   timerStarted: false,
   showTimer: true,
+  moves: 0,
+  showMoves: true,
+  minMoves: null,
+  finished: false,
   result: null,
   muted: false,
   restartHold: 0,

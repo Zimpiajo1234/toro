@@ -1,0 +1,10 @@
+{
+  "$comment": "Fewest box moves per level id (solver «movimientos»), for the move counter. Generated: npm run levels -- --minimos. Do not edit by hand.",
+  "maxWork": 150000,
+  "levels": {
+    "primer-encargo": { "moves": 1, "exact": true },
+    "dos-colores": { "moves": 2, "exact": true },
+    "rincon-tranquilo": { "moves": 3, "exact": true },
+    "benchmark": { "moves": 14, "exact": true }
+  }
+}

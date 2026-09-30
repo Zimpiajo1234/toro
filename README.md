@@ -3,7 +3,7 @@
 *Un pequeño almacén, a tu ritmo.*
 
 Juego web cozy: una carretilla elevadora low poly ordena cajas pastel en sus zonas de entrega.
-Sin derrota, sin presión. Solo un cronómetro opcional y tu mejor tiempo.
+Sin derrota, sin presión. Solo un cronómetro y un contador de movimientos, los dos opcionales, y tus mejores marcas.
 
 **Niveles:** hoy el juego trae los niveles 1–3. Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los
 sistemas que usaban (apilar con recetas, símbolos, estanterías almacenables) siguen en el juego y en sus tests. Un
@@ -18,6 +18,7 @@ npm run dev        # http://localhost:5173
 npm test           # tests de lógica, niveles, storage, helpers
 npm run build      # typecheck + build de producción en dist/
 npm run levels     # mapas y métricas de dificultad de todos los niveles y del Benchmark (npm run levels -- 3: uno en detalle)
+npm run levels -- --minimos   # recalcula los mínimos de movimientos del contador (src/data/levelMinimums.json)
 ```
 
 `dist/` usa rutas relativas (`base: './'`): funciona servido desde cualquier subruta (itch.io, GitHub Pages).
@@ -36,6 +37,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
 | T | Mostrar / ocultar tiempo |
+| N | Mostrar / ocultar movimientos |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
 | U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
@@ -51,6 +53,21 @@ progresión que reúne todo el juego de estanterías almacenables y del muelle d
 ni récord, ni desbloqueos, ni "Continuar" (el HUD dice "Benchmark", con un discreto "sin récord"). R lo reinicia,
 RePág / AvPág no hacen nada en él y al terminarlo la tarjeta vuelve al inicio. Esc lo deja en pausa detrás del título
 ("Continuar" o el mismo botón lo retoman); apagar el Modo prueba lo descarta.
+
+**Contador de movimientos** (ajuste guardado, visible por defecto; N o un clic en su píldora lo ocultan, como T el
+tiempo): arriba a la derecha, junto al tiempo, "12 · mín. 10" = movimientos de caja de este intento · el mínimo del
+nivel. Un movimiento es coger una caja y dejarla en otro sitio, el mismo criterio que la métrica `movimientos` del
+solver (`docs/LEVELS.md`); cogerla y dejarla exactamente donde estaba (misma casilla y altura, mismo hueco) no cuenta.
+Cada movimiento nuevo entra con un pequeño «tic»; al terminar en el mínimo (o menos) la píldora toma un tono suave del
+acento con un destello, nunca rojo: más movimientos son solo más movimientos. Reiniciar lo pone a 0; "Continuar" tras
+Esc lo conserva. El mínimo viene precalculado (`src/data/levelMinimums.json`, nunca se resuelve nada durante el juego);
+si la búsqueda exacta no terminó y solo hay una cota inferior se muestra "mín. ≥ N" (con `moves.showLowerBound: false`
+en `gameConfig.json` se oculta). La tarjeta final añade un recuadro "Movimientos" junto al de "Tiempo" (con su
+mínimo, o "✦ mínimo" en un tono suave si lo alcanzaste) y debajo, en pequeño, el récord del nivel ("récord 11", como
+"mejor 0:38.9" bajo el tiempo), que se guarda como los mejores tiempos (solo baja con estrictamente menos
+movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro, iluminado: siempre una sola fila, para
+que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
+pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
 
 Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), Start (continuar),
 Back (reiniciar), Y (repetir en la tarjeta final), X / B (subir / bajar la horquilla delante de una estantería almacenable).
@@ -73,7 +90,7 @@ src/
   render/      escena three.js, cámara, mallas, feedback
   audio/       música generativa + SFX procedurales (Web Audio, sin assets)
   ui/          overlay React (HUD, título, tarjeta de fin)
-  storage/     progreso, mejores tiempos, ranking local
+  storage/     progreso, mejores tiempos, ranking local, récord de movimientos
   game/        bucle, input, orquestación
 ```
 
@@ -177,7 +194,8 @@ Todos los valores están en tablas con nombre al principio de `src/audio/motor.t
   guarda los mejores tiempos: no lo cambies. Se valida al
   cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
   y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista
-  `SHIPPED` de `src/data/levels/levels.test.ts`. Los `.json` antiguos (esquema `LevelData`) siguen cargando.
+  `SHIPPED` de `src/data/levels/levels.test.ts`. Después de añadir o cambiar un nivel, `npm run levels -- --minimos`
+  recalcula el mínimo que enseña el contador de movimientos (`npm test` avisa si se te olvida). Los `.json` antiguos (esquema `LevelData`) siguen cargando.
   Los niveles especiales (fuera de la progresión, como el Benchmark) viven en `src/data/levels/especiales/`
   (`SPECIAL_LEVELS`, [docs/LEVELS.md](docs/LEVELS.md)).
 - **Nuevo tema visual:** crear `src/themes/<id>.ts` que exporte un `Theme`, añadirlo al mapa `THEMES` de `themes/index.ts` y poner `"theme": "<id>"` en el nivel. El tema cubre la escena 3D, el fondo y los tokens de la UI; un id sin registrar hace fallar `src/integration/themes.test.ts`.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatClock, formatPrecise } from './format';
+import { formatClock, formatMinimum, formatPrecise, reachedMinimum } from './format';
 
 describe('formatClock', () => {
   it.each([
@@ -51,5 +51,20 @@ describe('formatPrecise', () => {
     for (const bad of [-100, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(formatPrecise(bad)).toBe('0:00.0');
     }
+  });
+});
+
+describe('move minimum', () => {
+  it('prints an exact minimum plainly and a lower bound with ≥', () => {
+    expect(formatMinimum({ moves: 10, exact: true })).toBe('mín. 10');
+    expect(formatMinimum({ moves: 10, exact: false })).toBe('mín. ≥ 10');
+  });
+
+  it('a count at or under the minimum (or a lower bound) reached it; without a minimum nothing is reached', () => {
+    expect(reachedMinimum(10, { moves: 10, exact: true })).toBe(true);
+    expect(reachedMinimum(9, { moves: 10, exact: true })).toBe(true);
+    expect(reachedMinimum(11, { moves: 10, exact: true })).toBe(false);
+    expect(reachedMinimum(10, { moves: 10, exact: false })).toBe(true);
+    expect(reachedMinimum(0, null)).toBe(false);
   });
 });

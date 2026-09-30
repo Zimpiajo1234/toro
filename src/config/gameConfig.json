@@ -47,5 +47,8 @@
     "completeDelaySec": 1.6,
     "confirmGraceSec": 0.45,
     "restartHoldSec": 0.55
+  },
+  "moves": {
+    "showLowerBound": true
   }
 }

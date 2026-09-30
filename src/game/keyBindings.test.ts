@@ -17,6 +17,8 @@ describe('resolveKey', () => {
     expect(resolveKey('KeyR', 'r')).toBe('restart');
     expect(resolveKey('KeyM', 'm')).toBe('mute');
     expect(resolveKey('KeyT', 't')).toBe('timer');
+    expect(resolveKey('KeyN', 'n')).toBe('moves');
+    expect(resolveKey('', 'N')).toBe('moves');
     expect(resolveKey('Enter', 'Enter')).toBe('confirm');
     expect(resolveKey('NumpadEnter', 'Enter')).toBe('confirm');
     expect(resolveKey('Escape', 'Escape')).toBe('back');
@@ -32,7 +34,8 @@ describe('resolveKey', () => {
 
   it('no two game keys share a physical key or a character', () => {
     // F / V were free; the fork keys must not steal a key another binding already uses.
-    const codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyM', 'KeyT', 'KeyU', 'KeyF', 'KeyV', 'Space', 'Enter', 'Escape'];
+    // N (move counter) was free too.
+    const codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyM', 'KeyT', 'KeyN', 'KeyU', 'KeyF', 'KeyV', 'Space', 'Enter', 'Escape'];
     const bound = codes.map((c) => resolveKey(c, ''));
     expect(bound.every((b) => b !== null)).toBe(true);
     expect(new Set(bound).size).toBe(bound.length);

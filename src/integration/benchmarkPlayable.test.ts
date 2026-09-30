@@ -38,6 +38,7 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(out.solved).toBe(true);
     expect(out.moves).toBeGreaterThanOrEqual(misplacedCount(grid, liveStacks(grid, new GameState(level).getSnapshot()), level.boxes.length));
     expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
+    expect(out.snapshot.moves).toBe(out.moves); // the move counter agrees with the box moves driven
     // Real controls: fork level presses and driving in reverse.
     expect(out.controls.forkSteps).toBeGreaterThan(0);
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
