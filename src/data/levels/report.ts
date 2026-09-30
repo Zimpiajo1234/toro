@@ -94,6 +94,14 @@ function slotsText(m: LevelMetrics): string {
   return `${m.slots.total} (${m.slots.cued} con pista, ${m.slots.free} ${m.slots.free === 1 ? 'libre' : 'libres'})`;
 }
 
+/** «5 (2 columnas, 1 camión; 1 cargado al empezar)»: truck levels (docs/DOCKS.md). */
+function trucksText(m: LevelMetrics): string {
+  const t = m.trucks;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const loaded = t.loaded > 0 ? `; ${plural(t.loaded, 'cargado', 'cargados')} al empezar` : '';
+  return `${t.levels} (${plural(t.columns, 'columna', 'columnas')}, ${plural(t.trucks, 'camión', 'camiones')}${loaded})`;
+}
+
 function heading(source: LevelSource): string {
   const { level } = source;
   const canonical = source.text === undefined || source.text === renderLevel(level, source);
@@ -112,6 +120,7 @@ function summaryBlock(source: LevelSource, m: LevelMetrics): string[] {
   ];
   if (m.sortings !== null) parts.push(`trampas ${m.traps}`, `repartos ${m.sortings}`);
   if (m.slots.total > 0) parts.push(`huecos ${slotsText(m)}`);
+  if (m.trucks.levels > 0) parts.push(`camión ${trucksText(m)}`);
   parts.push(`callejones ${deadEndText(m)}`);
   return [heading(source), ...renderMapLines(grid), ...(legend.length > 0 ? ['', ...legend] : []), parts.join(' · ')];
 }
@@ -138,10 +147,11 @@ function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]
     ['libre', pct(m.freeFloorPct), 'casillas sin estantería, planta ni caja al empezar'],
     ['ambiguas', String(m.ambiguous), 'cajas con más de un destino posible (zona o piso de pila)'],
     ['trampas', String(m.traps), 'colocaciones aceptadas que dejan otra caja sin zona'],
-    ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos o estanterías)'],
+    ['repartos', m.sortings === null ? '—' : String(m.sortings), 'repartos completos distintos (niveles con símbolos, estanterías o camiones)'],
     ['callejones', deadEndDetail(m), 'estados desde los que ya no se puede terminar (desde un plan mínimo; --callejones N)'],
   ];
   if (m.slots.total > 0) rows.push(['huecos', slotsText(m), 'huecos de estantería almacenable (docs/RACKS.md)']);
+  if (m.trucks.levels > 0) rows.push(['camion', trucksText(m), 'niveles de camión en los muelles de carga, cada uno un objetivo (docs/DOCKS.md)']);
   const w0 = Math.max(...rows.map((r) => r[0].length));
   const w1 = Math.max(...rows.map((r) => r[1].length));
   lines.push('Métricas', ...rows.map(([name, value, what]) => `  ${name.padEnd(w0)}  ${value.padEnd(w1)}  ${what}`), '');
@@ -178,7 +188,10 @@ function blockerIds(m: LevelMetrics): string {
   return parts.length > 0 ? ` (${parts.join('; ')})` : '';
 }
 
-/** "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks. */
+/**
+ * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks («hueco 2 de R» for a rack slot,
+ * «camión T …, nivel 2» for a truck bed column).
+ */
 function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
   const model = new LevelGrid(level);
   const symbols = usesSymbols(level);
@@ -197,25 +210,34 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
     const lifted = lift(stacks, move.from);
     const height = model.isSlot(move.drop) ? 0 : lifted[move.drop].length;
     const at = model.isSlot(move.drop) ? slotName(move.drop).cell : model.cellOf(move.drop);
-    const from = model.isSlot(move.from) ? slotName(move.from) : null;
-    const fromCell = from ? from.cell : model.cellOf(move.from);
+    const fromCellOf = model.isSlot(move.from) ? slotName(move.from).cell : model.cellOf(move.from);
+    const from = model.isSlot(move.from)
+      ? slotName(move.from)
+      : model.isBed(move.from)
+        ? { text: `camión ${grid[fromCellOf.z][fromCellOf.x]}, nivel ${stacks[move.from].length}`, cell: fromCellOf }
+        : null;
+    const fromCell = from ? from.cell : fromCellOf;
+    const onBed = model.isBed(move.drop);
     const target = model.isSlot(move.drop)
       ? slotName(move.drop).text + (model.steps[move.drop] ? '' : ' (libre: aparcar)')
-      : model.steps[move.drop]
-        ? `zona ${grid[at.z][at.x]}`
-        : height > 0
-          ? 'encima de otra caja'
-          : 'suelo (aparcar)';
+      : onBed
+        ? `camión ${grid[at.z][at.x]}`
+        : model.steps[move.drop]
+          ? `zona ${grid[at.z][at.x]}`
+          : height > 0
+            ? 'encima de otra caja'
+            : 'suelo (aparcar)';
     lifted[move.drop] += code;
     stacks = lifted;
     const what = `caja ${COLOR_NAMES[box.color]}${symbols ? ` ${SYMBOL_GLYPHS[box.symbol]}` : ''}`;
     const source = `(${fromCell.x},${fromCell.z})${from ? `, ${from.text}` : ''}`;
-    return `  ${String(i + 1).padStart(width)}. ${what} ${source} → ${target} (${at.x},${at.z})${height > 0 ? `, piso ${height + 1}` : ''}`;
+    const floor = onBed ? `, nivel ${height + 1}` : height > 0 ? `, piso ${height + 1}` : '';
+    return `  ${String(i + 1).padStart(width)}. ${what} ${source} → ${target} (${at.x},${at.z})${floor}`;
   });
 }
 
 function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: number; checks: TargetCheck[] }[], timings: boolean): string[] {
-  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'callej.', 'huecos', 'dific.'];
+  const head = ['#', 'id', 'tamaño', 'cajas', 'zonas', 'limit', 'mov.', 'extra', 'oblig.', 'bloq.', 'estr.', 'libre', 'ambig.', 'tramp.', 'repart.', 'callej.', 'huecos', 'camión', 'dific.'];
   if (timings) head.push('ms');
   const rows = measured.map(({ metrics: m, ms, checks }) => {
     const row = [
@@ -236,6 +258,7 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
       m.sortings === null ? '—' : String(m.sortings),
       deadEndText(m),
       m.slots.total === 0 ? '—' : `${m.slots.total}/${m.slots.cued}`,
+      m.trucks.levels === 0 ? '—' : `${m.trucks.columns}/${m.trucks.levels}`,
       checks.length === 0 ? '—' : `${checks.every((c) => c.ok) ? 'OK' : 'NO'} ${checks.filter((c) => c.ok).length}/${checks.length}`,
     ];
     if (timings) row.push(ms.toFixed(0));
@@ -251,9 +274,9 @@ function table(measured: { source: LevelSource; metrics: LevelMetrics; ms: numbe
     '',
     'mov. = mínimo de movimientos de caja (≥ = cota inferior: la búsqueda exacta se cortó) · extra = mov. − oblig.',
     'oblig. = cajas que deben moverse · bloq. = cajas que hay que apartar antes · estr. = casillas sin giro con carga',
-    'libre = % de casillas vacías al empezar · ambig. = cajas con varios destinos · tramp./repart. = niveles con símbolos',
+    'libre = % de casillas vacías al empezar · ambig. = cajas con varios destinos · tramp./repart. = niveles con símbolos, estanterías o camiones',
     'callej. = callejones encontrados (entre paréntesis: estados explorados, si la búsqueda no los cubrió todos)',
-    'huecos = huecos de estantería almacenable / con pista (docs/RACKS.md)',
+    'huecos = huecos de estantería almacenable / con pista (docs/RACKS.md) · camión = columnas / niveles de camión (docs/DOCKS.md)',
     'dific. = objetivos «dificultad:» del archivo que se cumplen · detalle y plan: npm run levels -- <nivel>',
   ];
 }

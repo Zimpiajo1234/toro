@@ -6,16 +6,21 @@
  *   `nota:` lines. Every authoring mistake throws a LevelFormatError "file:line:column: motivo" (in Spanish).
  * - renderLevel(level): LevelData → canonical text. parseLevel(renderLevel(level)).level deep-equals the level (the
  *   level tests check it for every shipped level) and rendering the result again gives the same text.
+ * - parseLevelDraft(text, file): the raw level object parseLevel hands to validateLevel (map and legend checked).
+ * Storage racks: docs/RACKS.md; loading docks (trucks): docs/DOCKS.md.
  * Pure: no DOM, no three.
  */
 import {
   BOX_KINDS,
   MAX_RACK_SLOTS,
+  MAX_TRUCK_LEVELS,
+  TRUCK_FACING,
   type BoxKind,
   type ColorId,
   type Facing,
   type LevelData,
   type LevelRack,
+  type LevelTruck,
   type LevelZone,
   type SymbolId,
   type WallSide,
@@ -29,6 +34,16 @@ export interface ParsedLevel {
   /** `dificultad:` targets, in file order (the level tests check them against the measured metrics). */
   targets: DifficultyTarget[];
   /** `nota:` lines, in file order (kept by the formatter). */
+  notes: string[];
+}
+
+/**
+ * What parseLevel hands to validateLevel: the raw level object, its map and legend already checked (no defaults, none
+ * of validateLevel's rules), plus its `dificultad:` targets and `nota:` lines.
+ */
+export interface LevelDraft {
+  raw: Record<string, unknown>;
+  targets: DifficultyTarget[];
   notes: string[];
 }
 
@@ -167,8 +182,21 @@ const HEADER_KEYS: Readonly<Record<string, HeaderKey>> = {
   notas: 'nota',
 };
 const HEADER_LIST = 'id, limit, tema, ventanas, rumbo, dificultad o nota';
-const ELEMENTS = ['caja', 'pila', 'zona', 'estantería', 'planta'];
+const ELEMENTS = ['caja', 'pila', 'zona', 'estantería', 'camión', 'planta'];
 const RACK_EXAMPLE = '«a = estantería frente sur: azul / ▲ + caja coral / libre»';
+/** A loading dock's truck (docs/DOCKS.md): «camión muelle norte: …». */
+const TRUCK_EXAMPLE = '«T = camión muelle norte: azul / ▲ | coral ●»';
+/** First word of a truck entry. */
+const TRUCK_HEADS: ReadonlySet<string> = new Set(['camion', 'truck', 'muelle', 'dock']);
+/** Words allowed between «camión» and its wall: «camión muelle norte», «camión en el muelle norte». */
+const TRUCK_FILLERS: ReadonlySet<string> = new Set(['muelle', 'dock', 'en', 'el', 'del', 'de']);
+/** How id messages name each kind of element, and its generated ids. */
+const ID_WORDS = {
+  caja: { of: 'de la caja', generated: 'b1, b2…' },
+  zona: { of: 'de la zona', generated: 'z1, z2…' },
+  'estantería': { of: 'de la estantería', generated: 'r1, r2…' },
+  'camión': { of: 'del camión', generated: 't1, t2…' },
+} as const;
 const COLOR_LIST = 'azul, menta, amarillo, coral o lavanda';
 const SYMBOL_LIST = '● ▲ ■ ◆ ✚ (o círculo, triángulo, cuadrado, rombo, cruz)';
 
@@ -236,12 +264,56 @@ interface ZoneSpec {
   idPos?: Pos;
 }
 
-/** One slot of a storage rack in the legend: its cue (none = «libre») and the box that starts in it. */
+/**
+ * One slot of a storage rack, or one level of a truck bed column, in the legend: its cue (none = «libre», racks only)
+ * and the box that starts in it.
+ */
 interface SlotSpec {
   color?: ColorId;
   symbol?: SymbolId;
   box?: BoxSpec;
+  /** Where its text starts in the legend. */
+  pos: Pos;
 }
+
+/** A truck character: «camión muelle norte: … | …» (docs/DOCKS.md). */
+interface TruckSpec {
+  wall: WallSide;
+  /** Per bed column (along the wall), levels bottom → top. */
+  columns: SlotSpec[][];
+  id?: string;
+  idPos?: Pos;
+}
+
+/** How the messages of a column list name its parts (a rack's slots, a truck's levels). */
+interface ColumnWords {
+  /** A level with no cue at all (two separators in a row). */
+  missing: string;
+  /** More levels than a column holds. */
+  tooMany: string;
+  /** A second colon. */
+  colon: string;
+  /** How one level is named: «un hueco» / «un nivel del camión». */
+  one: string;
+  /** Whether «libre» (no cue) is allowed. */
+  free: boolean;
+}
+
+const RACK_WORDS: ColumnWords = {
+  missing: `falta un hueco: su pista (color, símbolo, ambos o «libre»), de abajo arriba, p. ej. ${RACK_EXAMPLE}`,
+  tooMany: `una columna de estantería tiene como mucho ${MAX_RACK_SLOTS} huecos (suelo + 2); para otra columna, sepárala con «|»`,
+  colon: 'los dos puntos van una sola vez, tras «frente …»',
+  one: 'un hueco',
+  free: true,
+};
+
+const TRUCK_WORDS: ColumnWords = {
+  missing: `falta un nivel: su pista (color, símbolo o ambos), de abajo arriba, p. ej. ${TRUCK_EXAMPLE}`,
+  tooMany: `una columna del camión lleva como mucho ${MAX_TRUCK_LEVELS} niveles (${MAX_TRUCK_LEVELS} cajas de alto); para otra columna, sepárala con «|»`,
+  colon: 'los dos puntos van una sola vez, tras «camión muelle …»',
+  one: 'un nivel del camión',
+  free: false,
+};
 
 /** A storage rack character: «estantería frente sur: … | …» (docs/RACKS.md). */
 interface RackSpec {
@@ -264,6 +336,8 @@ interface LegendDef {
   plant?: { variant?: number };
   /** A storage rack character. */
   rack?: RackSpec;
+  /** A loading dock's truck character. */
+  truck?: TruckSpec;
 }
 
 interface Header {
@@ -303,6 +377,20 @@ class LevelParser {
   }
 
   parse(): ParsedLevel {
+    const { raw, targets, notes, context } = this.draft();
+    let level: LevelData;
+    try {
+      level = validateLevel(raw, this.file);
+    } catch (e) {
+      const message = e instanceof Error ? e.message.replace(/^\[[^\]]*\]\s*/, '') : String(e);
+      const explained = explainValidation(message, context);
+      this.fail(explained.pos, explained.reason);
+    }
+    return { level, targets, notes };
+  }
+
+  /** The raw level object (map and legend checked), plus what explainValidation needs to place validateLevel's errors. */
+  draft(): LevelDraft & { context: ValidationContext } {
     // Title: the first non-blank line.
     let first = 0;
     while (first < this.lines.length && this.lines[first].trim() === '') first++;
@@ -403,6 +491,7 @@ class LevelParser {
     const forklifts: { char: string; x: number; z: number }[] = [];
     const shelfCells = new Map<string, Set<number>>();
     const rackCells = new Map<string, Set<number>>();
+    const truckCells = new Map<string, Set<number>>();
     const plants: { x: number; z: number; variant?: number }[] = [];
     const cellsOf = new Map<string, { x: number; z: number }[]>();
     for (let z = 0; z < depth; z++) {
@@ -424,10 +513,11 @@ class LevelParser {
           const set = shelfCells.get(ch) ?? new Set<number>();
           set.add(z * width + x);
           shelfCells.set(ch, set);
-        } else if (def.rack) {
-          const set = rackCells.get(ch) ?? new Set<number>();
+        } else if (def.rack || def.truck) {
+          const byChar = def.rack ? rackCells : truckCells;
+          const set = byChar.get(ch) ?? new Set<number>();
           set.add(z * width + x);
-          rackCells.set(ch, set);
+          byChar.set(ch, set);
         } else if (def.plant) {
           plants.push({ x, z, ...(def.plant.variant === undefined ? {} : { variant: def.plant.variant }) });
         } else {
@@ -443,9 +533,11 @@ class LevelParser {
           ? shelfCells.has(def.char)
           : def.rack
             ? rackCells.has(def.char)
-            : def.plant
-              ? rowsContain(rows, def.char)
-              : cellsOf.has(def.char);
+            : def.truck
+              ? truckCells.has(def.char)
+              : def.plant
+                ? rowsContain(rows, def.char)
+                : cellsOf.has(def.char);
       if (!used) this.fail(def.pos, `«${def.char}» está en la leyenda pero no en el mapa`);
     }
 
@@ -493,14 +585,7 @@ class LevelParser {
       const spec = def.rack;
       const cells = rackCells.get(def.char);
       if (!spec || !cells) continue;
-      const groups: number[][] = [];
-      const seen = new Set<number>();
-      for (const start of [...cells].sort((a, b) => a - b)) {
-        if (seen.has(start)) continue;
-        const group = floodFill(cells, start, width, depth).sort((a, b) => a - b);
-        for (const c of group) seen.add(c);
-        groups.push(group);
-      }
+      const groups = groupsOf(cells, width, depth);
       if (spec.id !== undefined && groups.length > 1)
         this.fail(spec.idPos ?? def.pos, `«${def.char}» lleva un id propio y hay ${groups.length} estanterías con ese carácter: un id solo puede ir en una`);
       for (const group of groups) {
@@ -536,6 +621,59 @@ class LevelParser {
           ),
         });
         rackOrigins.push({ def, cell: startPos, columns: group.map((c) => cellPos(c % width, Math.floor(c / width))), ...(spec.idPos ? { idPos: spec.idPos } : {}) });
+      }
+    }
+
+    // Loading docks (docs/DOCKS.md): every connected group of one truck character is one truck, its bed a straight run
+    // 1 cell deep against its wall (row 0 for a north dock, column 0 for a west one) with one legend column per cell;
+    // the dock door is that run. Trucks come in legend order, then reading order.
+    const trucks: Record<string, unknown>[] = [];
+    const truckOrigins: RackOrigin[] = [];
+    for (const def of legendOrder) {
+      const spec = def.truck;
+      const cells = truckCells.get(def.char);
+      if (!spec || !cells) continue;
+      const groups = groupsOf(cells, width, depth);
+      if (spec.id !== undefined && groups.length > 1)
+        this.fail(spec.idPos ?? def.pos, `«${def.char}» lleva un id propio y hay ${groups.length} camiones con ese carácter: un id solo puede ir en uno`);
+      const wallName = WALL_NAMES[spec.wall];
+      for (const group of groups) {
+        const xs = group.map((c) => c % width);
+        const zs = group.map((c) => Math.floor(c / width));
+        const x0 = Math.min(...xs);
+        const z0 = Math.min(...zs);
+        const alongX = spec.wall === 'north';
+        const line = alongX ? 'fila' : 'columna';
+        const startPos = cellPos(x0, z0);
+        if (!(alongX ? zs.every((z) => z === z0) : xs.every((x) => x === x0)))
+          this.fail(
+            startPos,
+            `el camión «${def.char}» que empieza aquí no es una ${line} recta: en el muelle ${wallName} su caja va a lo largo del muro, 1 casilla de fondo; para dos camiones pegados usa otro carácter`,
+          );
+        if (alongX ? z0 !== 0 : x0 !== 0)
+          this.fail(
+            startPos,
+            `el camión «${def.char}» del muelle ${wallName} va pegado al muro ${wallName}: su caja ocupa la ${line} 0 del mapa (aquí está en la ${line} ${alongX ? z0 : x0})`,
+          );
+        if (group.length !== spec.columns.length)
+          this.fail(
+            startPos,
+            `el camión «${def.char}» que empieza aquí ocupa ${group.length} ${plural(group.length, 'casilla', 'casillas')} y su leyenda describe ${spec.columns.length} ${plural(spec.columns.length, 'columna', 'columnas')}: una columna por casilla, separadas con «|»`,
+          );
+        trucks.push({
+          id: spec.id ?? `t${trucks.length + 1}`,
+          wall: spec.wall,
+          x: x0,
+          z: z0,
+          w: group.length,
+          columns: spec.columns.map((levels) =>
+            levels.map((cue) => ({
+              ...(cue.color === undefined ? {} : { color: cue.color }),
+              ...(cue.symbol === undefined ? {} : { symbol: cue.symbol }),
+            })),
+          ),
+        });
+        truckOrigins.push({ def, cell: startPos, columns: group.map((c) => cellPos(c % width, Math.floor(c / width))), ...(spec.idPos ? { idPos: spec.idPos } : {}) });
       }
     }
 
@@ -597,9 +735,48 @@ class LevelParser {
         });
       });
     });
+    // Boxes loaded on a truck at the start: after the rack boxes, truck by truck, column by column, bottom → top. A bed
+    // column is a stack: a box needs one under it.
+    trucks.forEach((truck, i) => {
+      const origin = truckOrigins[i];
+      const spec = origin.def.truck!;
+      spec.columns.forEach((levels, column) => {
+        const cell = truckCellOf(truck.x as number, truck.z as number, spec.wall, column);
+        levels.forEach((lv, level) => {
+          const box = lv.box;
+          if (!box) return;
+          if (level > 0 && !levels[level - 1].box)
+            this.fail(
+              lv.pos,
+              `en el camión las cajas van una sobre otra, de abajo arriba: esta caja no tiene nada debajo (el nivel ${levelWord(level - 1, levels.length)} está vacío)`,
+            );
+          boxes.push({
+            id: box.id ?? `b${boxes.length + 1}`,
+            color: box.color,
+            ...(box.symbol === undefined ? {} : { symbol: box.symbol }),
+            x: cell.x,
+            z: cell.z,
+            level,
+            ...(box.kind === undefined ? {} : { kind: box.kind }),
+          });
+          boxOrigins.push({ def: origin.def, cell: origin.columns[column], ...(box.idPos ? { idPos: box.idPos } : {}) });
+        });
+      });
+    });
     this.checkIds('caja', boxes, boxOrigins);
     this.checkIds('zona', zones, zoneOrigins);
     this.checkIds('estantería', racks, rackOrigins);
+    this.checkIds('camión', trucks, truckOrigins);
+    // Rack slots and truck slots share the id form «id:columna:nivel»: a rack and a truck never share an id.
+    trucks.forEach((truck, i) => {
+      const r = racks.findIndex((rack) => rack.id === truck.id);
+      if (r < 0) return;
+      const [here, other] = truckOrigins[i].idPos ? [truckOrigins[i], rackOrigins[r]] : [rackOrigins[r], truckOrigins[i]];
+      this.fail(
+        here.idPos ?? here.def.pos,
+        `id repetido «${String(truck.id)}»: también es el ${other === rackOrigins[r] ? 'de la estantería' : 'del camión'} «${other.def.char}» (línea ${other.def.pos.line}); una estantería y un camión no comparten id`,
+      );
+    });
 
     const raw = {
       id: idHeader.value,
@@ -612,29 +789,25 @@ class LevelParser {
       zones,
       shelves,
       ...(racks.length > 0 ? { racks } : {}),
+      ...(trucks.length > 0 ? { trucks } : {}),
       decor: { plants, windows },
       ...(themeHeader ? { theme: themeHeader.value } : {}),
     };
-    let level: LevelData;
-    try {
-      level = validateLevel(raw, this.file);
-    } catch (e) {
-      const message = e instanceof Error ? e.message.replace(/^\[[^\]]*\]\s*/, '') : String(e);
-      const explained = explainValidation(message, {
-        title: titlePos,
-        map: at(rows[0].line, rows[0].column),
-        limit: limitHeader?.valuePos ?? titlePos,
-        size: `${width}×${depth}`,
-        boxes: boxOrigins,
-        zones: zoneOrigins,
-        racks: rackOrigins,
-        boxIds: boxes.map((b) => String(b.id)),
-        zoneIds: zones.map((z) => String(z.id)),
-        cell: cellPos,
-      });
-      this.fail(explained.pos, explained.reason);
-    }
-    return { level, targets, notes };
+    const context: ValidationContext = {
+      title: titlePos,
+      map: at(rows[0].line, rows[0].column),
+      limit: limitHeader?.valuePos ?? titlePos,
+      windows: once.get('ventanas')?.valuePos ?? titlePos,
+      size: `${width}×${depth}`,
+      boxes: boxOrigins,
+      zones: zoneOrigins,
+      racks: rackOrigins,
+      trucks: truckOrigins,
+      boxIds: boxes.map((b) => String(b.id)),
+      zoneIds: zones.map((z) => String(z.id)),
+      cell: cellPos,
+    };
+    return { raw, targets, notes, context };
   }
 
   /** A header line "clave: valor" (or "clave valor"), or null when the line is something else. */
@@ -812,13 +985,18 @@ class LevelParser {
   /** «zona … + caja …», «pila …», «estantería 3 alturas», «planta variante 2». */
   private readDescription(def: Omit<LegendDef, 'char' | 'pos'>, toks: Tok[], eqPos: Pos, chars: string): void {
     if (toks.length === 0) this.fail(eqPos, `falta qué es «${chars}» después del «=»`);
-    // A storage rack («estantería frente sur: …») has its own grammar: «+» joins a slot's cue and its box.
+    // A storage rack («estantería frente sur: …») and a dock's truck («camión muelle norte: …») have their own grammar:
+    // «+» joins a slot's (or a truck level's) cue and its box.
     if ((toks[0].key === 'estanteria' || toks[0].key === 'estante') && toks[1]?.key === 'frente') {
       def.rack = this.readRack(toks);
       return;
     }
+    if (toks[0].kind === 'word' && TRUCK_HEADS.has(toks[0].key)) {
+      def.truck = this.readTruck(toks);
+      return;
+    }
     const stray = toks.find((t) => t.kind === ':' || t.kind === '/' || t.kind === '|');
-    if (stray) this.fail(stray.pos, `«${stray.text}» solo va en una estantería almacenable, p. ej. ${RACK_EXAMPLE}`);
+    if (stray) this.fail(stray.pos, `«${stray.text}» solo va en una estantería almacenable o en un camión, p. ej. ${RACK_EXAMPLE} o ${TRUCK_EXAMPLE}`);
     const parts: Tok[][] = [[]];
     for (const t of toks) {
       if (t.kind === '+') {
@@ -996,75 +1174,123 @@ class LevelParser {
     }
     if (toks[k]?.kind !== ':')
       this.fail((toks[k] ?? toks[k - 1]).pos, `después de «frente ${FACING_NAMES[facing]}» van dos puntos y los huecos de abajo arriba: ${RACK_EXAMPLE}`);
+    spec.columns = this.readColumns(toks, k + 1, MAX_RACK_SLOTS, RACK_WORDS);
+    if (head.kind !== 'word') this.fail(head.pos, 'se esperaba «estantería»');
+    return spec;
+  }
+
+  /**
+   * «camión muelle norte [(id)]: nivel / nivel | nivel …» (docs/DOCKS.md) — the bed columns along the wall separated
+   * by «|», each one's levels bottom → top separated by «/»; a level is its cue (a colour, a symbol or both; never
+   * «libre») and optionally «+ caja …», the box loaded there at the start. Also «camión en el muelle norte»,
+   * «muelle norte», «truck north».
+   */
+  private readTruck(toks: Tok[]): TruckSpec {
+    let k = 1;
+    while (toks[k]?.kind === 'word' && TRUCK_FILLERS.has(toks[k].key)) k++;
+    const dir = toks[k];
+    const wall = dir?.kind === 'word' ? lookup(WALL_WORDS, dir.key) : undefined;
+    if (!wall) {
+      const where = (dir ?? toks[k - 1]).pos;
+      if (dir?.kind === 'word' && lookup(FACING_WORDS, dir.key))
+        this.fail(where, `los muelles van en el muro norte o en el oeste, como las ventanas (no «${dir.text}»)`);
+      this.fail(
+        where,
+        `¿en qué muro está el muelle? «camión muelle norte» o «camión muelle oeste», p. ej. ${TRUCK_EXAMPLE}${dir?.kind === 'word' ? suggest(dir.text, Object.keys(WALL_WORDS)) : ''}`,
+      );
+    }
     k++;
-    // Columns split by «|», slots by «/».
+    const spec: TruckSpec = { wall, columns: [] };
+    if (toks[k]?.kind === 'id') {
+      spec.id = toks[k].text;
+      spec.idPos = toks[k].pos;
+      k++;
+    }
+    if (toks[k]?.kind !== ':')
+      this.fail((toks[k] ?? toks[k - 1]).pos, `después de «camión muelle ${WALL_NAMES[wall]}» van dos puntos y los niveles de cada columna de abajo arriba: ${TRUCK_EXAMPLE}`);
+    spec.columns = this.readColumns(toks, k + 1, MAX_TRUCK_LEVELS, TRUCK_WORDS);
+    return spec;
+  }
+
+  /**
+   * The columns after a rack's or a truck's colon (toks[start] is the first token after it): columns split by «|»,
+   * each one's levels bottom → top split by «/», at most `max` per column.
+   */
+  private readColumns(toks: Tok[], start: number, max: number, words: ColumnWords): SlotSpec[][] {
+    const columns: SlotSpec[][] = [];
     let column: SlotSpec[] = [];
     let slot: Tok[] = [];
-    let slotPos = toks[k - 1].pos;
+    let slotPos = toks[start - 1].pos;
     const endSlot = () => {
-      if (slot.length === 0) this.fail(slotPos, `falta un hueco: su pista (color, símbolo, ambos o «libre»), de abajo arriba, p. ej. ${RACK_EXAMPLE}`);
-      if (column.length === MAX_RACK_SLOTS)
-        this.fail(slot[0].pos, `una columna de estantería tiene como mucho ${MAX_RACK_SLOTS} huecos (suelo + 2); para otra columna, sepárala con «|»`);
-      column.push(this.readSlot(slot));
+      if (slot.length === 0) this.fail(slotPos, words.missing);
+      if (column.length === max) this.fail(slot[0].pos, words.tooMany);
+      column.push(this.readSlot(slot, words));
       slot = [];
     };
-    for (; k < toks.length; k++) {
+    for (let k = start; k < toks.length; k++) {
       const t = toks[k];
       if (t.kind === '/' || t.kind === '|') {
         slotPos = t.pos;
         endSlot();
         if (t.kind === '|') {
-          spec.columns.push(column);
+          columns.push(column);
           column = [];
         }
         continue;
       }
-      if (t.kind === ':') this.fail(t.pos, 'los dos puntos van una sola vez, tras «frente …»');
+      if (t.kind === ':') this.fail(t.pos, words.colon);
       if (slot.length === 0) slotPos = t.pos;
       slot.push(t);
     }
     endSlot();
-    spec.columns.push(column);
-    if (head.kind !== 'word') this.fail(head.pos, 'se esperaba «estantería»');
-    return spec;
+    columns.push(column);
+    return columns;
   }
 
-  /** One slot: «libre», «azul», «▲», «azul ■», each optionally «+ caja …». */
-  private readSlot(toks: Tok[]): SlotSpec {
+  /**
+   * One rack slot («libre», «azul», «▲», «azul ■») or one truck level (the same without «libre»), each optionally
+   * «+ caja …».
+   */
+  private readSlot(toks: Tok[], words: ColumnWords): SlotSpec {
     const plus = toks.findIndex((t) => t.kind === '+');
     const cue = plus >= 0 ? toks.slice(0, plus) : toks;
     const rest = plus >= 0 ? toks.slice(plus + 1) : [];
-    const slot: SlotSpec = {};
-    if (cue.length === 0) this.fail(toks[0].pos, 'falta la pista del hueco antes del «+»: un color, un símbolo, ambos o «libre»');
+    const slot: SlotSpec = { pos: toks[0].pos };
+    const one = words.one;
+    if (cue.length === 0)
+      this.fail(toks[0].pos, `falta la pista ${words.free ? 'del hueco' : 'del nivel'} antes del «+»: un color, un símbolo${words.free ? ', ambos o «libre»' : ' o ambos'}`);
     let free = false;
     for (const t of cue) {
-      if (t.kind !== 'word') this.fail(t.pos, `«${t.text}» sobra en la pista de un hueco`);
+      if (t.kind !== 'word') this.fail(t.pos, `«${t.text}» sobra en la pista de ${one}`);
       const c = lookup(COLOR_WORDS, t.key);
       const s = lookup(SYMBOL_WORDS, t.key);
       if (t.key === 'libre' || t.key === 'free') {
+        if (!words.free)
+          this.fail(t.pos, 'en un camión cada nivel pide algo (un color, un símbolo o ambos): no hay niveles «libre»; para aparcar una caja, usa el suelo');
         if (free || slot.color || slot.symbol) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
         free = true;
       } else if (c) {
         if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
-        if (slot.color) this.fail(t.pos, 'un hueco pide un solo color');
+        if (slot.color) this.fail(t.pos, `${one} pide un solo color`);
         slot.color = c;
       } else if (s) {
         if (free) this.fail(t.pos, '«libre» va solo: un hueco libre no pide nada');
-        if (slot.symbol) this.fail(t.pos, 'un hueco pide un solo símbolo');
+        if (slot.symbol) this.fail(t.pos, `${one} pide un solo símbolo`);
         slot.symbol = s;
       } else if (t.key === 'caja') {
-        this.fail(t.pos, 'la caja va después de la pista y un «+»: «libre + caja azul», «▲ + caja menta ▲»');
+        this.fail(t.pos, `la caja va después de la pista y un «+»: ${words.free ? '«libre + caja azul»' : '«azul + caja azul»'}, «▲ + caja menta ▲»`);
       } else {
-        this.fail(t.pos, `palabra desconocida «${t.text}» en un hueco: color (${COLOR_LIST}), símbolo ${SYMBOL_LIST} o «libre»${suggest(t.text, [...WORDS_FOR_HINTS, 'libre'])}`);
+        const options = words.free ? `color (${COLOR_LIST}), símbolo ${SYMBOL_LIST} o «libre»` : `color (${COLOR_LIST}) o símbolo ${SYMBOL_LIST}`;
+        this.fail(t.pos, `palabra desconocida «${t.text}» en ${one}: ${options}${suggest(t.text, words.free ? [...WORDS_FOR_HINTS, 'libre'] : WORDS_FOR_HINTS)}`);
       }
     }
     if (plus >= 0) {
       if (rest.length === 0) this.fail(toks[plus].pos, 'falta la caja después del «+»: «+ caja azul»');
       const more = rest.findIndex((t) => t.kind === '+');
-      if (more >= 0) this.fail(rest[more].pos, 'un hueco guarda una sola caja');
+      if (more >= 0) this.fail(rest[more].pos, `${one} guarda una sola caja`);
       const [head, ...box] = rest;
       if (head.kind !== 'word' || head.key !== 'caja')
-        this.fail(head.pos, head.kind === 'word' && head.key === 'pila' ? 'en un hueco cabe una sola caja (no una pila)' : 'después del «+» va «caja …», p. ej. «+ caja coral»');
+        this.fail(head.pos, head.kind === 'word' && head.key === 'pila' ? `en ${one} cabe una sola caja (no una pila)` : 'después del «+» va «caja …», p. ej. «+ caja coral»');
       slot.box = this.readBox(box, head);
     }
     return slot;
@@ -1107,7 +1333,7 @@ class LevelParser {
     return variant === undefined ? {} : { variant };
   }
 
-  private checkIds(what: 'caja' | 'zona' | 'estantería', items: Record<string, unknown>[], origins: Origin[]): void {
+  private checkIds(what: keyof typeof ID_WORDS, items: Record<string, unknown>[], origins: Origin[]): void {
     const seen = new Map<string, number>();
     items.forEach((item, i) => {
       const id = String(item.id);
@@ -1115,9 +1341,10 @@ class LevelParser {
       if (j !== undefined) {
         // Point at an explicit «(id)» and name the other character (a generated id is b1, b2… / z1, z2… by position).
         const [here, other] = origins[i].idPos ? [origins[i], origins[j]] : [origins[j], origins[i]];
+        const words = ID_WORDS[what];
         this.fail(
           here.idPos ?? here.def.pos,
-          `id repetido «${id}»: también es el de la ${what} «${other.def.char}» (línea ${other.def.pos.line}); los ids sin paréntesis son ${what === 'caja' ? 'b1, b2…' : what === 'zona' ? 'z1, z2…' : 'r1, r2…'} por orden de leyenda`,
+          `id repetido «${id}»: también es el ${words.of} «${other.def.char}» (línea ${other.def.pos.line}); los ids sin paréntesis son ${words.generated} por orden de leyenda`,
         );
       }
       seen.set(id, i);
@@ -1136,10 +1363,31 @@ function structuredCloneDef(def: Omit<LegendDef, 'char' | 'pos'>): Omit<LegendDe
     ...(def.boxes ? { boxes: def.boxes.map((b) => ({ ...b })) } : {}),
     ...(def.shelfTiers === undefined ? {} : { shelfTiers: def.shelfTiers }),
     ...(def.plant ? { plant: { ...def.plant } } : {}),
-    ...(def.rack
-      ? { rack: { ...def.rack, columns: def.rack.columns.map((slots) => slots.map((slot) => ({ ...slot, ...(slot.box ? { box: { ...slot.box } } : {}) }))) } }
-      : {}),
+    ...(def.rack ? { rack: { ...def.rack, columns: cloneColumns(def.rack.columns) } } : {}),
+    ...(def.truck ? { truck: { ...def.truck, columns: cloneColumns(def.truck.columns) } } : {}),
   };
+}
+
+function cloneColumns(columns: readonly SlotSpec[][]): SlotSpec[][] {
+  return columns.map((slots) => slots.map((slot) => ({ ...slot, ...(slot.box ? { box: { ...slot.box } } : {}) })));
+}
+
+/** The 4-connected groups of `cells` (indexed z * width + x), in reading order of their first cell, each one sorted. */
+function groupsOf(cells: ReadonlySet<number>, width: number, depth: number): number[][] {
+  const groups: number[][] = [];
+  const seen = new Set<number>();
+  for (const start of [...cells].sort((a, b) => a - b)) {
+    if (seen.has(start)) continue;
+    const group = floodFill(cells, start, width, depth).sort((a, b) => a - b);
+    for (const c of group) seen.add(c);
+    groups.push(group);
+  }
+  return groups;
+}
+
+/** Bed cell of a truck column: a truck reads like a rack loaded from TRUCK_FACING[wall] (docs/DOCKS.md). */
+function truckCellOf(x: number, z: number, wall: WallSide, column: number): { x: number; z: number } {
+  return rackCellOf({ x, z, facing: TRUCK_FACING[wall] }, column);
 }
 
 /** 4-connected group of `cells` containing `start` (cells indexed z * width + x). */
@@ -1174,10 +1422,13 @@ interface ValidationContext {
   title: Pos;
   map: Pos;
   limit: Pos;
+  /** The `ventanas:` value (the title when there is none). */
+  windows: Pos;
   size: string;
   boxes: Origin[];
   zones: Origin[];
   racks: RackOrigin[];
+  trucks: RackOrigin[];
   boxIds: string[];
   zoneIds: string[];
   cell: (x: number, z: number) => Pos;
@@ -1185,11 +1436,22 @@ interface ValidationContext {
 
 const SLOT_ORDINALS = ['de abajo', 'del medio', 'de arriba'];
 
+/** «de abajo», «del medio», «de arriba» or «único»: a slot or truck level (from 0) of a column of `levels`. */
+function levelWord(level: number, levels: number): string {
+  return levels === 1 ? 'único' : levels === 2 ? (level === 0 ? 'de abajo' : 'de arriba') : SLOT_ORDINALS[level] ?? `${level + 1}`;
+}
+
 /** «el hueco de abajo de la columna 2 de la estantería «a»» (level / column from 0). */
 function slotText(rack: RackOrigin | undefined, column: number, level: number, levels: number): string {
-  const which = levels === 1 ? 'único' : levels === 2 ? (level === 0 ? 'de abajo' : 'de arriba') : SLOT_ORDINALS[level] ?? `${level + 1}`;
   const col = rack && rack.columns.length > 1 ? ` de la columna ${column + 1}` : '';
-  return `el hueco ${which}${col} de la estantería «${rack?.def.char ?? '?'}»`;
+  return `el hueco ${levelWord(level, levels)}${col} de la estantería «${rack?.def.char ?? '?'}»`;
+}
+
+/** «el nivel de abajo de la columna 2 del camión «T»» (level / column from 0). */
+function truckSlotText(truck: RackOrigin | undefined, column: number, level: number): string {
+  const levels = truck?.def.truck?.columns[column]?.length ?? 1;
+  const col = truck && truck.columns.length > 1 ? ` de la columna ${column + 1}` : '';
+  return `el nivel ${levelWord(level, levels)}${col} del camión «${truck?.def.char ?? '?'}»`;
 }
 
 /** «azul ●» for "blue/circle". */
@@ -1257,9 +1519,47 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
     };
   if ((m = /^no complete assignment exists: box "([^"]+)"/.exec(message))) {
     const origin = boxOf(m[1]);
+    const places = ctx.trucks.length > 0 ? 'sin zona, hueco ni nivel de camión' : 'sin zona ni hueco';
     return {
       pos: origin?.cell ?? ctx.title,
-      reason: `no hay reparto completo: la caja «${origin?.def.char ?? m[1]}» de esta casilla siempre se queda sin zona ni hueco que la acepte`,
+      reason: `no hay reparto completo: la caja «${origin?.def.char ?? m[1]}» de esta casilla siempre se queda ${places} que la acepte`,
+    };
+  }
+  // Loading docks (docs/DOCKS.md «Validación»: the English messages validateLevel gives for trucks).
+  if ((m = /^trucks\[(\d+)\] column (\d+) has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
+    const truck = ctx.trucks[Number(m[1])];
+    return {
+      pos: truck?.columns[Number(m[2])] ?? truck?.cell ?? ctx.title,
+      reason: `el camión «${truck?.def.char ?? '?'}» se carga desde el almacén y delante de esta casilla (la ${m[3]},${m[4]}) hay una estantería, una planta u otro camión: déjale sitio`,
+    };
+  }
+  if ((m = /^trucks\[(\d+)\]\.columns\[(\d+)\] has (\d+) levels, more than stackLimit (\d+)/.exec(message))) {
+    const truck = ctx.trucks[Number(m[1])];
+    return {
+      pos: truck?.columns[Number(m[2])] ?? truck?.cell ?? ctx.title,
+      reason: `esta columna del camión «${truck?.def.char ?? '?'}» tiene ${m[3]} niveles y limit es ${m[4]}: sube «limit» (hasta ${MAX_TRUCK_LEVELS}) o quítale niveles`,
+    };
+  }
+  if ((m = /^decor\.windows\[(\d+)\] overlaps the dock door of trucks\[(\d+)\]/.exec(message)))
+    return {
+      pos: ctx.windows,
+      reason: `una ventana choca con la puerta del muelle del camión «${ctx.trucks[Number(m[2])]?.def.char ?? '?'}» (la puerta es lo que ocupa su caja en el muro): mueve la ventana`,
+    };
+  if ((m = /^box "([^"]+)" is on trucks\[(\d+)\] column (\d+) at level (\d+) with no box below it/.exec(message))) {
+    const origin = boxOf(m[1]);
+    return { pos: origin?.cell ?? ctx.title, reason: 'en el camión las cajas van una sobre otra, de abajo arriba: esta caja no tiene nada debajo' };
+  }
+  if ((m = /^a level with storage racks or trucks needs one box per target \((\d+) boxes, (\d+) zones, (\d+) slots with a cue, (\d+) truck levels\)/.exec(message)))
+    return {
+      pos: ctx.title,
+      reason: `con estanterías o camiones, cada zona, cada hueco con pista y cada nivel del camión lleva una caja: hay ${m[1]} cajas para ${m[2]} zonas, ${m[3]} huecos con pista y ${m[4]} niveles de camión (los huecos «libre» no cuentan)`,
+    };
+  if ((m = /^more than one complete assignment: trucks\[(\d+)\]\.columns\[(\d+)\]\[(\d+)\] may take (\S+) or (\S+)/.exec(message))) {
+    const truck = ctx.trucks[Number(m[1])];
+    const column = Number(m[2]);
+    return {
+      pos: truck?.columns[column] ?? truck?.def.pos ?? ctx.title,
+      reason: `hay más de un reparto: ${truckSlotText(truck, column, Number(m[3]))} puede llevar la caja ${kindText(m[4])} o la ${kindText(m[5])}; cada caja tiene un único sitio: afina las pistas (color, símbolo o ambos) hasta que solo quede un reparto`,
     };
   }
   if ((m = /^more than one complete assignment: (?:zones\[(\d+)\]|racks\[(\d+)\]\.columns\[(\d+)\]\[(\d+)\]) may take (\S+) or (\S+)/.exec(message))) {
@@ -1286,6 +1586,15 @@ export function parseLevel(text: string, file = 'nivel.level'): ParsedLevel {
   return new LevelParser(text, file).parse();
 }
 
+/**
+ * The raw level object of a `.level` text, before validateLevel: every grammar and map error is thrown as in
+ * parseLevel, none of validateLevel's (no defaults either). For tools and for tests of the grammar alone.
+ */
+export function parseLevelDraft(text: string, file = 'nivel.level'): LevelDraft {
+  const { raw, targets, notes } = new LevelParser(text, file).draft();
+  return { raw, targets, notes };
+}
+
 /* ------------------------------------------------------------------ */
 /* Renderer                                                            */
 /* ------------------------------------------------------------------ */
@@ -1297,6 +1606,8 @@ const BOX_CHARS = 'abcdefghijklmnoqrstuwxyzABCDEFGIJKLMNOQRSTUVWXYZ';
 const TALL_SHELF_CHARS = 'HKLMNORSTUWXYZ';
 /** Storage racks: one character each. */
 const RACK_CHARS = 'RSTUVWXYZKLMNO';
+/** Trucks (docs/DOCKS.md): one character each, taken after the racks («T»: the first one when there is a rack). */
+const TRUCK_CHARS = 'TCUVWXYZKLMNO';
 const SHELF_CHARS = 'EFGIJQVKLMNORSTUWXYZ';
 const PLANT_CHARS = 'PQRSTUVWXYZ';
 const SPARE_CHARS = '!$%&*;?@[]{}|~_\'"`/\\';
@@ -1314,7 +1625,7 @@ function take(preferred: string, used: Set<string>): string {
 interface RenderEntry {
   char: string;
   text: string;
-  group: 'zona' | 'caja' | 'estantería' | 'otro';
+  group: 'zona' | 'caja' | 'estantería' | 'camión' | 'otro';
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -1354,6 +1665,23 @@ function rackText(rack: LevelRack, id: string | null, boxAt: (column: number, le
       .join(' / '),
   );
   return `estantería frente ${FACING_NAMES[rack.facing]}${id === null ? '' : ` (${id})`}: ${columns.join(' | ')}`;
+}
+
+/**
+ * «camión muelle norte: azul / ▲ + caja coral | coral ●» (docs/DOCKS.md). `boxAt(column, level)` gives the text of
+ * the box loaded on a level at the start («caja …»), or null.
+ */
+function truckText(truck: LevelTruck, id: string | null, boxAt: (column: number, level: number) => string | null): string {
+  const columns = truck.columns.map((levels, column) =>
+    levels
+      .map((cue, level) => {
+        const words = [cue.color ? COLOR_NAMES[cue.color] : '', cue.symbol ? SYMBOL_GLYPHS[cue.symbol] : ''].filter((w) => w !== '').join(' ');
+        const box = boxAt(column, level);
+        return `${words}${box === null ? '' : ` + ${box}`}`;
+      })
+      .join(' / '),
+  );
+  return `camión muelle ${WALL_NAMES[truck.wall]}${id === null ? '' : ` (${id})`}: ${columns.join(' | ')}`;
 }
 
 /** Legend entries in columns; a new line whenever the kind of entry changes. */
@@ -1486,8 +1814,20 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     });
     return ch;
   });
-  /** Boxes that start in a rack slot (the rest are floor boxes and stacks). */
-  const inRack = (b: LevelData['boxes'][number]) => b.level !== undefined && rackColumnAt.has(key(b.x, b.z));
+  // Trucks (docs/DOCKS.md): one character each, after the racks (their entries go after the rack entries).
+  const trucks = level.trucks ?? [];
+  const bedCells = new Set<number>();
+  const truckChars = trucks.map((truck) => {
+    const ch = take(TRUCK_CHARS, used);
+    truck.columns.forEach((_, column) => {
+      const cell = truckCellOf(truck.x, truck.z, truck.wall, column);
+      grid[cell.z][cell.x] = ch;
+      bedCells.add(key(cell.x, cell.z));
+    });
+    return ch;
+  });
+  /** Boxes that start in a rack slot or loaded on a truck (the rest are floor boxes and stacks). */
+  const inRack = (b: LevelData['boxes'][number]) => b.level !== undefined && (rackColumnAt.has(key(b.x, b.z)) || bedCells.has(key(b.x, b.z)));
 
   // Zones and boxes by cell. Legend order = LevelData order: zones first, a box-only cell whenever the next zone
   // carries later boxes (a crossing order, never shipped, cannot be kept and gets normalised by the parser).
@@ -1553,6 +1893,18 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
       return `caja ${boxText(box, box.id === `b${boxCount}` ? null : box.id)}`;
     };
     entries.push({ char: rackChars[r], text: rackText(rack, rack.id === `r${r + 1}` ? null : rack.id, boxAt), group: 'estantería' });
+  });
+
+  // Truck entries, in truck order; their boxes are numbered after the rack boxes (column by column, bottom → top).
+  trucks.forEach((truck, t) => {
+    const boxAt = (column: number, level: number) => {
+      const cell = truckCellOf(truck.x, truck.z, truck.wall, column);
+      const box = levelBoxes.find((b) => b.x === cell.x && b.z === cell.z && b.level === level);
+      if (!box) return null;
+      boxCount++;
+      return `caja ${boxText(box, box.id === `b${boxCount}` ? null : box.id)}`;
+    };
+    entries.push({ char: truckChars[t], text: truckText(truck, truck.id === `t${t + 1}` ? null : truck.id, boxAt), group: 'camión' });
   });
 
   return { grid, legend: layoutLegend([...entries, ...legendTail]) };

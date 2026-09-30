@@ -4,7 +4,8 @@
  */
 import type { LevelBox, LevelData } from '../../core/types';
 import { assignBoxes, assignmentsOf, criteriaOf, cueOf, meets, sortableOf, targetsOf, usesSymbols, type Sortable } from '../../core/sorting';
-import { hasRacks, slotsOf } from '../../core/racks';
+import { slotsOf } from '../../core/racks';
+import { truckColumnsOf, truckSlotsOf, trucksOf, usesTargetRules } from '../../core/docks';
 import { targetHolds, targetRefuted, type DifficultyMetric, type DifficultyTarget, type MetricRange } from '../difficulty';
 import {
   LevelGrid,
@@ -49,12 +50,17 @@ export interface LevelMetrics {
   traps: number;
   /**
    * «repartos»: distinct complete sortings (levels that sort by symbol, up to identical boxes and identical zones), or
-   * in a level with racks distinct complete assignments to its targets (up to identical boxes; always 1 there); null
-   * otherwise.
+   * in a level with racks or trucks distinct complete assignments to its targets (up to identical boxes; always 1
+   * there); null otherwise.
    */
   sortings: number | null;
   /** «huecos»: storage rack slots (docs/RACKS.md): all of them, those with a cue (targets) and the «libre» ones. */
   slots: { total: number; cued: number; free: number };
+  /**
+   * «camion»: loading docks (docs/DOCKS.md): the trucks, their bed columns and their levels (every level is a target;
+   * `loaded` of them start with a box on them).
+   */
+  trucks: { trucks: number; columns: number; levels: number; loaded: number };
   /**
    * «callejones»: states the forklift can reach from which the level can no longer be finished, explored around a
    * shortest plan (solver.deadEnds); null when not measured.
@@ -87,6 +93,11 @@ function slotCounts(level: LevelData): LevelMetrics['slots'] {
   return { total: slots.length, cued, free: slots.length - cued };
 }
 
+function truckCounts(level: LevelData, grid: LevelGrid): LevelMetrics['trucks'] {
+  const loaded = level.boxes.filter((b) => grid.isBed(grid.index(b.x, b.z))).length;
+  return { trucks: trucksOf(level).length, columns: truckColumnsOf(level).length, levels: truckSlotsOf(level).length, loaded };
+}
+
 /** All metrics of a level (the move search dominates the cost; `options` caps it or skips it). */
 export function levelMetrics(level: LevelData, options: MetricsOptions = {}): LevelMetrics {
   const grid = new LevelGrid(level);
@@ -115,9 +126,10 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     narrow: narrowCells(grid),
     freeFloorPct: freeFloor(grid, stacks),
     ambiguous: ambiguousBoxes(level),
-    traps: hasRacks(level) ? rackTraps(level) : usesSymbols(level) ? trapPlacements(level) : 0,
-    sortings: hasRacks(level) ? rackAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
+    traps: usesTargetRules(level) ? rackTraps(level) : usesSymbols(level) ? trapPlacements(level) : 0,
+    sortings: usesTargetRules(level) ? rackAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
     slots: slotCounts(level),
+    trucks: truckCounts(level, grid),
     deadEnds:
       options.deadEndStates === undefined
         ? null
@@ -159,6 +171,8 @@ export function metricRange(metrics: LevelMetrics, metric: DifficultyMetric): Me
       return exact(metrics.zones);
     case 'huecos':
       return exact(metrics.slots.total);
+    case 'camion':
+      return exact(metrics.trucks.levels);
   }
 }
 
@@ -208,6 +222,8 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
     const cell = grid.posOf(b.x, b.z, b.level);
     byCell.set(cell, [...(byCell.get(cell) ?? []), b]);
   }
+  // A truck bed column lists its boxes by level (bottom → top), like a floor stack.
+  for (const [cell, boxes] of byCell) if (grid.isBed(cell)) boxes.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
   const covering: string[] = [];
   for (const [cell, boxes] of byCell) {
     // A box in a «libre» rack slot covers nothing (a slot holds one box); off zones, only boxes above the bottom one do.
@@ -219,9 +235,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
 
   const occupancy = occupancyOf(grid, stacks);
   const start = grid.index(level.forklift.x, level.forklift.z);
-  // A rack slot is reached from its column's front cell.
+  // A rack slot or a truck bed is reached from its front cell.
   const touches = (region: Uint8Array, pos: number) =>
-    grid.isSlot(pos)
+    grid.isSlot(pos) || grid.isBed(pos)
       ? region[grid.accessOf(pos)] === 1
       : [0, 1, 2, 3].some((d) => {
           const n = grid.step(pos, d);
@@ -229,8 +245,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
         });
   const needed: number[] = [];
   for (let c = 0; c < grid.posCount; c++) {
-    // A locked box (levels with racks) is never lifted and takes nothing more: no reason to reach it.
-    if (lockedAt(grid, stacks, c)) continue;
+    // A locked box (levels with racks) is never lifted and takes nothing more: no reason to reach it (a truck bed
+    // whose satisfied levels are locked still takes its next level: it is reached while it has room).
+    if (lockedAt(grid, stacks, c) && !(grid.isBed(c) && stacks[c].length < grid.bedLevels[c])) continue;
     const steps = grid.steps[c];
     const open = steps !== null && correctPrefix(grid, stacks, c) === stacks[c].length && stacks[c].length < steps.length;
     if (stacks[c].length > 0 || open) needed.push(c);
@@ -240,8 +257,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
   const gatekeepers: string[] = [];
   if (unreached.length > 0) {
     for (const [cell, boxes] of byCell) {
-      // A locked box (levels with racks: on its destiny from the start) never moves, so it opens nothing.
-      if (grid.isSlot(cell) || !touches(base, cell) || lockedAt(grid, stacks, cell)) continue;
+      // A locked box (levels with racks: on its destiny from the start) never moves, so it opens nothing; neither does a
+      // slot or a truck bed, off the floor.
+      if (grid.isSlot(cell) || grid.isBed(cell) || !touches(base, cell) || lockedAt(grid, stacks, cell)) continue;
       const without = occupancy.slice();
       without[cell] = -1;
       const region = reachableFrom(grid, without, start);
@@ -280,10 +298,14 @@ const zoneKind = (zone: LevelData['zones'][number]) => JSON.stringify([zone.colo
 /** A rack slot's cue as a destination kind (identical cues are one destination, like identical zones). */
 const cueKind = (cue: ReturnType<typeof cueOf>) => JSON.stringify(['slot', cue?.color ?? null, cue?.symbol ?? null]);
 
+/** A truck level's cue as a destination kind (docs/DOCKS.md; identical cues are one destination). */
+const truckCueKind = (cue: { color?: string; symbol?: string }) => JSON.stringify(['truck', cue.color ?? null, cue.symbol ?? null]);
+
 function ambiguousBoxes(level: LevelData): number {
   const cues = slotsOf(level)
     .map((s) => cueOf(s.rack.columns[s.column][s.level]))
     .filter((cue) => cue !== null);
+  const truckCues = truckSlotsOf(level);
   return level.boxes.filter((b) => {
     const box = sortableOf(b);
     const destinations = new Set<string>();
@@ -293,17 +315,21 @@ function ambiguousBoxes(level: LevelData): number {
       });
     }
     for (const cue of cues) if (meets(cue, box)) destinations.add(cueKind(cue));
+    // A truck level at its height, like a floor zone's stack.
+    for (const slot of truckCues) if (meets(slot.cue, box)) destinations.add(`${truckCueKind(slot.cue)}@${slot.level}`);
     return destinations.size > 1;
   }).length;
 }
 
 /**
- * Levels with racks: placements a cue accepts (box kind → kind of zone or slot) that are not the box's destiny, so
- * they leave some other box without its place: a box there fits but never lights (docs/RACKS.md, rule 5).
+ * Levels with racks or trucks: placements a cue accepts (box kind → kind of zone, slot or truck level) that are not the
+ * box's destiny, so they leave some other box without its place: a box there fits but never lights (docs/RACKS.md,
+ * rule 5).
  */
 function rackTraps(level: LevelData): number {
   const targets = targetsOf(level);
-  const kindOf = (t: (typeof targets)[number]) => (t.kind === 'zone' ? zoneKind(level.zones[t.index]) : cueKind(t.criteria));
+  const kindOf = (t: (typeof targets)[number]) =>
+    t.kind === 'zone' ? zoneKind(level.zones[t.index]) : t.kind === 'slot' ? cueKind(t.criteria) : truckCueKind(t.criteria);
   const boxes = level.boxes.map(sortableOf);
   const traps = new Set<string>();
   boxes.forEach((box, i) => {
@@ -317,7 +343,7 @@ function rackTraps(level: LevelData): number {
   return traps.size;
 }
 
-/** Levels with racks: complete assignments of boxes to its targets (by position), up to identical boxes. */
+/** Levels with racks or trucks: complete assignments of boxes to its targets (by position), up to identical boxes. */
 function rackAssignments(level: LevelData): number {
   return assignmentsOf(level.boxes.map(sortableOf), targetsOf(level).map((t) => t.criteria), 10_001).count;
 }

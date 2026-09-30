@@ -8,7 +8,8 @@ import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing, stackA
 import { TONIC_CHORD } from './music/progressions';
 import { MusicPlayer } from './MusicPlayer';
 import { SfxPlayer, STACK_NOTE_GAP } from './sfx';
-import { MotorSound } from './motor';
+import { CLUNK, MotorSound } from './motor';
+import { beepFrequency } from './beeper';
 import { glideParam, rampParam } from './nodes';
 
 export type { AudioScene } from './types';
@@ -106,26 +107,31 @@ export class AudioEngine {
     this.guard('handleEvent', (rt, now) => {
       switch (event.type) {
         case 'boxPicked':
-          // Out of a rack slot the box eases off a metal beam; anywhere else, the classic knock.
+          // Out of a rack slot the box eases off a metal beam; anywhere else (a truck bed too: wood), the classic knock.
           if (event.fromSlotId !== undefined) rt.sfx.slotLift(now, event.level ?? 0);
           else rt.sfx.pickup(now, event.level ?? 0);
           break;
         case 'boxDropped': {
           const chord = this.composer.currentChord() ?? undefined;
           const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
+          const final = event.correct && event.satisfiedCount >= event.total;
           if (event.slotId !== undefined) {
             // Into a rack slot: the metal toc. `correct` = the slot now holds its destined box, the only one that
             // chimes; a box that merely fits the cue (or any box in a «libre» slot) just settles, never a success sound.
-            rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, match);
+            rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
+          } else if (event.truckSlotId !== undefined) {
+            // Onto a truck bed (loading docks): the hollow wooden trailer-floor thunk; the chime only when its truck
+            // slot is now satisfied (`correct`), like a rack slot.
+            rt.sfx.truckDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
           } else {
             const stack =
               event.correct && event.recipeLength > 1
                 ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
                 : null;
-            rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack, match);
+            rt.sfx.drop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, stack, match);
           }
-          // Levels with racks: on a floor zone or a cued slot that is not its destiny (trap boxes included), the soft
-          // "no" follows the landing. A «libre» slot, plain floor and every level without racks never set it.
+          // Levels with racks or trucks: on a floor zone, a cued slot or a truck slot it does not satisfy (trap boxes
+          // included), the soft "no" follows the landing. A «libre» slot, plain floor and every other level never set it.
           if (isWrongTarget(event)) rt.sfx.wrongBuzz(now + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC);
           break;
         }
@@ -156,17 +162,21 @@ export class AudioEngine {
       }
     });
     this.noteDrop(event);
+    this.hushForkClunk(event);
   }
 
   /**
-   * Called every frame. speed01 = |speed| / maxSpeed, forkMotion01 = how fast the forks are moving,
-   * forkHeight = their stack height (0 = floor; the servo sits a little higher per level).
+   * Called every frame with the forklift's motion (MotorSound). `speed` = speed / maxSpeed, signed −1‥1: the electric
+   * whine and tyre roll follow |speed|, and moving in reverse (negative) sounds the back-up beeper. `forkMotion` = how
+   * fast the forks move, signed −1‥1 (+ raising: the pump whir; − lowering: the soft tone and hiss; a 0‥1 value reads
+   * as raising). `forkHeight` = their stack / slot height (0 = floor; the pump sits a little higher per level).
+   * Continuous sounds go through the master gain, so mute (M) silences them too.
    */
-  setMotor(speed01: number, forkMotion01: number, forkHeight = 0): void {
+  setMotor(speed: number, forkMotion: number, forkHeight = 0): void {
     const rt = this.rt;
     if (!rt) return;
     try {
-      rt.motor.set(speed01, forkMotion01, forkHeight);
+      rt.motor.set(speed, forkMotion, forkHeight);
     } catch (err) {
       warn('setMotor', err);
     }
@@ -260,7 +270,8 @@ export class AudioEngine {
       const graph = createAudioGraph(ctx, this.config, this.rng, this.muted);
       const music = new MusicPlayer(graph, this.composer, this.rng);
       const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, this.rng);
-      const motor = new MotorSound(ctx, graph.motorIn);
+      // The reverse beep is tuned to the song's tonic (the key is fixed for the session).
+      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc));
       this.rt = { ctx, graph, music, sfx, motor };
 
       this.composer.setScene(this.scene);
@@ -334,6 +345,21 @@ export class AudioEngine {
     } else if (event.type === 'boxPicked' || event.type === 'levelComplete') {
       this.droppedBoxId = null;
       this.completeTail = 0;
+    }
+  }
+
+  /**
+   * A box picked or set down: its knock / thump marks the moment, so the forks' end-of-travel clunk keeps quiet while
+   * the carry lift (or the lowering after the drop) finishes. Outside guard() so it stays in step while muted.
+   */
+  private hushForkClunk(event: GameEvent): void {
+    if (event.type !== 'boxPicked' && event.type !== 'boxDropped') return;
+    const rt = this.rt;
+    if (!rt) return;
+    try {
+      rt.motor.hushClunk(rt.ctx.currentTime + CLUNK.hushSec);
+    } catch (err) {
+      warn('hushForkClunk', err);
     }
   }
 

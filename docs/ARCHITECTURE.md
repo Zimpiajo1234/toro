@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids) |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, cells, fronts, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -29,7 +29,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
 | `src/game/**` | **game** | Frame loop, input, wiring, flow between screens |
-| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves, the vehicle reverse gear and the rack fork steps) |
+| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves, the vehicle reverse gear and the rack fork steps; `benchmarkPlayable` / `docksPlayable` also load and unload trucks) |
 | `src/App.tsx`, `src/main.tsx`, `src/styles/base.css` | shared shell | Canvas host + overlay; sets `themeCssVars(theme)` (background gradient + `--ui-*` tokens) from the theme of the level on screen, the same one Game hands the renderer |
 
 Data flow (one direction):
@@ -160,9 +160,27 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `zoneReleased { zoneId: null, slotId }`. Rack levels only (2026-09-30): a box resting on its destined zone or slot
   is locked (`BoxState.locked`; never a pick, drop or stack target, picking at it gives the gentle `actionIdle`), and
   `boxDropped.wrongTarget` is true when a box lands on a floor zone or a cued slot that is not its destiny («libre»
-  slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`.
+  slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`. Every «rack level»
+  rule here also holds in a level with trucks (below), with or without racks: the gate is `usesTargetRules(level)`.
+- **Loading docks** (spec: `docs/DOCKS.md`, 2026-09-30; only the «Benchmark» has one). `LevelData.trucks?`
+  (`LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: a truck parked in a door of the north or west wall, its
+  bed a straight run of cells along that wall, row z = 0 or column x = 0; cues bottom → top, colour and / or symbol,
+  never «libre», 1‥`MAX_TRUCK_LEVELS` (3) levels and never more than `stackLimit`). Bed cells are solid for the body
+  only (`CollisionWorld` `bodyOnly`): the load and the fork point pass over them and only meet the boxes loaded there.
+  A bed column loads like a floor stack, only from its front cell (`TRUCK_FACING`: south for a north dock, east for a
+  west one), facing it (≤ 30°, held to 45°) and close to it (`TRUCK_REACH` 0.55); forks automatic, F / V do nothing.
+  Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
+  `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
+  occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
+  next level of its column with everything below satisfied (the only one that pulses). A box on a satisfied level is
+  locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
+  (`wrongTarget`) and stays pickable. A full column faced up close drops nothing (`actionIdle`, never the floor beside
+  it). Optional fields only in truck levels: `BoxState.truckSlotId`, `hint.dropTruckSlotId`,
+  `boxPicked.fromTruckSlotId`, `boxDropped.truckSlotId` (`zoneId: null`, `recipeLength` 1), `zoneReleased.truckSlotId`
+  (never fires today); events and snapshots of levels without trucks are exactly as before.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
-- Level completes when every zone is satisfied and nothing is carried → `levelComplete` exactly once, after which
+- Level completes when every target is satisfied (every zone; also every cued rack slot and every truck level) and
+  nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
 - `firstInput` exactly once, on the first frame with non-zero move, non-zero drive (throttle / steer) or an action press (Game starts the timer).
 
@@ -190,10 +208,13 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
 - `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
   search, exact A* for the fewest box moves with a consistent bound — swap cycles, dead-end corridors, fixed sorting
-  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells).
-  `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`, run by `levelsPlayable.test.ts` and
-  `racksPlayable.test.ts`) and the metrics (`metrics.ts`: movimientos, obligadas, extra, bloqueos, estrechas, libre,
-  ambiguas, trampas, repartos, callejones, huecos) all import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
+  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells; a truck bed
+  cell is a solid stack position loaded straight from behind its front and emptied only in reverse; in levels with
+  racks or trucks the exact search adds the destination-cycle bound `MoveSearch.destTerm`).
+  `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`, run by `levelsPlayable.test.ts`,
+  `racksPlayable.test.ts`, `benchmarkPlayable.test.ts` and `docksPlayable.test.ts`) and the metrics (`metrics.ts`:
+  movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos, callejones, huecos, camion)
+  all import it. `npm run levels` (`scripts/levels.mjs`: Vite `createServer` + `ssrLoadModule`, no port) prints maps and a
   metrics table; `npm run levels:fmt` rewrites files canonically. A `dificultad:` header (e.g. `extra>=2, bloqueos>=1`)
   declares targets that `levels.test.ts` proves against the measured metrics.
 
@@ -202,7 +223,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Lanes the forklift must turn in should be ≥ 2 cells wide; 1-cell corridors only for straight runs. No level may
   have a dead end («callejones», docs/LEVELS.md; `levels.test.ts` checks every state of a shortest plan).
 - Storage racks (docs/RACKS.md) are loaded by driving straight at a column: its front cell and the cell behind it must
-  be free floor (validateLevel checks the front cell; the solvability tests catch the rest).
+  be free floor (validateLevel checks the front cell; the solvability tests catch the rest). Trucks (docs/DOCKS.md) too:
+  keep a zone off a truck's front row and the row behind it, and off the only way out of a pocket beside a truck (a box
+  locked there would close it: a «callejón»). A dock door never shares a wall cell with a window.
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (a level whose boxes start on wrong zones needs spare space to
   reorganize).
@@ -281,6 +304,19 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
   brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
   slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
+- Loading docks (docs/DOCKS.md, «Render»): the dock door is an opening in its wall (`builders/walls.ts`, `dims.ts`
+  `DOCK`: slate frame, rolled-up shutter in its head, rubber seals and bumpers outside, baseboard broken). The truck
+  (`builders/truck.ts`, `views/TruckView.ts`, `Theme.truck`: soft cream and slate, never a box colour, never red or
+  black) is a small low-poly rigid truck backed into the door: inside, the rear of its wooden bed on the bed cells,
+  level with the floor (boxes rest at floor stack heights), low rails and a leveller plate; outside, in its wall's local
+  frame, the rest of the bed, cab and wheels and a driveway a step down. The outside sinks and rises with its wall
+  (never in front of the warehouse) and is framed only while that wall stands, its reach easing in and out of the fit
+  with the wall's height (`TruckView` `FIT_REACH_EASE`), so the zoom never snaps. Each bed column has a cue board at the
+  back of its cell, above its full stack: one unlit rack sticker per level (`buildCueFace(look, TRUCK_CUE)`), bottom at
+  the bottom, on both faces, never faded; the board frame ghosts like a rack bay. A truck level lights exactly like a
+  rack slot (`SlotLight`: flash, burst, soft glow, locked box tone, glow band around its box); while carrying, only a
+  `loadable` level whose cue fits pulses, and the drop preview takes the box tone only there. Levels with trucks and no
+  racks switch on the same target feedback (`usesTargetRules`); without trucks nothing changes.
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 
@@ -295,28 +331,46 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   bar twice), occasional Karplus-Strong guitar plucks/arpeggios, optional ultra-soft brushed hat/kick at very
   low level. Fade in over ~4 s on unlock. Density slightly lower on title. Mixed low (bus gain from config).
 - SFX (each with ±4–6 % random pitch/gain so nothing repeats identically):
-  - pick up: light wooden knock (short bandpassed noise + low sine body), plus soft servo glide.
+  - pick up: light wooden knock (short bandpassed noise + low sine body). The lift itself is the forks' continuous pump
+    whir (motor, below); the one-shot servo glide that used to follow the knock was removed on 2026-09-30 (it blurred
+    into the pump).
   - drop: soft felt thump scheduled `box.dropLandSec` after the event, when the box touches the floor; if
     `correct`: a chime whose pitch climbs a pentatonic scale with `satisfiedCount` (satisfying
     progression), in the current music key; its timbre follows the zone's `matchKind` (passed by Game as
     `handleEvent(event, match)`): colour = the warm bell, symbol = a soft wooden marimba (`instruments/wood.ts`),
-    exact = both, softer (`CHIME_LEVELS`; all three peak within ±0.2 dB). The fork servo answers the key press at once.
-  - stacks: a drop on a box is a lighter, higher wooden "toc" (+12 % pitch per level, less sub); pickup knock and
-    servo rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
+    exact = both, softer (`CHIME_LEVELS`; all three peak within ±0.2 dB).
+  - stacks: a drop on a box is a lighter, higher wooden "toc" (+12 % pitch per level, less sub); the pickup knock and
+    the fork pump rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
     chime (the lower notes skip avoid notes over the sounding chord). `zoneRestored`: the zone's chime (and stack
     climb) 0.12 s after the pickup knock, no final flourish.
   - storage racks (docs/RACKS.md, «Audio»): `boxDropped.slotId` → `slotDrop`, a soft metal "toc" (no floor bass,
     rises per level) whose chime (by the cue's `matchKind`) plays only when `correct` (the destined box); a box that
     merely fits, or any box in a «libre» slot, just settles. `boxPicked.fromSlotId` → `slotLift` (lighter knock, faint
-    metal, same fork servo). `AudioEngine.forkClick(level, direction)`: a soft detent click per fork step that took
-    effect at a rack column (Game decides with `audio/forkSteps.ts` `ForkStepWatcher`).
+    metal; the lift is the pump whir). `AudioEngine.forkClick(level, direction)`: a soft detent click per fork step that
+    took effect at a rack column (Game decides with `audio/forkSteps.ts` `ForkStepWatcher`). `boxDropped.wrongTarget`
+    (levels with racks or trucks) → `wrongBuzz`, a soft muffled "no" after the landing (docs/RACKS.md).
+  - loading docks (docs/DOCKS.md, «Audio»): `boxDropped.truckSlotId` → `truckDrop`, a hollow wooden "thunk" of the
+    trailer's planks (`TRUCK_BED_MODES` + a cavity resonance, no sub), a little higher and with a fainter bed per level;
+    chime only when `correct`, the buzz when `wrongTarget`. `boxPicked.fromTruckSlotId` → the plain `pickup`.
   - zoneReleased / actionIdle: barely audible soft tick (never a buzzer, never "wrong"). A release caused by
     stacking onto a satisfied zone ticks when that box lands (0.03 s after its knock); a pick-up releases at once.
   - levelComplete: gentle ascending arpeggio (on the 8th-note grid, after the final landing chime and a completed
     stack's climb into it) + pad swell on the downbeat the music resolves on; music ducks slightly, then returns.
-  - motor: electric hum (two soft oscillators, lowpassed), gain and pitch follow `speed01`, very low level,
-    fades to silence when stopped; fork servo whine follows `forkMotion01` and sits +12 % higher per stack level
-    (`setMotor`'s 3rd argument `forkHeight`; 0 in classic levels).
+  - motor (`audio/motor.ts` `MotorSound`, rewritten 2026-09-30; every value in its named tables `DRIVE`, `ROLL`,
+    `FORK`, `CLUNK`; all on the motor bus, so M mutes them; built once, `set()` allocates nothing per frame):
+    `setMotor(speed, forkMotion, forkHeight)`, both motions signed −1‥1.
+    - drive: an electric traction whine of pure sines (rotor tone 170 Hz at a crawl → 440 Hz at full speed, its
+      octave and a faint inverter partial; low-pass opening with speed), nothing that reads as a combustion engine; a
+      soft tyre roll (filtered noise) with a faint swell at each tile joint. Both follow |speed|, silent when stopped,
+      ≈ 7 dB under the music at full speed.
+    - forks: going up, the electric pump's soft whir (150 Hz, a slow beat against a sine just over its octave, +12 %
+      per level); going down, a softer, lower tone (104 Hz) with a light hiss; a tiny low clunk at the end of a travel
+      (only after ≥ 0.15 s of motion, at most one per 0.3 s, never within 0.8 s of a pick or drop:
+      `AudioEngine.hushForkClunk`).
+    - reverse beeper (`audio/beeper.ts` `ReverseBeeper`, `BEEPER`): while the forklift really moves backwards (S, or
+      backing out of a rack slot or a truck), "beep… beep… beep", one 0.34 s beep per beat of the music (0.86 s),
+      scheduled on the audio clock; a round, low-passed sine on the song's tonic (C5 octave: 523–784 Hz with the
+      composer's keys, well under a real back-up alarm), ≈ 7 dB under the music, soft fade in and out, no click.
   - uiClick: tiny soft wooden tap.
 
 ## UI direction (ui)
@@ -330,7 +384,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar" — and, in levels with storage racks
   (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
-  horquilla · rueda · X B mando".
+  horquilla · rueda · X B mando". Trucks add nothing to it (their forks are automatic, no new keys).
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
   short windows such as
@@ -403,5 +457,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,
   d-pad drives like W/S/A/D (`controls.keyboardMapping`; non-zero drive wins over the stick), A pick / drop and confirm, LB/RB camera, Start confirm, Back/View = restart (same hold rule),
   Y = "Repetir" on the card only.
-- Push `elapsedMs` to the store at ≤ 10 Hz. Pass `|speed| / maxSpeed`, fork motion (carry lift, and the stack
-  climb normalised by `forkRiseRate`) and `forkHeight` to `audio.setMotor` every frame. Resize handled by the renderer (ResizeObserver on its container).
+- Push `elapsedMs` to the store at ≤ 10 Hz. Pass the signed speed (`sign(speed) · |speed| / maxSpeed`: negative =
+  reverse, which beeps), the signed fork motion (the faster of the carry lift and the stack / slot climb normalised by
+  `forkRiseRate`, + up / − down) and `forkHeight` to `audio.setMotor` every frame. With each event Game passes the
+  match kind of its zone, rack slot or truck slot (`matchOf`). Resize handled by the renderer (ResizeObserver on its container).

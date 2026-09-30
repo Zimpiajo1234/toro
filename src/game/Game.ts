@@ -1,7 +1,7 @@
 import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
-import { zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { matchKind, zoneMatchKinds, type MatchKind } from '../core/sorting';
 import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
@@ -455,10 +455,16 @@ export class Game implements GameActions {
     // is the next whole level up): normalise by that rate so a slower climb whines just as clearly.
     const climb = forklift.forkHeight - heightBefore;
     const climbRate = forkRiseRate(GAME_CONFIG, climb > 0 ? Math.ceil(forklift.forkHeight) : heightBefore);
+    // The fork sounds answer both the carry lift and the climb to a stack / slot height (whichever moves faster), with
+    // its direction: raising = the pump whir, lowering = the soft tone and hiss. They sit higher up a stack.
+    const lift = forklift.forkLift - liftBefore;
+    const liftMotion = forkMotion01(lift, dt, cfg.forkLiftSpeed);
+    const climbMotion = forkMotion01(climb, dt, climbRate);
+    const forkMotion = liftMotion >= climbMotion ? Math.sign(lift) * liftMotion : Math.sign(climb) * climbMotion;
     rt.audio.setMotor(
-      speed01(forklift.speed, cfg.maxSpeed),
-      // The servo answers both the carry lift and the climb to a stack's height, and sits higher up a stack.
-      Math.max(forkMotion01(forklift.forkLift - liftBefore, dt, cfg.forkLiftSpeed), forkMotion01(climb, dt, climbRate)),
+      // Signed: backing up (speed < 0, S or leaving a rack slot) sounds the reverse beeper.
+      Math.sign(forklift.speed) * speed01(forklift.speed, cfg.maxSpeed),
+      forkMotion,
       forklift.forkHeight,
     );
     rt.renderer.update(snapshot, dt);
@@ -541,7 +547,7 @@ export class Game implements GameActions {
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
     rt.renderer.handleEvent(event, snapshot);
-    rt.audio.handleEvent(event, this.matchOf(event));
+    rt.audio.handleEvent(event, this.matchOf(event, snapshot));
     switch (event.type) {
       case 'firstInput':
         this.timer.start();
@@ -606,9 +612,19 @@ export class Game implements GameActions {
   /* Helpers                                                           */
   /* ---------------------------------------------------------------- */
 
-  /** Kind of match of the zone (or rack slot) a drop / restore event is about (the classic color bell for anything else). */
-  private matchOf(event: GameEvent): MatchKind {
+  /**
+   * Kind of match of the zone (or rack slot, or truck slot) a drop / restore event is about (the classic color bell for
+   * anything else). A truck slot's comes from its cue in the snapshot when the level's match table does not list it.
+   */
+  private matchOf(event: GameEvent, snapshot: GameSnapshot): MatchKind {
     if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
+    if (event.type === 'boxDropped' && event.truckSlotId !== undefined) {
+      const id = event.truckSlotId;
+      const known = this.zoneMatch.get(id);
+      if (known) return known;
+      const slot = snapshot.truckSlots?.find((s) => s.id === id);
+      return slot ? matchKind(slot.accepts) : 'color';
+    }
     const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
     return (target !== null && this.zoneMatch.get(target)) || 'color';
   }

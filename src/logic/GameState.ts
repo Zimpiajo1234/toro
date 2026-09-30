@@ -9,11 +9,13 @@ import {
   type LevelData,
   type RackHint,
   type SlotState,
+  type TruckSlotState,
   type Vec2,
   type ZoneState,
 } from '../core/types';
 import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from '../core/sorting';
 import { columnFrame, inwardHeading, slotsOf } from '../core/racks';
+import { hasTrucks, truckSlotsOf, usesTargetRules } from '../core/docks';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
 import { forkRiseRate } from './forkRise';
@@ -65,6 +67,26 @@ const RACK_HOLD_NEAR = 1.3;
 export const RACK_DROP_REACH = 0.55;
 /** The load counts as inside an open slot (the level locked) once it is this far (u) past the rack face. */
 const RACK_INSIDE_MARGIN = 0.05;
+
+// Loading docks (docs/DOCKS.md). Levels without trucks never use these.
+/**
+ * Facing a truck bed column (loaded only from the front): heading within this (rad) of straight into the truck, the
+ * fork point within TRUCK_FACE_LATERAL (u) of the column's centre line (half a cell: anywhere in front of it) and
+ * between TRUCK_FACE_NEAR in front of the bed's face and TRUCK_FACE_FAR into it.
+ */
+export const TRUCK_FACE_ANGLE = degToRad(30);
+export const TRUCK_FACE_LATERAL = 0.5;
+const TRUCK_FACE_NEAR = 0.8;
+const TRUCK_FACE_FAR = 1;
+/** Once facing a column the rig stays at it until it turns or slides further than these (no flicker at the edges). */
+const TRUCK_HOLD_ANGLE = degToRad(45);
+const TRUCK_HOLD_LATERAL = 0.6;
+/**
+ * Pick and drop act on the faced column once the fork point is within this (u) of the bed's face (from the column's
+ * front cell); from further away the truck is out of reach and the floor rules apply (a bed cell is never a floor
+ * drop).
+ */
+export const TRUCK_REACH = 0.55;
 
 /**
  * Pure simulation of one level: forklift kinematics, collisions, pick-up / drop, zone scoring.
@@ -118,13 +140,25 @@ export class GameState {
   private openLevels = new Int8Array(0);
   /** The hint's rack object, reused (hint.rack points at it or is null). */
   private readonly rackHint: RackHint = { rackId: '', column: 0, levels: 1, level: 0, slotId: '', ready: false };
+  /** The level follows the target rules of docs/RACKS.md (it has racks or trucks: destinies, locks, soft buzz). */
+  private readonly targetRules: boolean;
+  /** Truck slots (docs/DOCKS.md), snapshot.truckSlots order; empty without trucks. */
+  private readonly truckSlots: TruckSlotState[] = [];
+  /** Per truck bed column: world centre of its bed cell and the heading that faces into the truck. */
+  private readonly truckCenters: Vec2[] = [];
+  private readonly truckHeadings: number[] = [];
+  /** Truck bed column the rig faces (or is still held at), -1 = none. */
+  private truckEngaged = -1;
 
   constructor(level: LevelData, config: GameConfig = GAME_CONFIG) {
     this.config = config;
     const size = level.size;
     this.grid = new LevelGrid(level);
+    this.targetRules = usesTargetRules(level);
+    const trucks = hasTrucks(level);
 
-    // Levels with racks: every zone and slot with a cue has the one box kind the level's unique solution gives it.
+    // Levels with racks or trucks: every zone, slot with a cue and truck slot has the one box kind the level's unique
+    // solution gives it.
     const destinies = levelDestinies(level);
     const zones: ZoneState[] = level.zones.map((z, i) => ({
       id: z.id,
@@ -160,6 +194,30 @@ export class GameState {
       this.columnCenters.push(cellToWorld(column.cell, size));
       this.columnHeadings.push(inwardHeading(column.facing));
     }
+    truckSlotsOf(level).forEach((ref, i) => {
+      const destined = destinies?.trucks[i] ?? null;
+      const facing = this.grid.truckColumns[this.grid.truckColumnAt(ref.cell.x, ref.cell.z)].facing;
+      this.truckSlots.push({
+        id: ref.id,
+        truckId: ref.truck.id,
+        column: ref.column,
+        level: ref.level,
+        cell: ref.cell,
+        front: ref.front,
+        wall: ref.truck.wall,
+        facing,
+        pos: cellToWorld(ref.cell, size),
+        accepts: criteriaOf(ref.cue),
+        destined: destined ? { ...destined } : null,
+        occupiedBy: null,
+        satisfied: false,
+        loadable: false,
+      });
+    });
+    for (const column of this.grid.truckColumns) {
+      this.truckCenters.push(cellToWorld(column.cell, size));
+      this.truckHeadings.push(inwardHeading(column.facing));
+    }
     this.openLevels = new Int8Array(this.grid.columns.length).fill(-1);
     const boxes: BoxState[] = level.boxes.map((b, i) => {
       const zi = this.grid.zoneAt(b.x, b.z);
@@ -179,6 +237,8 @@ export class GameState {
         carried: false,
         zoneId: zone ? zone.id : null,
         slotId: slot ? slot.id : null,
+        // Levels with trucks only (every box gets the key; set by refreshTruckColumn below).
+        ...(trucks ? { truckSlotId: null } : {}),
         correct: false,
         locked: false,
       };
@@ -215,12 +275,14 @@ export class GameState {
       boxes,
       zones,
       slots,
-      hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null },
+      ...(trucks ? { truckSlots: this.truckSlots } : {}),
+      hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null, ...(trucks ? { dropTruckSlotId: null } : {}) },
       completed: false,
-      progress: { satisfied: 0, total: zones.length + slots.filter((slot) => slot.accepts !== null).length },
+      progress: { satisfied: 0, total: zones.length + slots.filter((slot) => slot.accepts !== null).length + this.truckSlots.length },
     };
     for (const zone of zones) this.refreshZone(zone);
     for (const slot of slots) this.refreshSlot(slot);
+    for (let c = 0; c < this.grid.truckColumns.length; c++) this.refreshTruckColumn(c);
     this.refreshLoadPassage();
     this.recountProgress();
     this.refreshHint();
@@ -300,6 +362,9 @@ export class GameState {
     const fromLevel = box.level;
     const cell = box.cell;
     const slot = box.slotId !== null ? this.slotOfBox(index) : -1;
+    const bed = cell ? this.grid.truckColumnAt(cell.x, cell.z) : -1;
+    const fromTruck = bed >= 0 ? this.truckSlots[this.grid.truckColumns[bed].firstSlot + fromLevel] : null;
+    const truckWas = fromTruck !== null && fromTruck.satisfied;
     let released: ZoneState | null = null;
     let restored: ZoneState | null = null;
     let releasedSlot: SlotState | null = null;
@@ -310,6 +375,7 @@ export class GameState {
     box.level = 0;
     box.zoneId = null;
     box.slotId = null;
+    if (box.truckSlotId !== undefined) box.truckSlotId = null;
     box.correct = false;
     box.locked = false;
     if (slot >= 0) {
@@ -334,6 +400,8 @@ export class GameState {
         if (was && !zone.satisfied) released = zone;
         else if (!was && zone.satisfied) restored = zone; // the wrong box on top came off
       }
+      // Off a truck bed column (its top box, never a locked one): what is left below keeps its state.
+      if (bed >= 0) this.refreshTruckColumn(bed);
       // The load was just lifted off what is left of the stack: it stays over it (see refreshLoadPassage).
       this.world.setPassable(this.grid.baseAt(cell.x, cell.z), true);
     }
@@ -346,9 +414,12 @@ export class GameState {
     this.driver.attachLoad(this.world.clearance(fork.x, fork.z, box.id, true));
     const progress = this.recountProgress();
     if (slot >= 0) this.emit({ type: 'boxPicked', boxId: box.id, fromZoneId, level: fromLevel, fromSlotId: this.snapshot.slots[slot].id });
+    else if (fromTruck) this.emit({ type: 'boxPicked', boxId: box.id, fromZoneId, level: fromLevel, fromTruckSlotId: fromTruck.id });
     else this.emit({ type: 'boxPicked', boxId: box.id, fromZoneId, level: fromLevel });
     if (released) this.emit({ type: 'zoneReleased', zoneId: released.id, boxId: box.id });
     if (releasedSlot) this.emit({ type: 'zoneReleased', zoneId: null, boxId: box.id, slotId: releasedSlot.id });
+    // Never today: a satisfied truck box is locked (docs/DOCKS.md rule 6). Kept for symmetry with rack slots.
+    if (fromTruck && truckWas && !fromTruck.satisfied) this.emit({ type: 'zoneReleased', zoneId: null, boxId: box.id, truckSlotId: fromTruck.id });
     if (restored) {
       this.emit({
         type: 'zoneRestored',
@@ -364,6 +435,10 @@ export class GameState {
   private dropCarried(choice: DropChoice): void {
     if (choice.slot >= 0) {
       this.dropInSlot(choice.slot);
+      return;
+    }
+    if (choice.truck >= 0) {
+      this.dropOnTruck(choice.truck);
       return;
     }
     const snap = this.snapshot;
@@ -408,8 +483,8 @@ export class GameState {
       satisfiedCount: progress.satisfied,
       total: progress.total,
     };
-    // Levels with racks: a zone that did not get its destined box (plain floor never is a target).
-    if (zone !== null && !correct && this.grid.columns.length > 0) drop.wrongTarget = true;
+    // Levels with racks or trucks: a zone that did not get its destined box (plain floor never is a target).
+    if (zone !== null && !correct && this.targetRules) drop.wrongTarget = true;
     this.emit(drop);
     if (released && zone) this.emit({ type: 'zoneReleased', zoneId: zone.id, boxId: box.id });
     if (progress.satisfied === progress.total) {
@@ -458,6 +533,118 @@ export class GameState {
       snap.completed = true;
       this.emit({ type: 'levelComplete' });
     }
+  }
+
+  /**
+   * The carried box is loaded onto truck bed column `column` (LevelGrid.truckColumns), on top of its stack, like a
+   * floor stack (docs/DOCKS.md): its level is satisfied only with its destined box on satisfied levels below; any other
+   * drop there is a wrong target (soft buzz) and the box stays pickable.
+   */
+  private dropOnTruck(column: number): void {
+    const snap = this.snapshot;
+    const index = this.carriedIndex;
+    const box = snap.boxes[index];
+    const { cell, firstSlot } = this.grid.truckColumns[column];
+    box.carried = false;
+    box.cell = { x: cell.x, z: cell.z };
+    box.pos.x = cell.x + 0.5 - snap.level.size.width / 2;
+    box.pos.z = cell.z + 0.5 - snap.level.size.depth / 2;
+    box.zoneId = null;
+    box.level = this.grid.pushBox(cell.x, cell.z, index);
+    this.refreshTruckColumn(column);
+    const state = this.truckSlots[firstSlot + box.level];
+    snap.forklift.carrying = null;
+    this.carriedIndex = -1;
+    this.driver.detachLoad();
+    this.refreshLoadPassage();
+
+    const progress = this.recountProgress();
+    const drop: BoxDropped = {
+      type: 'boxDropped',
+      boxId: box.id,
+      cell: { x: cell.x, z: cell.z },
+      zoneId: null,
+      level: box.level,
+      correct: state.satisfied,
+      recipeLength: 1,
+      satisfiedCount: progress.satisfied,
+      total: progress.total,
+      truckSlotId: state.id,
+    };
+    // Not its destiny, or on a level below that is not satisfied (docs/DOCKS.md rule 7).
+    if (!state.satisfied) drop.wrongTarget = true;
+    this.emit(drop);
+    if (progress.satisfied === progress.total) {
+      snap.completed = true;
+      this.emit({ type: 'levelComplete' });
+    }
+  }
+
+  /**
+   * Truck bed column state from its stack, bottom → top (docs/DOCKS.md): a level is satisfied with its destined box
+   * on satisfied levels only; its box is then locked (never lifted again, but the next level still loads on top of
+   * it). `loadable` = the lowest empty level, with every level below satisfied.
+   */
+  private refreshTruckColumn(column: number): void {
+    const { cell, levels, firstSlot } = this.grid.truckColumns[column];
+    const stack = this.grid.stackAt(cell.x, cell.z);
+    const boxes = this.snapshot.boxes;
+    let right = true;
+    for (let level = 0; level < levels; level++) {
+      const slot = this.truckSlots[firstSlot + level];
+      const box = level < stack.length ? boxes[stack[level]] : null;
+      slot.occupiedBy = box ? box.id : null;
+      slot.satisfied = right && box !== null && slot.destined !== null && sameKind(slot.destined, box);
+      slot.loadable = right && level === stack.length;
+      if (box) {
+        box.truckSlotId = slot.id;
+        box.correct = slot.satisfied;
+        box.locked = slot.satisfied;
+      }
+      right = slot.satisfied;
+    }
+  }
+
+  /**
+   * Levels with trucks: which truck bed column the rig works at (docs/DOCKS.md: loaded only from the front). Facing
+   * one (heading, fork point in front of it, near its face) engages it; it holds within slightly looser margins so a
+   * small wobble does not flicker the hint. RackAim.truck is that column once the fork point is within TRUCK_REACH of
+   * the bed's face; never while the rig works at a storage rack.
+   */
+  private refreshTruckAim(): void {
+    const columns = this.grid.truckColumns;
+    if (columns.length === 0) return;
+    const f = this.snapshot.forklift;
+    const reach = this.config.forklift.forkReach;
+    const px = f.pos.x + Math.sin(f.heading) * reach;
+    const pz = f.pos.z + Math.cos(f.heading) * reach;
+    const frame = this.frame;
+    let best = -1;
+    let bestScore = Infinity;
+    let bestDepth = 0;
+    if (this.engaged < 0) {
+      for (let c = 0; c < columns.length; c++) {
+        if (Math.abs(angleDelta(f.heading, this.truckHeadings[c])) > TRUCK_FACE_ANGLE) continue;
+        columnFrame(this.truckCenters[c], columns[c].facing, px, pz, frame);
+        if (Math.abs(frame.lateral) > TRUCK_FACE_LATERAL || frame.depth < -TRUCK_FACE_NEAR || frame.depth > TRUCK_FACE_FAR) continue;
+        const score = Math.abs(frame.lateral) + Math.abs(frame.depth);
+        if (score < bestScore) {
+          best = c;
+          bestScore = score;
+          bestDepth = frame.depth;
+        }
+      }
+      const was = this.truckEngaged;
+      if (best < 0 && was >= 0 && Math.abs(angleDelta(f.heading, this.truckHeadings[was])) <= TRUCK_HOLD_ANGLE) {
+        columnFrame(this.truckCenters[was], columns[was].facing, px, pz, frame);
+        if (Math.abs(frame.lateral) <= TRUCK_HOLD_LATERAL && frame.depth >= -TRUCK_FACE_NEAR && frame.depth <= TRUCK_FACE_FAR) {
+          best = was;
+          bestDepth = frame.depth;
+        }
+      }
+    }
+    this.truckEngaged = best;
+    this.aim.truck = best >= 0 && bestDepth >= -TRUCK_REACH ? best : -1;
   }
 
   /** Flat slot index of a box resting in a rack, or -1. */
@@ -652,6 +839,7 @@ export class GameState {
     let satisfied = 0;
     for (const zone of this.snapshot.zones) if (zone.satisfied) satisfied++;
     for (const slot of this.snapshot.slots) if (slot.satisfied) satisfied++;
+    for (const slot of this.truckSlots) if (slot.satisfied) satisfied++;
     progress.satisfied = satisfied;
     return progress;
   }
@@ -662,12 +850,14 @@ export class GameState {
     hint.targetBoxId = null;
     hint.dropLevel = 0;
     hint.rack = null;
+    if (hint.dropTruckSlotId !== undefined) hint.dropTruckSlotId = null;
     if (snap.completed) {
       hint.dropCell = null;
       hint.dropZoneId = null;
       return;
     }
     this.refreshRackAim();
+    this.refreshTruckAim();
     if (this.carriedIndex < 0) {
       const target = this.interaction.findPickTarget();
       hint.targetBoxId = target >= 0 ? snap.boxes[target].id : null;
@@ -691,6 +881,7 @@ export class GameState {
     const cell = hint.dropCell;
     if (!cell || cell.x !== drop.x || cell.z !== drop.z) hint.dropCell = { x: drop.x, z: drop.z };
     hint.dropZoneId = drop.zoneIndex >= 0 ? snap.zones[drop.zoneIndex].id : null;
+    if (drop.truck >= 0) hint.dropTruckSlotId = this.truckSlots[this.grid.truckColumns[drop.truck].firstSlot + drop.level].id;
   }
 
   /**
@@ -760,7 +951,8 @@ export class GameState {
    * opens once the forks are nearly at its top and stays open while the load is over it (the forks hold there, see
    * clearLevel), so it never turns solid under the load: no push-out. Until then it blocks the load like any box.
    * A locked box (levels with racks) has no room: it never opens, only stays open while a load lifted off it is still
-   * over it. Classic levels: never.
+   * over it; on a truck bed a locked box is a stack like any other (the next level loads on it) and the room is its
+   * column's levels. Classic levels: never.
    */
   private refreshLoadPassage(): void {
     const grid = this.grid;
@@ -773,9 +965,10 @@ export class GameState {
       const cell = b.cell;
       if (!cell || b.level > 0) continue;
       const h = grid.height(cell.x, cell.z);
+      const bed = grid.truckColumnAt(cell.x, cell.z) >= 0;
       const high = forklift.forkHeight >= h - LOAD_PASS_CLEARANCE;
       const over = load !== null && this.world.isPassable(i) && this.loadNear(load.x, load.z, forklift.heading, b.pos, true);
-      this.world.setPassable(i, h < limit && ((high && !b.locked) || over));
+      this.world.setPassable(i, h < grid.capacity(cell.x, cell.z) && ((high && (bed || !b.locked)) || over));
     }
   }
 
@@ -825,7 +1018,9 @@ export class GameState {
       const cell = b.cell;
       if (!cell || b.level > 0) continue;
       const h = grid.height(cell.x, cell.z);
-      const top = carrying ? (h < limit && (!b.locked || this.world.isPassable(i)) ? h : 0) : h - 1;
+      const room = h < grid.capacity(cell.x, cell.z);
+      const bed = grid.truckColumnAt(cell.x, cell.z) >= 0;
+      const top = carrying ? (room && (bed || !b.locked || this.world.isPassable(i)) ? h : 0) : h - 1;
       if (top <= level) continue;
       // Predicted sweep over the time the forks need to clear this stack (sample 0 = now). The load clears it a
       // little below its top; empty tines slide under the top box, so they go all the way (view easing included).

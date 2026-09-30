@@ -47,7 +47,7 @@ desbloqueados; un nivel abierto solo por el Modo prueba no guarda tiempo (guarda
 la tarjeta final lo dice: solo "Tiempo" y "Modo prueba · este tiempo no se guarda".
 
 Con el Modo prueba encendido aparece junto al interruptor el botón **Benchmark**: un almacén de prueba fuera de la
-progresión que reúne todo el juego de estanterías almacenables (ver abajo). El cronómetro corre, pero no guarda nada:
+progresión que reúne todo el juego de estanterías almacenables y del muelle de carga (ver abajo). El cronómetro corre, pero no guarda nada:
 ni récord, ni desbloqueos, ni "Continuar" (el HUD dice "Benchmark", con un discreto "sin récord"). R lo reinicia,
 RePág / AvPág no hacen nada en él y al terminarlo la tarjeta vuelve al inicio. Esc lo deja en pausa detrás del título
 ("Continuar" o el mismo botón lo retoman); apagar el Modo prueba lo descarta.
@@ -119,6 +119,35 @@ llenan en cualquier orden. Si una estantería te da la espalda, rodéala para ca
 de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías
 añade la fila "F V subir / bajar horquilla · rueda · X B mando". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
 
+## Muelles de carga (Benchmark, Modo prueba)
+
+Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión aparcado marcha atrás; su plataforma de
+madera entra en el almacén a ras del suelo, en una fila de casillas pegada al muro. Cada columna del camión se carga
+**solo de frente**, como una pila del suelo: la horquilla sube sola (F / V no hacen nada ahí), las cajas van de abajo
+arriba y cada **nivel** tiene su pista (color, símbolo o las dos), en un cartel detrás de la columna con una pegatina
+por nivel que nunca se tapa ni se atenúa. Los niveles del camión cuentan en el reparto único, igual que zonas y
+huecos: un nivel brilla y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar
+el siguiente nivel encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se
+puede volver a sacar marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja.
+Sin teclas nuevas. Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos:
+[docs/DOCKS.md](docs/DOCKS.md).
+
+## Sonidos de la carretilla
+
+Todo procedural (Web Audio, sin archivos) y bajo la música; M lo silencia todo:
+
+- **Motor eléctrico**: un zumbido suave que sube de tono con la velocidad y un rodar de ruedas sobre las baldosas;
+  parada, en silencio.
+- **Horquilla**: al subir, la bomba hidráulica (algo más aguda por nivel); al bajar, un tono más grave y un soplo leve;
+  al llegar, un «clonc» pequeño (nunca encima de coger o dejar una caja). Delante de una estantería, cada paso de F / V
+  lleva además su clic.
+- **Marcha atrás**: un «bip… bip… bip» redondo, al ritmo y en la tonalidad de la música, mientras la carretilla
+  retrocede de verdad.
+- **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
+
+Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y
+`src/audio/sfx.ts`, listos para ajustar a oído.
+
 ## Ampliar
 
 - **Nuevo nivel:** añadir `src/data/levels/level-XX.level`, un archivo de texto con el mapa dibujado y una leyenda
@@ -143,7 +172,9 @@ añade la fila "F V subir / bajar horquilla · rueda · X B mando". Reglas y con
 
   `.` suelo, `#` estantería, `p` planta, `^ > v <` carretilla; el resto se explica en la leyenda: `caja`, `pila azul,menta`
   (de abajo arriba), `zona azul` / `zona ▲` / `zona azul ■` / `zona pila azul,menta`, combinaciones como
-  `zona azul + caja coral`, `estantería 3 alturas`. El `id` guarda los mejores tiempos: no lo cambies. Se valida al
+  `zona azul + caja coral`, `estantería 3 alturas`, las estanterías almacenables (`estantería frente sur: …`,
+  [docs/RACKS.md](docs/RACKS.md)) y los camiones (`camión muelle norte: …`, [docs/DOCKS.md](docs/DOCKS.md)). El `id`
+  guarda los mejores tiempos: no lo cambies. Se valida al
   cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
   y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista
   `SHIPPED` de `src/data/levels/levels.test.ts`. Los `.json` antiguos (esquema `LevelData`) siguen cargando.

@@ -55,9 +55,10 @@ export interface SlotTone {
  * material) and its glow band (a feathered frame on both faces, its own overlay material), which glow together.
  * Lights ONLY when the slot holds its destined box (`satisfied`): a flash as the box lands (views/success), then a soft
  * steady glow. While a box that fits its cue is being carried it pulses clearly (panel, cue and band in the carried
- * box's tone); a box that merely fits leaves it neutral (never red, never text).
+ * box's tone); a box that merely fits leaves it neutral (never red, never text). A truck level (views/TruckView) lights
+ * the same way: its board panel, its sticker and a band around its box.
  */
-class SlotLight {
+export class SlotLight {
   private satisfied: boolean;
   private glow: number;
   private flashFrom = 0;
@@ -67,7 +68,7 @@ class SlotLight {
   private readonly wave = new OneShot(0.75);
 
   constructor(
-    state: SlotState,
+    state: Pick<SlotState, 'satisfied'>,
     private readonly material: MeshStandardMaterial,
     private readonly cue: MeshBasicMaterial,
     private readonly band: Mesh,
@@ -157,9 +158,11 @@ export class RackBay {
     geometry: BufferGeometry,
     material: MeshStandardMaterial,
     private readonly depthOnly: Material,
+    /** userData tag of its frame mesh: a rack bay, or the cue board of a truck bed column (views/TruckView). */
+    kind: 'rack' | 'truck' = 'rack',
   ) {
     this.frame = this.addPart(geometry, material);
-    this.frame.userData.rack = true;
+    this.frame.userData[kind] = true;
     this.frame.userData.column = column;
     geometry.computeBoundingBox();
     this.bounds.copy(geometry.boundingBox!);

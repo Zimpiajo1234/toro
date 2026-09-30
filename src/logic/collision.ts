@@ -1,5 +1,6 @@
 import type { BoxState, Facing, LevelData, Vec2 } from '../core/types';
 import { FACING_X, FACING_Z, racksOf, rackCellOf } from '../core/racks';
+import { truckColumnsOf } from '../core/docks';
 
 /** Axis-aligned rectangle on the floor plane (world units). */
 export interface Rect {
@@ -154,10 +155,14 @@ export function pointRectDistance(px: number, pz: number, minX: number, minZ: nu
  * (read live from the box list; carried boxes and boxes in rack slots are skipped). Allocation-free queries.
  * A rack column is a solid cell for the body; for the carried load it is solid too, unless GameState opened it
  * (`setRackOpen`: the load enters its slot from the front), when the load only meets its back panel and side uprights.
+ * A truck bed cell (docs/DOCKS.md) is solid for the body only (`bodyOnly`): the load goes over it like over a floor
+ * cell, meeting only the boxes loaded there (their stack's base, like any floor stack).
  */
 export class CollisionWorld {
   readonly bounds: Rect;
   private readonly statics: readonly Rect[];
+  /** Obstacles for the forklift body only (truck bed cells): the carried load and the fork point never meet them. */
+  private readonly bodyOnly: readonly Rect[];
   private readonly boxHalf: number;
   private boxes: readonly BoxState[] = [];
   /** Per box: how much its collider is currently shrunk on every side (settling after a drop), 0 = full size. */
@@ -180,9 +185,16 @@ export class CollisionWorld {
   private readonly bodyHit = createContact();
   private readonly loadHit = createContact();
 
-  constructor(bounds: Rect, statics: readonly Rect[], boxSize: number, racks: readonly { cell: Rect; facing: Facing }[] = []) {
+  constructor(
+    bounds: Rect,
+    statics: readonly Rect[],
+    boxSize: number,
+    racks: readonly { cell: Rect; facing: Facing }[] = [],
+    bodyOnly: readonly Rect[] = [],
+  ) {
     this.bounds = bounds;
     this.statics = statics;
+    this.bodyOnly = bodyOnly;
     this.boxHalf = boxSize / 2;
     this.racks = racks.map((r) => rackCollider(r.cell, r.facing));
     this.rackOpen = new Uint8Array(racks.length);
@@ -209,7 +221,8 @@ export class CollisionWorld {
         racks.push({ cell: { minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }, facing: rack.facing });
       });
     }
-    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, racks);
+    const beds: Rect[] = truckColumnsOf(level).map(({ cell: c }) => ({ minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }));
+    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, racks, beds);
   }
 
   /** Number of storage rack columns. */
@@ -306,7 +319,7 @@ export class CollisionWorld {
   /**
    * Deepest overlap of a circle with walls, static obstacles and resting boxes (settling ones shrunk). 0 = free.
    * `load`: the circle is the carried box, which passes over stacks that still have room (and meets a rack column it
-   * is being eased out of shrunk, see softenRack).
+   * is being eased out of shrunk, see softenRack) and over truck beds; the body meets truck beds.
    */
   deepestContact(cx: number, cz: number, r: number, out: Contact, load = false): number {
     out.depth = 0;
@@ -319,6 +332,13 @@ export class CollisionWorld {
     for (let i = 0; i < statics.length; i++) {
       const s = statics[i];
       if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+    }
+    if (!load) {
+      const beds = this.bodyOnly;
+      for (let i = 0; i < beds.length; i++) {
+        const s = beds[i];
+        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+      }
     }
     const racks = this.racks;
     for (let i = 0; i < racks.length; i++) {
@@ -383,7 +403,8 @@ export class CollisionWorld {
 
   /**
    * Free space around a point: signed distance to the nearest wall / obstacle / resting box (negative when the
-   * point is inside one). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or its stack's base).
+   * point is inside one); truck beds never count (only the body meets them, and this measures for the fork point or
+   * the carried load). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or its stack's base).
    * `load`: measured for the carried box (stacks with room do not count, see deepestContact; an open rack column
    * counts as its walls). `ignoreRack`: a rack column left out (the one whose slot box is about to be lifted).
    */

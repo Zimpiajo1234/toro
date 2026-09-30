@@ -29,6 +29,31 @@ export const defaultTheme: Theme = {
     cueRim: '#b3a58f',
     cueInk: '#574e46',
   },
+  /**
+   * A cream cab with a soft slate stripe (the forklift's family, never a box hue), light wooden bed planks, slate trim
+   * and a warm stone driveway a step below the warehouse floor. The cue board's panels are a touch deeper than the
+   * «any colour» sticker fill, so a symbol-only sticker still reads on them.
+   */
+  truck: {
+    cab: '#f3ece0',
+    cabAccent: '#9aa9b5',
+    roof: '#e2d6c3',
+    glass: '#d6e0e4',
+    lamp: '#fff5d6',
+    deck: '#d9c29d',
+    deckLine: '#c7ab82',
+    trim: '#8f9ba6',
+    board: '#e9e3d7',
+    wheel: '#6f767c',
+    hub: '#d7d2c8',
+    leveller: '#b8c2cb',
+    apron: '#d8cfc1',
+    apronEdge: '#c8bca9',
+    apronLine: '#f1ebe0',
+    doorFrame: '#a9b4be',
+    shutter: '#e6e1d8',
+    rubber: '#8a8178',
+  },
   plant: { pot: '#e4d8c6', soil: '#b9a488', leaves: ['#9db592', '#8aa981', '#a9c09c'] },
   forklift: {
     body: '#f7f2e9',

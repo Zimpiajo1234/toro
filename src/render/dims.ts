@@ -47,6 +47,23 @@ export const RACK = {
   forkCarry: 0.045,
 } as const;
 
+/**
+ * Loading docks (docs/DOCKS.md). The truck bed is level with the warehouse floor (the dock pit is outside), so a box
+ * on it rests at the heights of a floor stack (level n = n · box height) and the forks need nothing special.
+ */
+export const DOCK = {
+  /** Top of the dock door opening in its wall (the lintel goes on up to the wall top). Over a full 3-level column. */
+  doorTop: 2.02,
+  /** The wall stays below the door down to here: the trailer deck passes over it. */
+  sillTop: -0.07,
+  /** Gap between the door opening and each end of its truck's run of bed cells. */
+  doorInset: 0.03,
+  /** Top of the bed planks: a hair over the floor (no z-fighting); boxes sink into it like into a zone pad. */
+  bedTop: 0.02,
+  /** Driveway outside, a step below the warehouse slab (the dock pit): the truck's wheels stand on it. */
+  apronTop: -0.44,
+} as const;
+
 /** World y of the floor of rack slot `level` (fractional levels interpolate: the forks between slots). */
 export function rackSlotY(level: number): number {
   return RACK.base + level * RACK.pitch;

@@ -2,32 +2,39 @@
 id: benchmark
 limit: 2
 ventanas: norte 7-8, oeste 2-4
-dificultad: movimientos=10, extra>=1, bloqueos>=3, trampas>=5, repartos=1, huecos=12, libre<=80
-nota: Modo prueba, fuera de la progresión: todo el juego de estanterías en un almacén pequeño.
-nota: Único reparto, por deducción: 1) las pistas exactas: azul ■ a su zona y lavanda ✚ arriba en S.
-nota: 2) La otra lavanda (●) va al hueco «lavanda» y la única amarilla (●) al hueco «amarillo».
-nota: 3) El hueco «●» ya solo puede ser del coral ●, así que la zona coral es del coral ◆.
-nota: 4) El hueco «◆» se queda el menta ◆, el hueco «menta» el menta ▲ y la zona ▲ el azul ▲.
+dificultad: movimientos=14, extra>=2, bloqueos>=4, trampas>=12, repartos=1, huecos=12, camion=3, libre<=76
+nota: Modo prueba, fuera de la progresión: todo el juego de estanterías y del muelle de carga en un almacén pequeño.
+nota: Único reparto, por deducción: 1) las pistas exactas: azul ■ a su zona, lavanda ✚ arriba en S y amarillo ✚ al camión.
+nota: 2) El «■» del camión ya solo puede ser del amarillo ■, y el azul ✚ solo cabe en el «azul» del camión.
+nota: 3) La otra lavanda (●) va al hueco «lavanda» y la amarilla que queda (●) al hueco «amarillo».
+nota: 4) El hueco «●» ya solo puede ser del coral ●, así que la zona coral es del coral ◆.
+nota: 5) El hueco «◆» se queda el menta ◆, el hueco «menta» el menta ▲ y la zona ▲ el azul ▲.
 nota: Trampa: el menta ◆ empieza en el hueco «menta»: encaja en la pista pero no brilla (el suyo es el «◆» de encima).
 nota: Hueco equivocado: el menta ▲ empieza en el «◆»; se cambian los dos aparcando uno en el hueco libre de arriba.
+nota: Muelle: el camión T (puerta norte, a la izquierda de R) se carga de frente como una pila: columna 1 «azul» y encima «■», columna 2 «amarillo ✚».
+nota: Carga equivocada: el amarillo ■ empieza abajo en la columna 1; se aparca, entra el azul ✚ (queda fijo) y el amarillo ■ va encima de él.
+nota: Trampas del camión: el azul ▲ y el azul ■ encajan en «azul» (y el azul ■ en «■»), pero no brillan: zumban y se pueden sacar.
 nota: R mira a la cámara; S le da la espalda: sus pistas se leen por detrás (o girando con Q/E) y se carga rodeándola.
 nota: El lavanda ✚ está al fondo de un pasillo de una casilla: sale marcha atrás. El coral ◆ espera aparcado arriba en S.
 nota: Pila de suelo que deshacer (azul ▲ sobre lavanda ●) y estanterías de madera a una casilla de las almacenables, para comparar (el hueco deja ver las pistas laterales).
 nota: Poco suelo: entre R y S solo hay las filas para cargarlas (su frente y la de detrás); aparcar en un hueco libre alto no estorba.
+nota: La zona ▲ queda fuera de las filas de carga del camión y de la salida del rincón entre T y R: su caja fija no encierra nada.
 
   0123456789
-0 p#.RR.#..p
-1 ..........
-2 .1......2.
-3 ..a....b..
+0 TT.RR.#..p
+1 .....f....
+2 ........2.
+3 .1a....b..
 4 ..........
 5 .#.SS.#.#.
 6 .c......#.
-7 .3......#.
+7 .3...g..#.
 8 p..^..d.#e
 
 1 = zona ▲                   2 = zona coral               3 = zona azul ■
 a = caja coral ●             b = caja amarillo ●          c = pila lavanda ●,azul ▲
-d = caja azul ■              e = caja lavanda ✚
+d = caja azul ■              e = caja lavanda ✚           f = caja azul ✚
+g = caja amarillo ✚
 R = estantería frente sur: menta + caja menta ◆ / ◆ + caja menta ▲ / libre | ● / libre / libre
 S = estantería frente norte: libre / amarillo / lavanda ✚ | lavanda / libre / libre + caja coral ◆
+T = camión muelle norte: azul + caja amarillo ■ / ■ | amarillo ✚

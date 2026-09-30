@@ -10,6 +10,10 @@ Decisiones (2026-09-30), **solo en niveles con estanterías**: la caja destinada
 10–11), una caja en un objetivo que no es su destino da un **zumbido suave** (regla 12) y, mientras llevas una caja, los
 objetivos cuya pista encaja **brillan mucho más** que antes (regla 5). Los niveles sin estanterías no cambian.
 
+Decisión (2026-09-30, muelles de carga, docs/DOCKS.md): un nivel con **camiones** sigue todas las reglas de «niveles con
+estanterías» de este documento, tenga o no estanterías. En el código la puerta es `usesTargetRules(level)`
+(`core/docks.ts`: estanterías o camiones); donde aquí se dice «con estanterías», léase «con estanterías o camiones».
+
 ## Reglas
 1. **Estantería almacenable** = mueble de 1 casilla de fondo, N casillas de ancho (una **columna** por casilla), de 1 a 3
    **huecos** de alto por columna (suelo + 2). Se **carga y descarga solo por el frente** (`facing`): la casilla de delante
@@ -130,7 +134,9 @@ repartos completos (cada objetivo con una caja que cumple su pista, todas las ca
 que cajas idénticas no cuentan dos veces: backtracking objetivo a objetivo con una comprobación de emparejamiento
 (`assignBoxes`, caminos aumentantes) en cada paso, de modo que solo recorre ramas que acaban en reparto y para en el
 límite. `validateLevel` exige nº de cajas = nº de objetivos y exactamente 1 reparto; `levelDestinies(level)` da el tipo
-destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no se guarda en `LevelData`).
+destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no se guarda en `LevelData`). Con camiones
+(docs/DOCKS.md) los niveles de camión son objetivos también (`targetsOf` los pone detrás de los huecos, `kind: 'truck'`)
+y `levelDestinies` trae además `trucks` (`[]` sin camiones).
 
 ## Lógica (`src/logic`)
 
@@ -172,7 +178,10 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
 - `src/data/levels/solver.ts`: cada hueco es una posición más (`cellCount + hueco`) con una caja como mucho. Se carga
   desde la casilla de detrás del frente con un paso adelante (cualquier hueco vacío de la columna) y una caja sacada de
   un hueco solo sale marcha atrás. En niveles con estanterías cada objetivo pide su tipo destinado (sin trampas). Las
-  cotas de corredores y ciclos se apagan con estanterías (las simples siguen siendo admisibles y consistentes).
+  cotas de corredores y de ciclos de intercambio (zonas del suelo) se apagan con estanterías; en su lugar (2026-09-30)
+  va la cota de **ciclos de destinos**: Σ costes de hueco + 1 por ciclo de cajas que descansan cada una en el destino de
+  la siguiente (zonas y huecos; `MoveSearch.destTerm` / `targetDestinations`), admisible y consistente (lo comprueba
+  `levels/docks.test.ts`). Con ella el Benchmark sale exacto en 17 estados.
 - **Cajas fijas en el modelo**: `lockedAt(grid, stacks, pos)` (su caja destinada, sola en su zona o hueco; siempre
   `false` sin estanterías), `canLift` y `canStackOn` / `validDrop` / `carrySearch`: las búsquedas, la repetición de un
   plan (`applyMove`) y `deadEnds` nunca levantan una caja fija ni dejan nada sobre ella. Sin estanterías todo movimiento
@@ -182,7 +191,8 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
 - Métricas: `repartos` (= 1 en niveles con estanterías: repartos por posición), `trampas` (pista que encaja pero no es
   el destino), `huecos` (total / con pista / libres), `callejones`. Una caja fija desde el principio nunca cuenta como
   la que tapa el paso (`blockersOf`): no se va a mover; tampoco es un sitio al que haya que llegar, así que la caja que
-  solo abre el paso hacia ella no cuenta. Benchmark: `repartos` 1, `callejones` 0, 10 movimientos.
+  solo abre el paso hacia ella no cuenta. Benchmark (con su camión, 2026-09-30): `repartos` 1, `callejones` 0,
+  14 movimientos (exacto), 12 objetivos (3 zonas + 6 huecos con pista + 3 niveles de camión).
 - `src/integration/autopilot.ts`: elige el hueco con `forkStep` (una pulsación por hueco, como F / V), espera a la
   horquilla, mete la carga (o coge la caja) y sale marcha atrás. `Outcome.controls` (`forkSteps`, `reverseFrames`)
   cuenta las pulsaciones de F / V y los frames marcha atrás, para que los tests comprueben que se usaron de verdad.
@@ -265,9 +275,11 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   a `DROP_LAND_SEC`, como en el suelo. La campana / madera según `Game.matchOf` (el `matchKind` de la pista) suena
   **solo** con `correct` (= el hueco tiene su caja destinada); una caja que solo encaja, o cualquiera en un «libre», da
   el toc y nada más. El último objetivo lleva el segundo golpe y el arpegio de siempre.
-- `boxPicked.fromSlotId` → `SfxPlayer.slotLift`: un golpe más ligero que coger del suelo, un tono de metal tenue, un
-  pequeño deslizamiento y el mismo motor de horquilla. Sacar la caja destinada (`zoneReleased.slotId`) daba el tic
-  neutro de siempre; con las cajas fijas ya no ocurre.
+- `boxPicked.fromSlotId` → `SfxPlayer.slotLift`: un golpe más ligero que coger del suelo, un tono de metal tenue y un
+  pequeño deslizamiento. La subida de la carga la pone el zumbido continuo de la bomba de la horquilla (`MotorSound`,
+  abajo); el deslizamiento de servo de una sola vez que llevaban `pickup` y `slotLift` se quitó (2026-09-30: se
+  solapaba con la bomba). Sacar la caja destinada (`zoneReleased.slotId`) daba el tic neutro de siempre; con las cajas
+  fijas ya no ocurre.
 - **Zumbido de objetivo equivocado** (2026-09-30): `boxDropped` con `wrongTarget` y sin `correct` (`isWrongTarget`) →
   `SfxPlayer.wrongBuzz`, en zonas y en huecos con pista (la trampa que encaja, también). Suena después del golpe / toc
   de siempre, a `DROP_LAND_SEC` + `WRONG_AFTER_LAND_SEC` (0,05 s: donde sonaría la campana de la caja destinada). Un
@@ -280,6 +292,12 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   solo en niveles con estanterías: suena cuando el jugador pidió un paso ese frame y `hint.rack.level` cambió en la
   misma columna (nada en el hueco de arriba del todo ni en el de abajo, fuera de una estantería, al llegar a una ni al
   pasar a una columna más baja; se reinicia al cargar el nivel).
+- **Sonidos de la carretilla** (2026-09-30, `audio/motor.ts`, `audio/beeper.ts`; en todos los niveles): mientras la
+  horquilla sube suena la bomba (`FORK.upHz` 150 Hz, algo más aguda por hueco), al bajar un tono más suave y grave
+  (`FORK.downHz` 104 Hz) con un soplo leve, y al llegar al hueco un «clonc» pequeño (`CLUNK`: solo tras ≥ 0,15 s de
+  recorrido, como mucho uno cada 0,3 s y nunca a < 0,8 s de coger o dejar una caja). Así un paso de F / V suena clic al
+  empezar, bomba mientras va y clonc al llegar. Sacar la carga de un hueco marcha atrás suena el pitido de marcha atrás.
+  Detalle y ajustes: docs/ARCHITECTURE.md («Audio direction»).
 
 ## UI y flujo (`src/ui`, `src/game/Game.ts`)
 
@@ -300,7 +318,8 @@ destinado de cada zona y hueco (lo usan GameState, el solver y las métricas; no
   carga aparte (`SPECIAL_LEVELS`, `getSpecialLevel(BENCHMARK_ID)`; docs/LEVELS.md): nunca entra en `LEVELS` ni en
   ProgressStore (tiempos y desbloqueos van por los ids de `LEVELS`). Contenido y cadena de deducción: sus líneas
   `nota:`; lo comprueban `benchmark.test.ts` y `benchmarkPlayable.test.ts` (piloto automático a 60 y 20 fps con F / V
-  y marcha atrás).
+  y marcha atrás). Desde el 2026-09-30 lleva también un camión en el muelle norte (T, docs/DOCKS.md «Nivel
+  Benchmark»): 12 cajas, 12 objetivos, 14 movimientos.
 - **Entrada**: botón «Benchmark» del pie del título, junto al interruptor, solo con el Modo prueba encendido
   (`GameActions.startBenchmark()`; sin Modo prueba la acción no hace nada). Es un botón normal: Tab lo alcanza y
   Enter / Espacio lo pulsan. En el título el mando solo tiene A / Start = «Continuar» (igual que para los puntos de

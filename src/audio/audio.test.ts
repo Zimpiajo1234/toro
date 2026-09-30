@@ -15,8 +15,20 @@ import { WOOD_LOWPASS_HZ, WoodInstrument } from './instruments/wood';
 import { completionArpeggio, midiToFreq } from './music/harmony';
 import { biquadQ, filter } from './nodes';
 import { centsToRatio, chance, mulberry32, pick, range, vary, weightedIndex } from './random';
-import { MotorSound } from './motor';
-import { BEAM_LOWPASS_HZ, BEAM_MODES, LEVEL_PITCH, SfxPlayer, WRONG_BUZZ_DETUNE, WRONG_BUZZ_LOWPASS_HZ, WRONG_BUZZ_SAG } from './sfx';
+import { CLUNK, MotorSound } from './motor';
+import { beepFrequency } from './beeper';
+import {
+  BEAM_LOWPASS_HZ,
+  BEAM_MODES,
+  SfxPlayer,
+  TRUCK_BED_CAVITY_HZ,
+  TRUCK_BED_LOWPASS_HZ,
+  TRUCK_BED_MODES,
+  TRUCK_BED_SAG,
+  WRONG_BUZZ_DETUNE,
+  WRONG_BUZZ_LOWPASS_HZ,
+  WRONG_BUZZ_SAG,
+} from './sfx';
 import {
   FakeAudioContext,
   FakeBiquad,
@@ -315,7 +327,7 @@ describe('SfxPlayer', () => {
     expect(lift[1]).toBeGreaterThan(lift[0]);
   });
 
-  it('lifts a box out of a slot softly: a lighter knock than a pickup, a faint beam tone, the same servo glide', () => {
+  it('lifts a box out of a slot softly: a lighter knock than a pickup, a faint beam tone, no one-shot servo', () => {
     const knockOf = (ctx: FakeAudioContext) => Math.max(...peaksOf(ctx));
     const slot = setup();
     slot.sfx.slotLift(0, 1);
@@ -324,14 +336,75 @@ describe('SfxPlayer', () => {
     expect(knockOf(slot.ctx)).toBeLessThan(knockOf(floor.ctx) * 0.7);
     const beam = beamOf(slot.ctx);
     expect(beam).toHaveLength(BEAM_MODES.length);
-    const servo = (ctx: FakeAudioContext) => ctx.ofKind(FakeOscillator).filter((o) => o.type === 'triangle');
-    const [lift] = servo(slot.ctx);
-    const [pick] = servo(floor.ctx);
-    expect(lift).toBeDefined();
-    expect(servo(slot.ctx)).toHaveLength(1);
-    const glideEnd = (o: FakeOscillator) => o.frequency.events.find((e) => e.kind === 'exp')!;
-    expect(glideEnd(lift).value / lift.frequency.value).toBeCloseTo(1.42, 9);
-    expect(glideEnd(lift).time - lift.startedAt!).toBeCloseTo(glideEnd(pick).time - pick.startedAt!, 9);
+    // The lift itself is the forks' continuous pump whir (MotorSound), which follows the real motion: no servo glide
+    // on top of it, so the two never stack into a blur.
+    for (const ctx of [slot.ctx, floor.ctx]) {
+      expect(ctx.ofKind(FakeOscillator).filter((o) => o.type !== 'sine')).toHaveLength(0);
+      for (const o of ctx.ofKind(FakeOscillator)) expect(o.frequency.events.every((e) => e.kind !== 'exp' || e.value < o.frequency.value)).toBe(true);
+    }
+  });
+
+  it('sets a box down on a truck bed with a hollow wooden thunk: low inharmonic body, a boxy hollow, no sub', () => {
+    const { ctx, sfx } = setup();
+    const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+    const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+    sfx.truckDrop(0, null);
+    expect(bell).not.toHaveBeenCalled();
+    expect(wood).not.toHaveBeenCalled();
+    const body = ctx.ofKind(FakeOscillator).filter((o) => (o.outputs[0] as FakeBiquad).frequency.value === TRUCK_BED_LOWPASS_HZ);
+    expect(body).toHaveLength(TRUCK_BED_MODES.length);
+    const [low, high] = body.map((o) => o.frequency.value);
+    expect(high / low).toBeCloseTo(TRUCK_BED_MODES[1][0] / TRUCK_BED_MODES[0][0], 9);
+    expect(Math.abs(high / low - 2)).toBeGreaterThan(0.05); // never an octave: wood, not a note
+    for (const o of body) {
+      expect(o.type).toBe('sine');
+      expect(o.frequency.value).toBeGreaterThan(130); // hollow, not the floor's sub thump
+      expect(o.frequency.value).toBeLessThan(320);
+      const end = o.frequency.events.find((e) => e.kind === 'exp')!;
+      expect(end.value / o.frequency.value).toBeCloseTo(TRUCK_BED_SAG, 9); // a "thunk" that sags
+    }
+    const bands = ctx.ofKind(FakeBiquad).filter((b) => b.type === 'bandpass').map((b) => b.frequency.value);
+    expect(bands.some((f) => Math.abs(f - TRUCK_BED_CAVITY_HZ) < TRUCK_BED_CAVITY_HZ * 0.06)).toBe(true);
+    // Distinct from the rack slot's metal toc: no beam modes, lower and rounder.
+    expect(beamOf(ctx)).toHaveLength(0);
+    const slot = setup();
+    slot.sfx.slotDrop(0, null);
+    expect(Math.max(...body.map((o) => o.frequency.value))).toBeLessThan(Math.min(...beamOf(slot.ctx).map((o) => o.frequency.value)));
+    // As firm as the other landings, never louder than the floor's thump.
+    const floor = setup();
+    floor.sfx.drop(0, null);
+    expect(Math.max(...peaksOf(ctx))).toBeLessThanOrEqual(Math.max(...peaksOf(floor.ctx)));
+    expect(sum(peaksOf(ctx))).toBeGreaterThan(sum(peaksOf(slot.ctx)) * 0.8);
+  });
+
+  it('a truck level above the bed answers more faintly and a little higher; it chimes only when handed its chime', () => {
+    const bedOf = (level: number) => {
+      const { ctx, sfx } = setup();
+      sfx.truckDrop(0, null, false, level);
+      const body = ctx.ofKind(FakeOscillator).filter((o) => (o.outputs[0] as FakeBiquad).frequency.value === TRUCK_BED_LOWPASS_HZ);
+      const env = (o: FakeOscillator) => ((o.outputs[0] as FakeBiquad).outputs[0] as FakeGain).gain.events.find((e) => e.kind === 'linear')!.value;
+      const contact = Math.max(...ctx.ofKind(FakeBiquad).filter((b) => b.type === 'bandpass').map((b) => b.frequency.value));
+      return { bed: sum(body.map(env)), pitch: body[0].frequency.value, contact };
+    };
+    const [bed, one, two] = [0, 1, 2].map(bedOf);
+    expect(two.pitch).toBeGreaterThan(bed.pitch);
+    expect(two.pitch).toBeLessThan(bed.pitch * 1.25); // a little, still a low hollow thunk
+    expect(one.bed).toBeLessThan(bed.bed * 0.7);
+    expect(two.bed).toBeLessThan(one.bed);
+    expect(two.contact).toBeGreaterThan(one.contact);
+    expect(two.contact).toBeLessThan(2000);
+
+    const { sfx } = setup();
+    const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+    const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+    sfx.truckDrop(1, 79, false, 0, 'symbol');
+    expect(bell).not.toHaveBeenCalled();
+    expect(wood.mock.calls.map((c) => c[0])).toEqual([79]);
+    expect(wood.mock.calls[0][1]).toBeGreaterThan(1.03); // after the thunk
+    wood.mockClear();
+    sfx.truckDrop(2, 79, true, 1, 'exact');
+    expect(bell.mock.calls.map((c) => c[0])).toEqual([79, 74]); // the last target's second strike
+    expect(wood.mock.calls.map((c) => c[0])).toEqual([79]);
   });
 
   it('a fork step clicks about half as loud as a UI click, a little higher per level and going up', () => {
@@ -424,34 +497,6 @@ describe('SfxPlayer', () => {
     expect(t0).toBe(2.4);
     expect(duration).toBe(3.43);
     expect(options?.bassOverlap).toBe(0);
-  });
-});
-
-describe('MotorSound fork servo', () => {
-  function setup() {
-    const ctx = new FakeAudioContext();
-    const motor = new MotorSound(ctx.asContext(), ctx.createGain() as unknown as AudioNode);
-    const servo = ctx.ofKind(FakeOscillator).find((o) => o.type === 'triangle' && o.frequency.value === 300);
-    const target = (p: FakeParam | undefined) => p?.events.filter((e) => e.kind === 'target').at(-1)?.value;
-    const servoGain = () => ((servo?.outputs[0] as FakeBiquad).outputs[0] as FakeGain).gain;
-    return { motor, freq: () => target(servo?.frequency), level: () => target(servoGain()) };
-  }
-
-  it('sits a little higher per stack level, at the same level, and is unchanged on the floor', () => {
-    const { motor, freq, level } = setup();
-    motor.set(0, 1);
-    expect(freq()).toBeCloseTo(460, 9);
-    expect(level()).toBeCloseTo(0.05, 9);
-    motor.set(0, 1, 0);
-    expect(freq()).toBeCloseTo(460, 9);
-    motor.set(0, 1, 1);
-    expect(freq()).toBeCloseTo(460 * (1 + LEVEL_PITCH), 9);
-    motor.set(0, 1, 2);
-    expect(freq()).toBeCloseTo(460 * (1 + 2 * LEVEL_PITCH), 9);
-    expect(level()).toBeCloseTo(0.05, 9);
-    expect(freq()).toBeLessThan(700); // soft, under the servo's low-pass
-    motor.set(0, 1, Number.NaN);
-    expect(freq()).toBeCloseTo(460, 9);
   });
 });
 
@@ -847,6 +892,99 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       engine.forkClick(2, 1);
       expect(click).toHaveBeenCalledTimes(2);
       expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('forklift sounds and loading docks', () => {
+    async function live() {
+      vi.stubGlobal('AudioContext', FakeAudioContext);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const engine = new AudioEngine();
+      await engine.unlock();
+      const ctx = FakeAudioContext.instances[0];
+      engine.setScene('playing');
+      await play(ctx, 1);
+      return { engine, ctx, warn };
+    }
+    const onTruck = (correct: boolean, level = 0, satisfiedCount = 1) =>
+      ({
+        type: 'boxDropped',
+        boxId: 'b',
+        cell: { x: 3, z: 0 },
+        zoneId: null,
+        level,
+        correct,
+        recipeLength: 1,
+        satisfiedCount,
+        total: 3,
+        truckSlotId: `t1:1:${level}`,
+      }) as const;
+
+    it('lands a box on a truck bed with the hollow thunk; it chimes only when correct and buzzes on a wrong truck slot', async () => {
+      const { engine, ctx, warn } = await live();
+      const truckDrop = vi.spyOn(SfxPlayer.prototype, 'truckDrop');
+      const slotDrop = vi.spyOn(SfxPlayer.prototype, 'slotDrop');
+      const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
+      const buzz = vi.spyOn(SfxPlayer.prototype, 'wrongBuzz');
+      const landed = () => ctx.currentTime + DROP_LAND_SEC;
+
+      engine.handleEvent({ ...onTruck(false, 0, 0), wrongTarget: true }, 'color');
+      expect(truckDrop.mock.calls).toEqual([[expect.closeTo(landed(), 9), null, false, 0, 'color']]);
+      expect(buzz.mock.calls).toEqual([[expect.closeTo(landed() + WRONG_AFTER_LAND_SEC, 9)]]);
+
+      engine.handleEvent(onTruck(true, 1, 2), 'exact');
+      expect(truckDrop.mock.calls[1][1]).not.toBeNull();
+      expect(truckDrop.mock.calls[1].slice(2)).toEqual([false, 1, 'exact']);
+      engine.handleEvent(onTruck(true, 2, 3), 'symbol');
+      expect(truckDrop.mock.calls[2][2]).toBe(true); // the last target: the final strike
+      expect(buzz).toHaveBeenCalledTimes(1);
+      expect(slotDrop).not.toHaveBeenCalled();
+      expect(drop).not.toHaveBeenCalled();
+
+      // Picking from a truck bed is the classic wooden pickup.
+      const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromTruckSlotId: 't1:1:1' });
+      expect(pickup.mock.calls).toEqual([[ctx.currentTime, 1]]);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('drives the motor with the signed speed and fork motion, through the master gain that mute silences', async () => {
+      const { engine, warn } = await live();
+      const set = vi.spyOn(MotorSound.prototype, 'set');
+      engine.setMotor(-0.4, -1, 2);
+      engine.setMotor(0.8, 0.5);
+      expect(set.mock.calls).toEqual([
+        [-0.4, -1, 2],
+        [0.8, 0.5, 0],
+      ]);
+      const graph = (engine as unknown as { rt: { graph: AudioGraph } }).rt.graph;
+      const motorVol = (graph.motorIn as unknown as FakeGain).outputs[0] as FakeGain;
+      expect(motorVol.outputs).toContain(graph.master);
+      engine.setMuted(true);
+      expect((graph.master.gain as unknown as FakeParam).last()?.value).toBe(0);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('keeps the fork clunk quiet while a pick or a drop is marked by its own knock, muted or not', async () => {
+      const { engine, ctx, warn } = await live();
+      const hush = vi.spyOn(MotorSound.prototype, 'hushClunk');
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 0 });
+      engine.handleEvent(onTruck(false));
+      engine.handleEvent({ type: 'actionIdle', carrying: false });
+      engine.setMuted(true);
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 0 });
+      expect(hush.mock.calls).toEqual([[ctx.currentTime + CLUNK.hushSec], [ctx.currentTime + CLUNK.hushSec], [ctx.currentTime + CLUNK.hushSec]]);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('tunes the reverse beep to the tonic of the song', async () => {
+      const { engine } = await live();
+      const internals = engine as unknown as { composer: { keyPc: number }; rt: { motor: { beeper: { tone: FakeOscillator } } } };
+      expect(internals.rt.motor.beeper.tone.frequency.value).toBeCloseTo(beepFrequency(internals.composer.keyPc), 9);
+      engine.dispose();
     });
   });
 });

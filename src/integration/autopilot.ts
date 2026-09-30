@@ -14,7 +14,9 @@
  * Driver: closed-loop steering toward cell centers with world-space input; steps back in reverse with the vehicle
  * controls (S = drive throttle < 0), as a player would. Storage racks (docs/RACKS.md): in front of a rack column it
  * picks the slot level with the fork keys (InputFrame.forkStep, one press per slot, like F / V), waits for the forks,
- * then drives the load in (or lifts the slot's box) and backs straight out.
+ * then drives the load in (or lifts the slot's box) and backs straight out. Loading docks (docs/DOCKS.md): a truck bed
+ * is a stack position of the same model, so the plan drives straight up to its front cell and drops (the fork height
+ * is automatic, no fork keys), and backs straight out with a box lifted off it.
  */
 import { angleDelta } from '../core/math';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';

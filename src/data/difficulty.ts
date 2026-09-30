@@ -19,6 +19,7 @@ export const DIFFICULTY_METRICS = [
   'cajas',
   'zonas',
   'huecos',
+  'camion',
 ] as const;
 export type DifficultyMetric = (typeof DIFFICULTY_METRICS)[number];
 
@@ -38,6 +39,7 @@ const ALIASES: Readonly<Record<string, DifficultyMetric>> = {
   caja: 'cajas',
   zona: 'zonas',
   hueco: 'huecos',
+  camiones: 'camion',
 };
 
 export const DIFFICULTY_OPS = ['>=', '<=', '=', '>', '<'] as const;

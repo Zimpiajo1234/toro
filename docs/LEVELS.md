@@ -18,7 +18,8 @@ de `LEVELS` no entra en subcarpetas, así que nunca llegan a `LEVELS`, a los tie
 «Continuar». El registro los carga aparte (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`), los valida
 igual y rechaza un id o un número que choque con un nivel del juego (`loadSpecialSources`), para que las herramientas
 puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark** (`BENCHMARK_ID = 'benchmark'`, número
-100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`).
+100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`) y del
+muelle de carga (`docs/DOCKS.md`).
 
 - Parser y renderer: `src/data/asciiLevel.ts` (texto → `validateLevel` → `LevelData`, y `LevelData` → texto canónico).
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
@@ -86,6 +87,7 @@ Cualquier otro carácter imprimible (letras, números, signos; nunca `=` ni `:`)
 ```
 descripción = elemento { "+" elemento }     (como mucho una zona y una caja o pila por carácter)
             | almacén                       (una estantería almacenable va sola)
+            | camión                        (un camión de muelle va solo)
 elemento    = caja | pila | zona | estantería | planta
 caja        = "caja" color [símbolo] ["tipo" tipo] [id]
 pila        = "pila" color [símbolo] [id] { "," color [símbolo] [id] }      (de abajo arriba)
@@ -95,6 +97,9 @@ estantería  = "estantería" ["de"] [alturas ["alturas"]]                   (sin
 almacén     = "estantería" "frente" dirección [id] ":" columna { "|" columna }
 columna     = hueco { "/" hueco }                                         (de abajo arriba, 1–3 huecos)
 hueco       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]
+camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }
+niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1–3 niveles)
+nivel       = (color [símbolo] | símbolo) [ "+" caja ]                    (nunca «libre»)
 planta      = "planta" ["variante"] [número]
 id          = "(" texto sin espacios ")"
 ```
@@ -121,6 +126,7 @@ id          = "(" texto sin espacios ")"
 | `E = estantería` | otra estantería de 2 alturas: sirve para pegarla a una `#` |
 | `P = planta variante 2` | planta con otra forma |
 | `R = estantería frente sur: azul / ▲ + caja coral / libre` | estantería **almacenable** de 1 columna, se carga desde el sur: hueco de abajo «azul», el del medio «▲» con una caja coral dentro, arriba libre |
+| `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** en una puerta del muro oeste (el carácter en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
 | `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
 
 Las **estanterías almacenables** (reglas, lógica y datos: `docs/RACKS.md`) ocupan una fila recta (frente norte o sur)
@@ -129,6 +135,13 @@ este, o de norte a sur). Se cargan solo por el frente; la pista de cada hueco se
 cada hueco con pista es un **objetivo**: tiene que haber una caja por objetivo y un único reparto completo (cajas
 idénticas no cuentan dos veces), y cada objetivo solo se cumple con su caja destinada. Las cajas de los huecos se
 numeran después de las del suelo; las estanterías, `r1, r2…`.
+
+Los **camiones** (muelles de carga; reglas, lógica y datos: `docs/DOCKS.md`, gramática completa allí) ocupan una
+tirada recta pegada a su muro: casillas de la fila 0 (muelle norte) o de la columna 0 (muelle oeste), una columna de la
+leyenda por casilla (de oeste a este, o de norte a sur); la puerta del muro es esa tirada (`ventanas:` no puede
+pisarla). Se cargan solo de frente, como una pila del suelo, de abajo arriba; cada nivel lleva su pista y es un
+objetivo más del reparto único. Las cajas del camión se numeran después de las de las estanterías; los camiones,
+`t1, t2…` (nunca el id de una estantería).
 
 ## Reglas que conviene saber
 
@@ -182,7 +195,7 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 
 | Nombre (`dificultad:`) | Qué mide |
 |---|---|
-| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (un poco de voraz y luego búsqueda ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa (y que un movimiento nunca baja en más de uno: tests en `metrics.test.ts`): cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver); una más si ninguna caja puede colocarse ya o hay una trampa; una más por cada **corro cerrado** (cajas en zonas ajenas sin ninguna zona libre de esos colores, como dos cajas cambiadas; en símbolos, con destinos fijos, cajas cada una en el destino de otra); y las que exige el orden de un **pasillo sin salida** (lo que está más cerca de la boca tiene que salir para llenar el fondo: una caja ya colocada delante de una zona vacía del fondo sale y vuelve, +2). Con estanterías, las cotas de corros y pasillos no se usan. Si agota su presupuesto (`--estados`, 150 000 por defecto) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
+| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (un poco de voraz y luego búsqueda ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa (y que un movimiento nunca baja en más de uno: tests en `metrics.test.ts`): cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver); una más si ninguna caja puede colocarse ya o hay una trampa; una más por cada **corro cerrado** (cajas en zonas ajenas sin ninguna zona libre de esos colores, como dos cajas cambiadas; en símbolos, con destinos fijos, cajas cada una en el destino de otra); y las que exige el orden de un **pasillo sin salida** (lo que está más cerca de la boca tiene que salir para llenar el fondo: una caja ya colocada delante de una zona vacía del fondo sale y vuelve, +2). Con estanterías o camiones, las cotas de corros y pasillos no se usan; en su lugar, +1 por cada ciclo de cajas que descansan cada una en el destino de la siguiente (zonas y huecos; `docs/RACKS.md`). Si agota su presupuesto (`--estados`, 150 000 por defecto) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
 | `obligadas` | Cajas que tienen que moverse al menos una vez: las que no forman parte de la base correcta de su zona (en una pila, la parte de abajo que ya encaja cuenta como colocada). |
 | `extra` | `movimientos − obligadas`: aparcar, reordenar una pila, deshacer una trampa. |
 | `bloqueos` | Cajas que hay que apartar antes de poder usar otra cosa: **tapan** (están sobre una zona sin encajar en ella, o encima de una caja que tiene que moverse) o **cierran paso** (quitándolas, la carretilla vacía llega junto a una caja o una zona libre a la que antes no llegaba). |
@@ -190,9 +203,10 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 | `libre` | % de casillas sin estantería, planta ni caja al empezar. |
 | `ambiguas` | Cajas con más de un destino posible (zonas distintas, o pisos distintos de pilas; zonas idénticas cuentan una vez). |
 | `trampas` | Niveles con símbolos: colocaciones aceptadas (tipo de caja → tipo de zona) que dejan a otra caja sin zona. |
-| `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). Con estanterías: repartos por posición (cajas idénticas no cuentan como distintas); siempre 1. En otros niveles no aplica. |
+| `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). Con estanterías o camiones: repartos por posición (cajas idénticas no cuentan como distintas); siempre 1. En otros niveles no aplica. |
 | `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
+| `camion` | Niveles de camión (alias `camiones`; en el informe: columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
 | `cajas`, `zonas` | Cuántas hay. |
 
 Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de
@@ -231,7 +245,8 @@ Métricas de la tabla, comparaciones `>= <= = > <` (también `≥ ≤`), número
 (`levels.test.ts`) miden cada nivel que declara objetivos y fallan si alguno no está **demostrado**: una cota «≥ n»
 demuestra `>=`/`>` pero no `<=`, `<` ni `=` (sube `--estados` o simplifica el nivel). Solo buscan movimientos si algún
 objetivo habla de `movimientos` o `extra`, y paran en cuanto cada objetivo queda demostrado o descartado. Una métrica
-que no aplica (`repartos` sin símbolos ni estanterías) nunca se cumple. `callejones` también se puede pedir
+que no aplica (`repartos` sin símbolos, estanterías ni camiones) nunca se cumple (`huecos` y `camion` valen 0 sin
+estanterías o sin camiones). `callejones` también se puede pedir
 (`callejones=0`), pero en un nivel grande la búsqueda no llega a todos los estados, así que solo demuestra `>=`: el
 «ninguno» de todos los niveles lo garantiza el test de arriba.
 

@@ -263,14 +263,27 @@ export function buildSlotCue(look: CueLook, endSides: readonly (1 | -1)[] = []):
   return parts.build();
 }
 
-/** One cue sticker, in the XY plane facing +Z from z = 0: the rim, the fill over it and the bold glyph on top. */
-function buildCueFace(look: CueLook): BufferGeometry {
+/** Measures of a cue sticker (CUE for a rack slot; builders/truck TRUCK_CUE for a truck level, a little smaller). */
+export interface CueDims {
+  halfW: number;
+  halfH: number;
+  radius: number;
+  rim: number;
+  glyph: number;
+  lift: number;
+}
+
+/**
+ * One cue sticker, in the XY plane facing +Z from z = 0: the rim, the fill over it and the bold glyph on top. Shared by
+ * the rack slots and the truck cue boards (docs/DOCKS.md), so both read the same.
+ */
+export function buildCueFace(look: Pick<CueLook, 'fill' | 'rim' | 'ink' | 'glyph'>, dims: CueDims = CUE): BufferGeometry {
   const parts = new PartList();
-  const r = CUE.rim;
-  parts.add(new ShapeGeometry(roundedRectShape(CUE.halfW, CUE.halfH, CUE.radius, 4), 4), look.rim);
-  const fill = roundedRectShape(CUE.halfW - r, CUE.halfH - r, CUE.radius - r, 4);
-  parts.add(new ShapeGeometry(fill, 4), look.fill, { z: CUE.lift });
-  if (look.glyph) parts.add(new ShapeGeometry(glyphShape(look.glyph, CUE.glyph), 6), look.ink, { z: 2 * CUE.lift });
+  const r = dims.rim;
+  parts.add(new ShapeGeometry(roundedRectShape(dims.halfW, dims.halfH, dims.radius, 4), 4), look.rim);
+  const fill = roundedRectShape(dims.halfW - r, dims.halfH - r, dims.radius - r, 4);
+  parts.add(new ShapeGeometry(fill, 4), look.fill, { z: dims.lift });
+  if (look.glyph) parts.add(new ShapeGeometry(glyphShape(look.glyph, dims.glyph), 6), look.ink, { z: 2 * dims.lift });
   return parts.build();
 }
 
@@ -305,8 +318,24 @@ export function buildSlotMarkerGeometry(): BufferGeometry {
  * (alpha 1) and a feather out to alpha 0. Tinted and faded by its material (a vertex-alpha overlay, both sides).
  */
 export function buildSlotGlowGeometry(): BufferGeometry {
-  const G = SLOT_GLOW;
-  const halfH = PANEL_HEIGHT / 2;
+  return buildGlowFrameGeometry(SLOT_GLOW, PANEL_HEIGHT / 2, [0.5 + SLOT_GLOW.gap, -0.5 - SLOT_GLOW.gap]);
+}
+
+/** Measures of a glow band (SLOT_GLOW; builders/truck TRUCK_GLOW around a truck level). */
+export interface GlowFrameDims {
+  halfW: number;
+  solidX: number;
+  solidY: number;
+  featherX: number;
+  featherY: number;
+  radius: number;
+}
+
+/**
+ * A feathered frame of light (RGBA white vertices: a solid strip at alpha 1 around an opening `halfW` × `halfH`, from
+ * y = 0 up, then a feather out to alpha 0), in the XY plane at each z of `faces`. Tinted and faded by its material.
+ */
+export function buildGlowFrameGeometry(G: GlowFrameDims, halfH: number, faces: readonly number[]): BufferGeometry {
   const ring = (dx: number, dy: number) => roundedRectPoints(G.halfW + dx, halfH + dy, G.radius + dy, 3);
   const inner = ring(0, 0);
   const solid = ring(G.solidX, G.solidY);
@@ -329,7 +358,7 @@ export function buildSlotGlowGeometry(): BufferGeometry {
       push(a[j], z, alphaA);
     }
   };
-  for (const z of [0.5 + G.gap, -0.5 - G.gap]) {
+  for (const z of faces) {
     strip(inner, 1, solid, 1, z);
     strip(solid, 1, outer, 0, z);
   }
