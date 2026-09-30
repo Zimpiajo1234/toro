@@ -48,8 +48,9 @@ export interface Theme {
   shelf: { frame: string; board: string; storedBoxes: string[] };
   /**
    * Storage racks (docs/RACKS.md): painted metal, clearly apart from the wooden shelves. `frame` = the slate uprights,
-   * `beam` = the cream load beams, `panel` = the plain back and end panels (a slot's cue is drawn on them), `deck` =
-   * the deck and slot floors, `line` = the loading line painted on the floor in front. Never a functional hue.
+   * `beam` = the cream load beams, `panel` = the plain back panels and the faint see-through end plates (a slot's cue
+   * is drawn on them), `deck` = the deck and slot floors, `line` = the loading line painted on the floor in front.
+   * Never a functional hue.
    * Cues are unlit stickers: a colour cue is the box's own `base` rimmed in its `ink`; a symbol-only cue is `cueFill`
    * rimmed in `cueRim` (neutral, never a functional hue); every glyph is `cueInk` (deep and bold, never black).
    */

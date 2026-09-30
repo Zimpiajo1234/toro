@@ -7,16 +7,18 @@ import { parseLevel } from '../../data/asciiLevel';
 import { GameState } from '../../logic/GameState';
 import { forkRiseRate } from '../../logic/forkRise';
 import { defaultTheme } from '../../themes/default';
-import { CUE, END_PANEL, LOADING_LINE, PANEL_HEIGHT, RACK_PANEL, rackTopY } from '../builders/rack';
+import { CUE, END_PLATE, LOADING_LINE, PANEL_HEIGHT, RACK_PANEL, rackTopY } from '../builders/rack';
 import { FORK, RACK, boxDims, rackSlotY } from '../dims';
 import { LevelView } from '../LevelView';
 import { DROP_GLIDE_SEC } from './BoxView';
+import { END_PLATE_OPACITY } from './RackView';
 
 /*
- * Storage racks on screen (docs/RACKS.md, plan Fase 2): plain painted metal apart from the wooden shelves, unlit cues
- * readable from both faces and from the ends, a slot lights only with its destined box, fitting slots breathe while
- * carrying, boxes and forks at slot heights, drop preview + selected-slot marker, ghosting like the shelves (the cues
- * never fade). Layouts are inline (no .level files).
+ * Storage racks on screen (docs/RACKS.md, plan Fase 2): plain painted metal apart from the wooden shelves, open ends
+ * (only a faint see-through plate, so the boxes show from the side), unlit cues readable from both faces and from the
+ * ends, a slot lights only with its destined box, fitting slots breathe while carrying, boxes and forks at slot
+ * heights, drop preview + selected-slot marker, ghosting like the shelves (the cues never fade). Layouts are inline
+ * (no .level files).
  */
 
 const level = (text: string): LevelData => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -60,6 +62,22 @@ a = caja coral       b = caja lavanda
 R = estantería frente este: coral / libre | lavanda
 `);
 
+/** A one-column rack in the middle of the room, front to the south (over x ∈ [-0.5, 0.5], z ∈ [-1, 0]): azul / libre. */
+const ONE = level(`
+# 3 · Una columna
+id: estanteria-una
+limit: 1
+
+  01234
+0 .....
+1 ..R..
+2 .....
+3 .a.^.
+
+a = caja azul
+R = estantería frente sur: azul / libre
+`);
+
 const YAW = Math.PI / 4;
 const height = boxDims(GAME_CONFIG).height;
 
@@ -80,6 +98,11 @@ const frames = (view: LevelView, id = 'r1') =>
     .children.filter((c) => c.userData.rack)
     .sort((a, b) => a.userData.column - b.userData.column) as Mesh<BufferGeometry, MeshStandardMaterial>[];
 const frame = (view: LevelView, column = 0, id = 'r1') => frames(view, id)[column];
+/** The see-through end plate of each end column of a rack, in column order. */
+const endPlates = (view: LevelView, id = 'r1') =>
+  rackGroup(view, id)
+    .children.filter((c) => c.userData.rackEndPlate !== undefined)
+    .sort((a, b) => a.userData.rackEndPlate - b.userData.rackEndPlate) as Mesh<BufferGeometry, MeshStandardMaterial>[];
 const rackBounds = (view: LevelView, id = 'r1') => {
   const box = new Box3();
   for (const f of frames(view, id)) box.union(f.geometry.boundingBox!);
@@ -186,6 +209,9 @@ describe('rack builder + view: a different piece of furniture', () => {
     expect(frames(view)).toHaveLength(2);
     // Each bay fades on its own: its own material.
     expect(frame(view, 0).material).not.toBe(frame(view, 1).material);
+    // A see-through plate at each end, with the bay of its end column, on a material of its own (it stays faint).
+    expect(endPlates(view).map((p) => p.userData.rackEndPlate)).toEqual([0, 1]);
+    for (const plate of endPlates(view)) for (const f of frames(view)) expect(plate.material).not.toBe(f.material);
     const panels = group.children.filter((c) => c.userData.slotId);
     expect(panels.map((p) => p.userData.slotId).sort()).toEqual(['r1:0:0', 'r1:0:1', 'r1:1:0']);
     // Glowing panels share one geometry, never the material (each glows on its own).
@@ -219,7 +245,7 @@ describe('rack builder + view: a different piece of furniture', () => {
   it('keeps a plain low-poly silhouette: no diagonal brace anywhere, every face square to the room', () => {
     for (const lvl of [SOUTH, EAST]) {
       const { view } = setup(lvl);
-      for (const f of frames(view)) {
+      for (const f of [...frames(view), ...endPlates(view)]) {
         const nor = f.geometry.getAttribute('normal');
         for (let i = 0; i < nor.count; i++) {
           const n = new Vector3().fromBufferAttribute(nor, i);
@@ -230,30 +256,91 @@ describe('rack builder + view: a different piece of furniture', () => {
     }
   });
 
-  it('closes both ends with a solid panel between the end uprights, up to the top beam of the end column', () => {
-    const { view } = setup();
-    // South-facing rack over x ∈ [-0.5, 1.5], z ∈ [-1, 0]: the west end panel in bay 0, the east one in bay 1.
-    const near = (p: Vector3, x: number) => Math.abs(p.x - x) < 1e-4;
-    const west = paintedVertices(frame(view, 0), defaultTheme.rack.panel).filter(
-      (v) => near(v.p, -0.5 + END_PANEL.u0) || near(v.p, -0.5 + END_PANEL.u1),
-    );
-    const east = paintedVertices(frame(view, 1), defaultTheme.rack.panel).filter(
-      (v) => near(v.p, 1.5 - END_PANEL.u0) || near(v.p, 1.5 - END_PANEL.u1),
-    );
-    for (const [end, levels] of [
-      [west, 3],
-      [east, 2],
-    ] as const) {
-      expect(end.length).toBeGreaterThan(0);
-      const ys = end.map((v) => v.p.y);
-      const zs = end.map((v) => v.p.z);
-      expect(Math.min(...ys)).toBeCloseTo(0, 5);
-      expect(Math.max(...ys)).toBeCloseTo(rackSlotY(levels), 5);
-      // Nearly the whole depth, inside the uprights.
-      expect(Math.max(...zs) - Math.min(...zs)).toBeGreaterThan(0.85);
-      expect(Math.min(...zs)).toBeGreaterThan(-1);
-      expect(Math.max(...zs)).toBeLessThan(0);
+  it('leaves both ends open to the boxes: no side wall, only a faint see-through plate that holds the end cues', () => {
+    const { snap, view } = setup();
+    // South-facing rack over x ∈ [-0.5, 1.5], z ∈ [-1, 0] (depth d = −z from its front face): the west end closes
+    // column 0 (3 slots), the east end column 1 (2 slots).
+    const post = 0.06; // the uprights' side
+    const ends = [
+      { column: 0, end: -0.5, inward: 1, levels: 3 },
+      { column: 1, end: 1.5, inward: -1, levels: 2 },
+    ] as const;
+    // Nothing of the solid frame closes an end any more: within an upright's side of it, only the front and back
+    // uprights stand (d ≤ 0.06 or ≥ 0.94); the whole end between them is open.
+    const p = new Vector3();
+    for (const f of frames(view)) {
+      f.updateWorldMatrix(true, false);
+      const pos = f.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        p.fromBufferAttribute(pos, i).applyMatrix4(f.matrixWorld);
+        for (const e of ends) {
+          if ((p.x - e.end) * e.inward >= post - 1e-6) continue;
+          expect(Math.min(-p.z, 1 + p.z), `vertex ${p.toArray()} across the ${e.end < 0 ? 'west' : 'east'} end`).toBeLessThanOrEqual(post + 1e-6);
+        }
+      }
     }
+
+    const plates = endPlates(view);
+    expect(plates).toHaveLength(2);
+    for (const e of ends) {
+      const plate = plates[e.column];
+      // Between the end uprights, a touch inside the rack's end, from the floor up to the top beam of its column.
+      const b = plate.geometry.boundingBox!;
+      const outer = e.end + e.inward * END_PLATE.u0;
+      const inner = e.end + e.inward * END_PLATE.u1;
+      expect(b.min.x).toBeCloseTo(Math.min(outer, inner), 5);
+      expect(b.max.x).toBeCloseTo(Math.max(outer, inner), 5);
+      expect(b.min.y).toBeCloseTo(0, 5);
+      expect(b.max.y).toBeCloseTo(rackSlotY(e.levels), 5);
+      expect(b.max.z - b.min.z).toBeGreaterThan(0.85);
+      expect(b.min.z).toBeGreaterThan(-1 + post - 1e-6);
+      expect(b.max.z).toBeLessThan(-post + 1e-6);
+      expect(painted(plate.geometry, defaultTheme.rack.panel)).toBe(plate.geometry.getAttribute('position').count);
+      // Faint and see-through: it never writes depth (the boxes and the frame behind it still draw), has no depth
+      // prepass, never shades the boxes with a shadow, and draws after the solid rack, the boxes and the slot
+      // overlays, so it only tints what stands behind it.
+      expect(plate.material.transparent).toBe(true);
+      expect(plate.material.opacity).toBeCloseTo(END_PLATE_OPACITY, 6);
+      expect(plate.material.depthWrite).toBe(false);
+      expect(plate.children).toHaveLength(0);
+      expect(plate.castShadow).toBe(false);
+      expect(plate.renderOrder).toBeGreaterThan(frame(view, e.column).renderOrder);
+      for (const box of snap.boxes) expect(plate.renderOrder).toBeGreaterThan(boxMesh(view, box.id).renderOrder);
+      expect(plate.renderOrder).toBeGreaterThan(glowBand(view, 'r1:0:0')!.renderOrder);
+      expect(plate.renderOrder).toBeGreaterThan(tagged(view, 'slotMarker').renderOrder);
+    }
+    expect(END_PLATE_OPACITY).toBeGreaterThanOrEqual(0.15);
+    expect(END_PLATE_OPACITY).toBeLessThanOrEqual(0.25);
+
+    // A rack along z (front to the east, over x ∈ [-2, -1], z ∈ [-1.5, 0.5]) closes its north and south ends the same way.
+    const e = setup(EAST).view;
+    const [north, south] = endPlates(e).map((plate) => plate.geometry.boundingBox!);
+    expect(north.min.z).toBeCloseTo(-1.5 + END_PLATE.u0, 5);
+    expect(north.max.z).toBeCloseTo(-1.5 + END_PLATE.u1, 5);
+    expect(south.min.z).toBeCloseTo(0.5 - END_PLATE.u1, 5);
+    expect(south.max.z).toBeCloseTo(0.5 - END_PLATE.u0, 5);
+    for (const b of [north, south]) {
+      expect(b.min.x).toBeGreaterThan(-2 + post - 1e-6);
+      expect(b.max.x).toBeLessThan(-1 - post + 1e-6);
+    }
+    view.dispose();
+    e.dispose();
+  });
+
+  it('gives a one-column rack a single plate holding both of its ends, its cue reading from both', () => {
+    const { view } = setup(ONE);
+    const plates = endPlates(view);
+    expect(plates).toHaveLength(1);
+    expect(plates[0].userData.rackEndPlate).toBe(0);
+    // Over x ∈ [-0.5, 0.5]: a thin sheet at each end, nothing in between.
+    const b = plates[0].geometry.boundingBox!;
+    expect(b.min.x).toBeCloseTo(-0.5 + END_PLATE.u0, 5);
+    expect(b.max.x).toBeCloseTo(0.5 - END_PLATE.u0, 5);
+    const pos = plates[0].geometry.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) expect(0.5 - Math.abs(pos.getX(i))).toBeLessThanOrEqual(END_PLATE.u1 + 1e-6);
+    const rim = paintedVertices(cueMesh(view, 'r1:0:0')!, defaultTheme.boxes.blue.ink);
+    expect(rim.filter((v) => v.n.x < -0.99 && v.p.x < -0.5 + END_PLATE.u0).length).toBeGreaterThan(8);
+    expect(rim.filter((v) => v.n.x > 0.99 && v.p.x > 0.5 - END_PLATE.u0).length).toBeGreaterThan(8);
     view.dispose();
   });
 
@@ -395,7 +482,9 @@ describe('rack cues: the «leyenda» of each slot', () => {
     expect(CUE.glyph).toBeGreaterThanOrEqual(0.4);
   });
 
-  it('reads from the ends too: each end panel carries the cues of its end column, level by level', () => {
+  it('reads from the ends too: the cues of each end column stay on the outer face of its end plate, level by level', () => {
+    // The legends never move with the open ends: the end stickers stand where the solid end panel's face was.
+    expect(END_PLATE.u0).toBeCloseTo(0.015, 6);
     // South-facing rack over x ∈ [-0.5, 1.5]: column 0 closes the west end, column 1 the east end.
     const { snap, view } = setup();
     const rims: Record<string, string> = {
@@ -407,19 +496,24 @@ describe('rack cues: the «leyenda» of each slot', () => {
     const west = new Vector3(-1, 0, 0);
     const east = new Vector3(1, 0, 0);
     for (const [slotId, out, x] of [
-      ['r1:0:0', west, -0.5 + END_PANEL.u0],
-      ['r1:0:1', west, -0.5 + END_PANEL.u0],
-      ['r1:1:0', east, 1.5 - END_PANEL.u0],
+      ['r1:0:0', west, -0.5 + END_PLATE.u0],
+      ['r1:0:1', west, -0.5 + END_PLATE.u0],
+      ['r1:1:0', east, 1.5 - END_PLATE.u0],
     ] as const) {
       // The sticker (the lip tape lies on the beam, at the slot floor).
       const face = facing(slotId, out).filter((v) => v.p.y - rackSlotY(slotOf(snap, slotId).level) > 0.01);
       expect(face.length, slotId).toBeGreaterThan(8);
-      // Just outside its end panel, at the height of its back-panel sticker.
-      for (const v of face) expect(Math.abs(v.p.x - x)).toBeLessThan(0.01);
+      // Just outside its end plate (never behind the faint sheet), at the height of its back-panel sticker, full size.
+      for (const v of face) {
+        expect(Math.abs(v.p.x - x)).toBeLessThan(0.01);
+        expect((v.p.x - x) * out.x).toBeGreaterThan(0);
+      }
       const floor = rackSlotY(slotOf(snap, slotId).level);
       const ys = face.map((v) => v.p.y - floor);
       expect(Math.min(...ys)).toBeCloseTo(PANEL_HEIGHT / 2 - CUE.halfH, 3);
       expect(Math.max(...ys)).toBeCloseTo(PANEL_HEIGHT / 2 + CUE.halfH, 3);
+      const zs = face.map((v) => v.p.z);
+      expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(2 * CUE.halfW, 3);
       // Never on the other end (a two-column rack: each end belongs to one column).
       expect(facing(slotId, out.clone().negate()).filter((v) => Math.abs(v.p.x - (x < 0 ? 1.5 : -0.5)) < 0.1)).toHaveLength(0);
     }
@@ -429,12 +523,12 @@ describe('rack cues: the «leyenda» of each slot', () => {
     const coral = paintedVertices(cueMesh(e, 'r1:0:0')!, defaultTheme.boxes.coral.ink);
     const north = coral.filter((v) => v.n.z < -0.99);
     expect(north.length).toBeGreaterThan(8);
-    for (const v of north) expect(Math.abs(v.p.z - (-1.5 + END_PANEL.u0))).toBeLessThan(0.01);
+    for (const v of north) expect(Math.abs(v.p.z - (-1.5 + END_PLATE.u0))).toBeLessThan(0.01);
     expect(coral.filter((v) => v.n.z > 0.99)).toHaveLength(0);
     const lavender = paintedVertices(cueMesh(e, 'r1:1:0')!, defaultTheme.boxes.lavender.ink);
     const south = lavender.filter((v) => v.n.z > 0.99);
     expect(south.length).toBeGreaterThan(8);
-    for (const v of south) expect(Math.abs(v.p.z - (0.5 - END_PANEL.u0))).toBeLessThan(0.01);
+    for (const v of south) expect(Math.abs(v.p.z - (0.5 - END_PLATE.u0))).toBeLessThan(0.01);
     view.dispose();
     e.dispose();
   });
@@ -458,7 +552,7 @@ describe('rack cues: the «leyenda» of each slot', () => {
           const n = ln.clone().applyMatrix4(normal);
           // Counter-clockwise seen from where its normal points: drawn, not culled (a mirror would flip it).
           expect(windingNormal(mesh, i).dot(n)).toBeGreaterThan(0.99);
-          // On the outer side of the panel it stands on: a back-panel face off that panel, an end face at the rack end.
+          // On the outer side of what it stands on: a back-panel face off that panel, an end face off the end plate.
           if (Math.abs(ln.z) > 0.99) expect((local.z - panelZ) * ln.z).toBeGreaterThan((RACK_PANEL.d1 - RACK_PANEL.d0) / 2);
           else expect(local.x * ln.x).toBeGreaterThan(0.48);
           faces.add(faceKey(n));
@@ -729,8 +823,14 @@ describe('rack ghosting', () => {
     expect(depthPass.visible).toBe(true);
     expect(depthPass.renderOrder).toBeLessThan(frame(view).renderOrder);
     expect(boxMesh(view, box.id).material.opacity).toBeLessThan(0.6);
-    // «Sin atenuante»: the cues stay opaque, at full colour, in the opaque pass (before any ghost) and writing depth,
-    // so the ghost's depth prepass and colour pass stop at them.
+    // Its end plate fades along with it (still never writing depth), drawn just after the bay's ghost colour pass.
+    const westPlate = endPlates(view)[0];
+    expect(westPlate.material.opacity).toBeCloseTo(END_PLATE_OPACITY * material.opacity, 6);
+    expect(westPlate.material.depthWrite).toBe(false);
+    expect(westPlate.renderOrder).toBeGreaterThan(frame(view).renderOrder);
+    expect(westPlate.renderOrder).toBeLessThan(frame(view).renderOrder + 1);
+    // «Sin atenuante»: the cues (the end ones too) stay opaque, at full colour, in the opaque pass (before any ghost)
+    // and writing depth, so the ghost's depth prepass and colour pass stop at them.
     for (const cue of cues(view)) {
       expect(cue.visible).toBe(true);
       expect(cue.material.transparent).toBe(false);
@@ -746,6 +846,10 @@ describe('rack ghosting', () => {
     expect(material.opacity).toBe(1);
     expect(material.depthWrite).toBe(true);
     expect(boxMesh(view, box.id).material.opacity).toBe(1);
+    expect(westPlate.material.opacity).toBeCloseTo(END_PLATE_OPACITY, 6);
+    expect(westPlate.material.depthWrite).toBe(false);
+    expect(westPlate.renderOrder).toBeGreaterThan(frame(view).renderOrder);
+    expect(westPlate.renderOrder).toBeGreaterThan(boxMesh(view, box.id).renderOrder);
 
     // Only a resting box behind it: a light fade, the cues stay readable and the boxes in its slots solid.
     const floorBox = boxOf(snap, 'yellow', 'square');
@@ -762,6 +866,11 @@ describe('rack ghosting', () => {
     expect(frame(view, 0).material.opacity).toBeLessThan(0.4);
     expect(frame(view, 1).material.opacity).toBe(1);
     expect(panel(view, 'r1:1:0')!.material.opacity).toBe(1);
+    // The plates follow their own bay: the west one fades, the east one keeps its light tint, drawn before any ghost.
+    expect(westPlate.material.opacity).toBeLessThan(END_PLATE_OPACITY * 0.4);
+    const eastPlate = endPlates(view)[1];
+    expect(eastPlate.material.opacity).toBeCloseTo(END_PLATE_OPACITY, 6);
+    expect(eastPlate.renderOrder).toBeLessThan(frame(view, 0).renderOrder);
     view.dispose();
   });
 

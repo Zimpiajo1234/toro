@@ -14,16 +14,22 @@ Decisión (2026-09-30, muelles de carga, docs/DOCKS.md): un nivel con **camiones
 estanterías» de este documento, tenga o no estanterías. En el código la puerta es `usesTargetRules(level)`
 (`core/docks.ts`: estanterías o camiones); donde aquí se dice «con estanterías», léase «con estanterías o camiones».
 
+Decisión (2026-09-30, cajas a la vista): las estanterías **ya no tienen paredes laterales macizas**, que tapaban las
+cajas de sus huecos. Cada extremo lleva solo una **placa translúcida** muy tenue (opacidad 0,2) que sostiene las pistas
+del lateral; las cajas de la columna del extremo se ven a través. Las **pistas no cambian**: mismo sitio, mismo tamaño,
+color entero, nunca atenuadas ni en espejo, en los dos extremos (ver «Render»).
+
 ## Reglas
 1. **Estantería almacenable** = mueble de 1 casilla de fondo, N casillas de ancho (una **columna** por casilla), de 1 a 3
    **huecos** de alto por columna (suelo + 2). Se **carga y descarga solo por el frente** (`facing`): la casilla de delante
    de cada columna es donde se pone la carretilla, mirando a la estantería. La **pista** de cada hueco (en su panel del
-   fondo) **se ve desde las dos caras** y, en las columnas de los extremos, también **en el panel lateral**, hueco a
-   hueco: leerla no exige mirar el frente (la estantería se lee desde los 4 ángulos de cámara); el frente solo decide
-   desde dónde se carga.
+   fondo) **se ve desde las dos caras** y, en las columnas de los extremos, también **en el lateral** (sobre su placa
+   translúcida), hueco a hueco: leerla no exige mirar el frente (la estantería se lee desde los 4 ángulos de cámara); el
+   frente solo decide desde dónde se carga.
 2. Se distinguen de las estanterías-obstáculo (madera + cajas kraft): son otro mueble, de metal pizarra con vigas crema,
-   formas simples (sin travesaños diagonales), huecos abiertos, paneles laterales macizos, pista en el panel del fondo y
-   una línea de carga pintada en el suelo del frente (ver «Render»).
+   formas simples (sin travesaños diagonales), huecos abiertos, extremos abiertos (sin pared lateral: solo una placa
+   translúcida que sostiene las pistas y deja ver las cajas), pista en el panel del fondo y una línea de carga pintada en
+   el suelo del frente (ver «Render»).
 3. **Pista del hueco**: color = pide ese color; símbolo = pide ese símbolo; color + símbolo = esa caja exacta. Hueco
    **«libre»** (sin pista) = almacén sin destino: guarda cualquier caja y nunca cuenta como objetivo.
 4. **Solución única**: cada zona y cada hueco con pista (los **objetivos**) tiene **una** caja destinada; las pistas se
@@ -202,25 +208,34 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
 
 - **Mueble** (`builders/rack.ts`, `buildRackBays`): low poly y sin travesaños diagonales (todas las caras a escuadra):
   montantes pizarra, cubierta abajo, vigas crema bajo cada hueco y encima de cada columna, el suelo de cada hueco de
-  arriba (dos barras, abierto, para que la pista del hueco de abajo asome por un hueco vacío), un **panel lateral
-  macizo** en cada extremo (`END_PANEL`, entre los montantes, hasta la viga de arriba de la columna del extremo) y el
-  panel liso de los huecos «libre». Colores en `Theme.rack` (`frame`, `beam`, `panel`, `deck`, `line`, y los de la
-  pista `cueFill`, `cueRim`, `cueInk`; nunca un tono funcional). La línea de carga del frente (`addRackLines`) es
-  pintura del suelo. Medidas en `dims.ts` `RACK` (`base`, `pitch` 0,74, `beam`, `forkRest`, `forkCarry`) y
-  `rackSlotY(nivel)`: el suelo del hueco n está a `base + n·pitch` (más alto que un piso de pila, así la carga pasa
-  sobre la viga del hueco de encima).
+  arriba (dos barras, abierto, para que la pista del hueco de abajo asome por un hueco vacío) y el panel liso de los
+  huecos «libre». **Sin pared lateral**: en cada extremo solo hay una **placa translúcida** (`END_PLATE`, entre los
+  montantes, hasta la viga de arriba de la columna del extremo), una geometría aparte al final de las de
+  `buildRackBays` (marcada con su columna, `endPlateColumn`; una sola para las dos puntas de una estantería de una
+  columna). Solo sostiene las pistas del lateral; las cajas de la columna del extremo se ven a través. Colores en
+  `Theme.rack` (`frame`, `beam`, `panel` —también la placa—, `deck`, `line`, y los de la pista `cueFill`, `cueRim`,
+  `cueInk`; nunca un tono funcional). La línea de carga del frente (`addRackLines`) es pintura del suelo. Medidas en
+  `dims.ts` `RACK` (`base`, `pitch` 0,74, `beam`, `forkRest`, `forkCarry`) y `rackSlotY(nivel)`: el suelo del hueco n
+  está a `base + n·pitch` (más alto que un piso de pila, así la carga pasa sobre la viga del hueco de encima).
 - **Pista** (`buildSlotCue`, `CUE`): una **pegatina** plana, grande (casi todo el panel) y **sin iluminar**
   (`createCueMaterial`: `MeshBasicMaterial`, sin tone mapping, opaca; ni luces ni sombras la oscurecen): el frente de
   una caja con el **color exacto de la caja** que pide (`theme.boxes[color].base`, borde en su `ink`), o la pegatina
   neutra (`rack.cueFill`, borde `rack.cueRim`) si solo pide símbolo, y en medio el glifo **en negrita** en
   `rack.cueInk` (tono cálido profundo, nunca negro; ≥ 3,5:1 sobre cada color): el símbolo que pide, o el glifo de su
   color en niveles sin símbolos; solo color = sin glifo. «Libre» = panel liso. Va en las **dos caras del panel del
-  fondo** y, si la columna cierra un extremo de la estantería (`cueEndSides`), en la **cara exterior de ese panel
-  lateral**, a la altura de su hueco: cada una derecha y sin espejo para quien la mira (solo giros), así que la
-  estantería se lee desde los 4 ángulos de cámara. Más una cinta de su color en el labio delantero del hueco. Una
-  geometría por aspecto y extremos; el panel liso de detrás (`buildSlotPanel`) es aparte, para brillar.
+  fondo** y, si la columna cierra un extremo de la estantería (`cueEndSides`), en la **cara exterior de la placa de
+  ese extremo** (justo donde estaba la cara del antiguo panel lateral: mismo sitio, mismo tamaño, color entero), a la
+  altura de su hueco: cada una derecha y sin espejo para quien la mira (solo giros), así que la estantería se lee desde
+  los 4 ángulos de cámara. Más una cinta de su color en el labio delantero del hueco. Una geometría por aspecto y
+  extremos; el panel liso de detrás (`buildSlotPanel`) es aparte, para brillar.
 - **Límite**: en estanterías de más de 2 columnas, las columnas del medio no tienen cara lateral: sus pistas solo se
   leen en el panel del fondo (por delante y por detrás). No hay geometría extra para ellas.
+- **Placa del extremo** (`RackBay.addPlate`, `END_PLATE_OPACITY` 0,2): va con la columna de su extremo, con material
+  propio (el del armazón, iluminado), **nunca escribe profundidad**, no proyecta sombra sobre las cajas y no tiene
+  prepaso de profundidad, así lo que queda detrás (cajas, armazón) se sigue dibujando. Con la columna sólida se dibuja
+  después de la estantería sólida, de las cajas y de los brillos del suelo, banda y marco (`renderOrder` 2,5), para
+  teñir lo que tiene detrás; con la columna fantasma se desvanece con ella (0,2 × su opacidad), justo después de su
+  pasada de color.
 - **`views/RackView.ts`**: una por estantería (armazón fusionado + un panel con su material de brillo por hueco con
   pista, + la pista de cada hueco, fuera de la columna, + su **banda de luz**: `buildSlotGlowGeometry`, `SLOT_GLOW`, un
   marco suave con borde difuminado justo por fuera del hueco en las dos caras, sobre montantes y vigas, que nunca tapa
@@ -234,10 +249,11 @@ y `levelDestinies` trae además `trucks` (`[]` sin camiones).
   laten con la fuerza de la pista de intercambio de siempre (`RACK_SWAP_INVITE` 0,1). Cada columna se vuelve
   fantasma por separado (prepaso de profundidad, como `ShelfView`): del todo (0,35) cuando tapa la carretilla o su carga,
   y entonces las cajas de sus huecos se desvanecen con ella; solo un poco (0,6) cuando tapa cajas en reposo o zonas.
-  **Sin atenuante**: el fantasma desvanece el armazón y los paneles lisos, nunca las pistas, que siguen opacas y con su
-  color entero (se dibujan en la pasada opaca, antes de cualquier fantasma, y escriben profundidad: el prepaso y el color
-  del fantasma se paran en ellas). Las cajas de sus propios huecos, o la carga que entra, nunca la vuelven fantasma. Al
-  terminar, los huecos con pista entran en la ola de las zonas, por distancia a la carretilla.
+  **Sin atenuante**: el fantasma desvanece el armazón, los paneles lisos y la placa del extremo, nunca las pistas
+  (tampoco las del lateral), que siguen opacas y con su color entero (se dibujan en la pasada opaca, antes de cualquier
+  fantasma, y escriben profundidad: el prepaso y el color del fantasma se paran en ellas). Las cajas de sus propios
+  huecos, o la carga que entra, nunca la vuelven fantasma. Al terminar, los huecos con pista entran en la ola de las
+  zonas, por distancia a la carretilla.
 - **`views/SlotMarker.ts`**: marco suave alrededor del hueco elegido (`hint.rack`), por delante y por detrás: tenue al
   elegirlo, más claro con `ready`; tono neutro, o el de la caja si su pista encaja. La **vista previa** (`DropPreview`)
   flota en el suelo del hueco, algo más pequeña (entre los montantes), con el tono de la caja cuando `cueFits`.
