@@ -3,13 +3,13 @@
  * level in detail (its canonical text, metrics with their meaning, difficulty targets, a shortest plan and the narrow
  * cells). Pure: the script loads the registry and prints what this returns. Metric definitions: docs/LEVELS.md.
  */
+import type { StorageSkin } from '../../core/types';
 import { usesSymbols } from '../../core/sorting';
-import { slotsOf } from '../../core/racks';
 import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import type { LevelSource } from './index';
 import { DEAD_END_STATES, checkTargets, levelMetrics, type LevelMetrics, type TargetCheck } from './metrics';
-import { LevelGrid, boxOfCode, lift, stacksOf, type Move } from './solver';
+import { LevelGrid, POS_SHELF, POS_STACK, boxOfCode, lift, stacksOf, type Move } from './solver';
 
 export interface ReportOptions {
   /** Add a milliseconds column (off for deterministic output, e.g. in tests). */
@@ -189,51 +189,66 @@ function blockerIds(m: LevelMetrics): string {
 }
 
 /**
- * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks («hueco 2 de R» for a rack slot,
- * «camión T (x,z), nivel 2» for a truck bed column, named by its door cell: the one its map character stands on).
+ * How the plan names a storage unit (docs/STORAGE.md), per skin: its word, and the word for one of its levels. With its
+ * legend letter (the map character on its cell, or on its front cell when the cell lies beyond a wall) and by its
+ * support: a shelf is a place of its own («hueco 2 de R»); a stack column names its unit («camión T»), then the height
+ * the box leaves or lands at («nivel 2»), like a floor stack's «piso».
+ */
+const PLAN_WORDS: { readonly [S in StorageSkin]: { readonly unit: string; readonly level: string } } = {
+  rack: { unit: 'estantería', level: 'hueco' },
+  truck: { unit: 'camión', level: 'nivel' },
+};
+
+/**
+ * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks; storage by PLAN_WORDS («hueco 2 de
+ * R» for a rack slot, «camión T (x,z), nivel 2» for a truck bed column, named by its door cell: the one its map
+ * character stands on).
  */
 function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
   const model = new LevelGrid(level);
   const symbols = usesSymbols(level);
-  const slots = slotsOf(level);
   let stacks = stacksOf(model, level);
   const width = String(plan.length).length;
-  /** A rack slot: «hueco 2 de R» (level from the bottom, the rack's map character). */
-  const slotName = (pos: number) => {
-    const slot = slots[pos - model.cellCount];
-    const cell = model.cellOf(model.slotCell[pos - model.cellCount]);
-    return { text: `hueco ${slot.level + 1} de ${grid[cell.z][cell.x]}`, cell };
+  /** A position's cell on the map: a floor cell itself; a storage column's own, or its front cell beyond a wall. */
+  const mapCell = (pos: number) => {
+    const cell = model.cellOfPos(pos);
+    return model.inMap(cell.x, cell.z) ? cell : model.cellOf(model.accessOf(pos));
   };
-  /** Where a move takes or leaves its box on the map: a slot's rack cell, a truck bed's door cell, else the cell. */
-  const mapCell = (pos: number) => (model.isSlot(pos) ? slotName(pos).cell : model.cellOf(model.accessOf(pos)));
+  const onShelf = (pos: number) => model.kind[pos] === POS_SHELF;
+  const onStack = (pos: number) => model.kind[pos] === POS_STACK;
+  const wordsOf = (pos: number) => PLAN_WORDS[model.columnOfPos(pos)!.ref.unit.skin];
+  /** A storage position by its skin's words and its unit's letter: a shelf «hueco 2 de R», a stack column «camión T». */
+  const storageName = (pos: number) => {
+    const cell = mapCell(pos);
+    const letter = grid[cell.z][cell.x];
+    return onShelf(pos) ? `${wordsOf(pos).level} ${model.levelAt(pos) + 1} de ${letter}` : `${wordsOf(pos).unit} ${letter}`;
+  };
+  /** A level of a stack column (0 = bottom): «, nivel 2». */
+  const stackLevel = (pos: number, level: number) => `, ${wordsOf(pos).level} ${level + 1}`;
   return plan.map((move, i) => {
     const code = stacks[move.from].slice(-1);
     const box = boxOfCode(code);
     const lifted = lift(stacks, move.from);
-    const height = model.isSlot(move.drop) ? 0 : lifted[move.drop].length;
+    const height = onShelf(move.drop) ? 0 : lifted[move.drop].length;
     const at = mapCell(move.drop);
-    const fromCellOf = mapCell(move.from);
-    const from = model.isSlot(move.from)
-      ? slotName(move.from)
-      : model.isBed(move.from)
-        ? { text: `camión ${grid[fromCellOf.z][fromCellOf.x]}, nivel ${stacks[move.from].length}`, cell: fromCellOf }
-        : null;
-    const fromCell = from ? from.cell : fromCellOf;
-    const onBed = model.isBed(move.drop);
-    const target = model.isSlot(move.drop)
-      ? slotName(move.drop).text + (model.steps[move.drop] ? '' : ' (libre: aparcar)')
-      : onBed
-        ? `camión ${grid[at.z][at.x]}`
-        : model.steps[move.drop]
-          ? `zona ${grid[at.z][at.x]}`
-          : height > 0
-            ? 'encima de otra caja'
-            : 'suelo (aparcar)';
+    const fromCell = mapCell(move.from);
+    const from = model.isStorage(move.from)
+      ? storageName(move.from) + (onStack(move.from) ? stackLevel(move.from, stacks[move.from].length - 1) : '')
+      : null;
+    // A storage level with no cue takes any box: parking (a shelf's steps are null there).
+    const steps = model.steps[move.drop];
+    const target = model.isStorage(move.drop)
+      ? storageName(move.drop) + (steps && height < steps.length ? '' : ' (libre: aparcar)')
+      : steps
+        ? `zona ${grid[at.z][at.x]}`
+        : height > 0
+          ? 'encima de otra caja'
+          : 'suelo (aparcar)';
     lifted[move.drop] += code;
     stacks = lifted;
     const what = `caja ${COLOR_NAMES[box.color]}${symbols ? ` ${SYMBOL_GLYPHS[box.symbol]}` : ''}`;
-    const source = `(${fromCell.x},${fromCell.z})${from ? `, ${from.text}` : ''}`;
-    const floor = onBed ? `, nivel ${height + 1}` : height > 0 ? `, piso ${height + 1}` : '';
+    const source = `(${fromCell.x},${fromCell.z})${from ? `, ${from}` : ''}`;
+    const floor = onStack(move.drop) ? stackLevel(move.drop, height) : height > 0 ? `, piso ${height + 1}` : '';
     return `  ${String(i + 1).padStart(width)}. ${what} ${source} → ${target} (${at.x},${at.z})${floor}`;
   });
 }

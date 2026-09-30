@@ -2,13 +2,13 @@
  * Difficulty metrics of a level, measured on the solver's grid model (solver.ts): what `npm run levels` prints and
  * what `dificultad:` targets are checked against (docs/LEVELS.md, «Métricas»). Pure.
  */
-import type { LevelBox, LevelData } from '../../core/types';
-import { assignBoxes, assignmentsOf, criteriaOf, cueOf, meets, sortableOf, targetsOf, usesSymbols, type Sortable } from '../../core/sorting';
-import { slotsOf } from '../../core/racks';
-import { truckColumnsOf, truckSlotsOf, trucksOf, usesTargetRules } from '../../core/docks';
+import type { LevelBox, LevelData, StorageSkin, ZoneCriteria } from '../../core/types';
+import { assignBoxes, assignmentsOf, criteriaOf, meets, sortableOf, targetsOf, usesSymbols, type Sortable } from '../../core/sorting';
+import { STORAGE_SKINS, STORAGE_SKIN_ORDER, hasStorage, storageColumnsOf, storageOf, storageSlotsOf, type StorageSlotRef } from '../../core/storage';
 import { targetHolds, targetRefuted, type DifficultyMetric, type DifficultyTarget, type MetricRange } from '../difficulty';
 import {
   LevelGrid,
+  POS_STACK,
   boxCode,
   correctPrefix,
   deadEnds,
@@ -50,15 +50,18 @@ export interface LevelMetrics {
   traps: number;
   /**
    * «repartos»: distinct complete sortings (levels that sort by symbol, up to identical boxes and identical zones), or
-   * in a level with racks or trucks distinct complete assignments to its targets (up to identical boxes; always 1
-   * there); null otherwise.
+   * in a level with storage distinct complete assignments to its targets (up to identical boxes; always 1 there); null
+   * otherwise.
    */
   sortings: number | null;
-  /** «huecos»: storage rack slots (docs/RACKS.md): all of them, those with a cue (targets) and the «libre» ones. */
+  /**
+   * «huecos»: the storage levels of skin `rack` (docs/RACKS.md: its slots): all of them, those with a cue (targets) and
+   * the «libre» ones. Counted like every skin (storageCounts), reported for this one.
+   */
   slots: { total: number; cued: number; free: number };
   /**
-   * «camion»: loading docks (docs/DOCKS.md): the trucks, their bed columns and their levels (every level is a target;
-   * `loaded` of them start with a box on them).
+   * «camion»: the storage of skin `truck` (docs/DOCKS.md): its units, columns and levels (every level is a target;
+   * `loaded` of them start with a box on them). Counted like every skin (storageCounts), reported for this one.
    */
   trucks: { trucks: number; columns: number; levels: number; loaded: number };
   /**
@@ -78,7 +81,7 @@ export interface MetricsOptions extends MinMovesOptions {
 /** States the report explores for «callejones» by default (every slip along a shortest plan, then around it). */
 export const DEAD_END_STATES = 60;
 
-/** Boxes that must move at least once: not part of a correct stack on their zone (with racks: not on their destiny). */
+/** Boxes that must move at least once: not part of a correct stack on their zone (with storage: not on their destiny). */
 function mustMoveOf(level: LevelData): number {
   const grid = new LevelGrid(level);
   const stacks = stacksOf(grid, level);
@@ -87,16 +90,32 @@ function mustMoveOf(level: LevelData): number {
   return level.boxes.length - placed;
 }
 
-function slotCounts(level: LevelData): LevelMetrics['slots'] {
-  const slots = slotsOf(level);
-  const cued = slots.filter((s) => cueOf(s.rack.columns[s.column][s.level]) !== null).length;
-  return { total: slots.length, cued, free: slots.length - cued };
+/** One skin's storage (docs/STORAGE.md): units, columns, levels, levels with a cue, boxes stored at the start. */
+interface SkinCount {
+  units: number;
+  columns: number;
+  levels: number;
+  cued: number;
+  loaded: number;
 }
 
-function truckCounts(level: LevelData, grid: LevelGrid): LevelMetrics['trucks'] {
-  // A box loaded at the start rests on its bed cell, outside the map (a truck bed position of the model).
-  const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level))).length;
-  return { trucks: trucksOf(level).length, columns: truckColumnsOf(level).length, levels: truckSlotsOf(level).length, loaded };
+/** Every skin's storage, counted the same way for all: unit by unit, column by column, level by level. */
+function storageCounts(level: LevelData, grid: LevelGrid): { readonly [S in StorageSkin]: SkinCount } {
+  const counts = Object.fromEntries(STORAGE_SKIN_ORDER.map((skin) => [skin, { units: 0, columns: 0, levels: 0, cued: 0, loaded: 0 }])) as {
+    [S in StorageSkin]: SkinCount;
+  };
+  for (const unit of storageOf(level)) counts[unit.skin].units++;
+  for (const column of storageColumnsOf(level)) counts[column.unit.skin].columns++;
+  for (const slot of storageSlotsOf(level)) {
+    counts[slot.unit.skin].levels++;
+    if (slot.cue !== null) counts[slot.unit.skin].cued++;
+  }
+  // A box stored at the start rests on a storage position (its column's cell: inside the map or beyond a wall).
+  for (const b of level.boxes) {
+    const column = grid.columnOfPos(grid.posOf(b.x, b.z, b.level));
+    if (column) counts[column.ref.unit.skin].loaded++;
+  }
+  return counts;
 }
 
 /** All metrics of a level (the move search dominates the cost; `options` caps it or skips it). */
@@ -108,6 +127,7 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     ? { lower: mustMove, upper: null, exact: false, plan: null, unsolvable: false, states: 0 }
     : minMoves(level, options);
   const blockers = blockersOf(level, grid);
+  const { rack, truck } = storageCounts(level, grid);
   return {
     id: level.id,
     order: level.order,
@@ -127,10 +147,10 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     narrow: narrowCells(grid),
     freeFloorPct: freeFloor(grid, stacks),
     ambiguous: ambiguousBoxes(level),
-    traps: usesTargetRules(level) ? rackTraps(level) : usesSymbols(level) ? trapPlacements(level) : 0,
-    sortings: usesTargetRules(level) ? rackAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
-    slots: slotCounts(level),
-    trucks: truckCounts(level, grid),
+    traps: hasStorage(level) ? targetTraps(level) : usesSymbols(level) ? trapPlacements(level) : 0,
+    sortings: hasStorage(level) ? targetAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
+    slots: { total: rack.levels, cued: rack.cued, free: rack.levels - rack.cued },
+    trucks: { trucks: truck.units, columns: truck.columns, levels: truck.levels, loaded: truck.loaded },
     deadEnds:
       options.deadEndStates === undefined
         ? null
@@ -223,11 +243,11 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
     const cell = grid.posOf(b.x, b.z, b.level);
     byCell.set(cell, [...(byCell.get(cell) ?? []), b]);
   }
-  // A truck bed column lists its boxes by level (bottom → top), like a floor stack.
-  for (const [cell, boxes] of byCell) if (grid.isBed(cell)) boxes.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+  // A stack column lists its boxes by level (bottom → top), like a floor stack.
+  for (const [cell, boxes] of byCell) if (grid.kind[cell] === POS_STACK) boxes.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
   const covering: string[] = [];
   for (const [cell, boxes] of byCell) {
-    // A box in a «libre» rack slot covers nothing (a slot holds one box); off zones, only boxes above the bottom one do.
+    // A box on a «libre» shelf covers nothing (a shelf holds one box); off zones, only boxes above the bottom one do.
     const firstLoose = grid.steps[cell] ? correctPrefix(grid, stacks, cell) : 1;
     boxes.forEach((b, i) => {
       if (i >= firstLoose) covering.push(b.id);
@@ -236,9 +256,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
 
   const occupancy = occupancyOf(grid, stacks);
   const start = grid.index(level.forklift.x, level.forklift.z);
-  // A rack slot is reached from its front cell, a truck bed from its door cell.
+  // A storage position is reached from its column's front cell (a rack's front cell, a truck's door cell).
   const touches = (region: Uint8Array, pos: number) =>
-    grid.isSlot(pos) || grid.isBed(pos)
+    grid.isStorage(pos)
       ? region[grid.accessOf(pos)] === 1
       : [0, 1, 2, 3].some((d) => {
           const n = grid.step(pos, d);
@@ -246,9 +266,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
         });
   const needed: number[] = [];
   for (let c = 0; c < grid.posCount; c++) {
-    // A locked box (levels with racks) is never lifted and takes nothing more: no reason to reach it (a truck bed
+    // A locked box (levels with storage) is never lifted and takes nothing more: no reason to reach it (a stack column
     // whose satisfied levels are locked still takes its next level: it is reached while it has room).
-    if (lockedAt(grid, stacks, c) && !(grid.isBed(c) && stacks[c].length < grid.bedLevels[c])) continue;
+    if (lockedAt(grid, stacks, c) && !(grid.kind[c] === POS_STACK && stacks[c].length < grid.capacity[c])) continue;
     const steps = grid.steps[c];
     const open = steps !== null && correctPrefix(grid, stacks, c) === stacks[c].length && stacks[c].length < steps.length;
     if (stacks[c].length > 0 || open) needed.push(c);
@@ -258,9 +278,9 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
   const gatekeepers: string[] = [];
   if (unreached.length > 0) {
     for (const [cell, boxes] of byCell) {
-      // A locked box (levels with racks: on its destiny from the start) never moves, so it opens nothing; neither does a
-      // slot or a truck bed, off the floor.
-      if (grid.isSlot(cell) || grid.isBed(cell) || !touches(base, cell) || lockedAt(grid, stacks, cell)) continue;
+      // A locked box (levels with storage: on its destiny from the start) never moves, so it opens nothing; neither does
+      // a storage position, off the floor.
+      if (grid.isStorage(cell) || !touches(base, cell) || lockedAt(grid, stacks, cell)) continue;
       const without = occupancy.slice();
       without[cell] = -1;
       const region = reachableFrom(grid, without, start);
@@ -296,17 +316,20 @@ function freeFloor(grid: LevelGrid, stacks: readonly string[]): number {
 /** Identical zones (same criteria and recipe) are one destination. */
 const zoneKind = (zone: LevelData['zones'][number]) => JSON.stringify([zone.color ?? null, zone.symbol ?? null, zone.recipe ?? null]);
 
-/** A rack slot's cue as a destination kind (identical cues are one destination, like identical zones). */
-const cueKind = (cue: ReturnType<typeof cueOf>) => JSON.stringify(['slot', cue?.color ?? null, cue?.symbol ?? null]);
+/** A storage cue as a destination kind: identical cues of one skin are one destination, like identical zones. */
+const cueKind = (skin: StorageSkin, cue: ZoneCriteria) => JSON.stringify([skin, cue.color ?? null, cue.symbol ?? null]);
 
-/** A truck level's cue as a destination kind (docs/DOCKS.md; identical cues are one destination). */
-const truckCueKind = (cue: { color?: string; symbol?: string }) => JSON.stringify(['truck', cue.color ?? null, cue.symbol ?? null]);
+/**
+ * A storage level with a cue as a destination kind, by its support: a shelf is one kind at any height; a level of a
+ * stack column is one at its height, like a floor zone's stack.
+ */
+function slotKind(slot: StorageSlotRef & { cue: ZoneCriteria }): string {
+  const kind = cueKind(slot.unit.skin, slot.cue);
+  return STORAGE_SKINS[slot.unit.skin].support === 'stack' ? `${kind}@${slot.level}` : kind;
+}
 
 function ambiguousBoxes(level: LevelData): number {
-  const cues = slotsOf(level)
-    .map((s) => cueOf(s.rack.columns[s.column][s.level]))
-    .filter((cue) => cue !== null);
-  const truckCues = truckSlotsOf(level);
+  const cued = storageSlotsOf(level).filter((s): s is StorageSlotRef & { cue: ZoneCriteria } => s.cue !== null);
   return level.boxes.filter((b) => {
     const box = sortableOf(b);
     const destinations = new Set<string>();
@@ -315,22 +338,19 @@ function ambiguousBoxes(level: LevelData): number {
         if (meets(step, box)) destinations.add(`${zoneKind(zone)}@${height}`);
       });
     }
-    for (const cue of cues) if (meets(cue, box)) destinations.add(cueKind(cue));
-    // A truck level at its height, like a floor zone's stack.
-    for (const slot of truckCues) if (meets(slot.cue, box)) destinations.add(`${truckCueKind(slot.cue)}@${slot.level}`);
+    for (const slot of cued) if (meets(slot.cue, box)) destinations.add(slotKind(slot));
     return destinations.size > 1;
   }).length;
 }
 
 /**
- * Levels with racks or trucks: placements a cue accepts (box kind → kind of zone, slot or truck level) that are not the
- * box's destiny, so they leave some other box without its place: a box there fits but never lights (docs/RACKS.md,
- * rule 5).
+ * Levels with storage: placements a cue accepts (box kind → kind of zone or storage cue, per skin) that are not the
+ * box's destiny, so they leave some other box without its place: a box there fits but never lights (docs/STORAGE.md
+ * rules 4 and 6).
  */
-function rackTraps(level: LevelData): number {
+function targetTraps(level: LevelData): number {
   const targets = targetsOf(level);
-  const kindOf = (t: (typeof targets)[number]) =>
-    t.kind === 'zone' ? zoneKind(level.zones[t.index]) : t.skin === 'truck' ? truckCueKind(t.criteria) : cueKind(t.criteria);
+  const kindOf = (t: (typeof targets)[number]) => (t.skin === null ? zoneKind(level.zones[t.index]) : cueKind(t.skin, t.criteria));
   const boxes = level.boxes.map(sortableOf);
   const traps = new Set<string>();
   boxes.forEach((box, i) => {
@@ -344,8 +364,8 @@ function rackTraps(level: LevelData): number {
   return traps.size;
 }
 
-/** Levels with racks or trucks: complete assignments of boxes to its targets (by position), up to identical boxes. */
-function rackAssignments(level: LevelData): number {
+/** Levels with storage: complete assignments of boxes to its targets (by position), up to identical boxes. */
+function targetAssignments(level: LevelData): number {
   return assignmentsOf(level.boxes.map(sortableOf), targetsOf(level).map((t) => t.criteria), 10_001).count;
 }
 

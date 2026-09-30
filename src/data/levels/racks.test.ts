@@ -5,6 +5,7 @@ import { checkLevelTargets, checkTargets, levelMetrics, metricRange } from './me
 import { levelsReport } from './report';
 import {
   LevelGrid,
+  POS_SHELF,
   boxCode,
   canLift,
   canStackOn,
@@ -94,17 +95,23 @@ const LEVELS = [UP_DOWN, COLUMNS, SWAP];
 describe('grid model with racks', () => {
   it('rack cells are solid; slots are positions after the cells, each asking for its destined kind', () => {
     const grid = new LevelGrid(COLUMNS);
-    expect(grid.racks).toBe(true);
+    expect(grid.targets).toBe(true);
     expect(grid.sorting).toBe(false); // destinies are fixed: no trap bookkeeping
-    expect(grid.slotCount).toBe(4);
+    // Support `shelves`: one position per slot, one box each.
+    expect(grid.columns.map((c) => [c.support, c.positions])).toEqual([
+      ['shelves', [grid.cellCount, grid.cellCount + 1]],
+      ['shelves', [grid.cellCount + 2, grid.cellCount + 3]],
+    ]);
     expect(grid.posCount).toBe(grid.cellCount + 4);
+    expect([...grid.kind.slice(grid.cellCount)]).toEqual([POS_SHELF, POS_SHELF, POS_SHELF, POS_SHELF]);
+    expect([...grid.capacity.slice(grid.cellCount)]).toEqual([1, 1, 1, 1]);
     expect(grid.solid[grid.index(6, 1)]).toBe(1);
     expect(grid.solid[grid.index(6, 2)]).toBe(1);
     expect(grid.posOf(6, 1, 1)).toBe(grid.cellCount + 1);
     expect(grid.posOf(6, 2, 0)).toBe(grid.cellCount + 2);
     expect(grid.posOf(2, 4)).toBe(grid.index(2, 4));
     expect(grid.accessOf(grid.cellCount + 2)).toBe(grid.index(5, 2));
-    expect(grid.slotDir[0]).toBe(DIR.E); // into a rack facing west
+    expect(grid.inward[grid.cellCount]).toBe(DIR.E); // into a rack facing west
     // Destinies as exact criteria; the «libre» slot is not a target.
     expect(grid.steps[grid.cellCount + 0]).toEqual([{ color: 'blue', symbol: 'circle' }]);
     expect(grid.steps[grid.cellCount + 1]).toEqual([{ color: 'blue', symbol: 'triangle' }]);

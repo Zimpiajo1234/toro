@@ -18,7 +18,7 @@ import { formatLevel, renderLevel } from '../data/asciiLevel';
 import { formatRange, formatTarget } from '../data/difficulty';
 import { LEVELS, LEVEL_SOURCES, SPECIAL_LEVELS, SPECIAL_LEVEL_SOURCES, loadSpecialSources } from '../data/levels';
 import { DEAD_END_STATES, checkLevelTargets, levelMetrics } from '../data/levels/metrics';
-import { LevelGrid, deadEnds, minMoves, replayMoves } from '../data/levels/solver';
+import { LevelGrid, POS_SHELF, POS_STACK, deadEnds, minMoves, replayMoves } from '../data/levels/solver';
 import { validateLevel } from '../data/validateLevel';
 import { GameState } from '../logic/GameState';
 import { LevelView } from '../render/LevelView';
@@ -91,7 +91,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     }
     // Two boxes start loaded: a wrong one on the second truck, the destined one at the bottom of the third (locked).
     // Truck boxes are numbered after the rack boxes, truck by truck.
-    const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
+    const loaded = level.boxes.filter((b) => grid.kind[grid.posOf(b.x, b.z, b.level)] === POS_STACK);
     expect(loaded.map((b) => [b.id, b.x, b.z, b.level])).toEqual([
       ['b9', 4, -1, 0],
       ['b10', -1, 4, 0],
@@ -147,14 +147,12 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     expect(replayMoves(level, result.plan!)).toBe(true);
     // 10 boxes, the one loaded on its destiny at the start stays: 9 moves, no parking.
     expect(result.plan).toHaveLength(level.boxes.length - 1);
-    const beds = truckColumnsOf(level);
-    const loadedBeds = new Set(result.plan!.filter((m) => grid.isBed(m.drop)).map((m) => beds[m.drop - grid.bedBase].truck.id));
-    expect([...loadedBeds].sort()).toEqual(['t1', 't2', 't3']);
-    const slots = slotsOf(level);
-    const racked = new Set(result.plan!.filter((m) => grid.isSlot(m.drop)).map((m) => slots[m.drop - grid.cellCount].rack.id));
-    expect([...racked].sort()).toEqual(['r1', 'r2']);
+    const unitsLoaded = (kind: number) =>
+      new Set(result.plan!.filter((m) => grid.kind[m.drop] === kind).map((m) => grid.columnOfPos(m.drop)!.ref.unit.id));
+    expect([...unitsLoaded(POS_STACK)].sort()).toEqual(['t1', 't2', 't3']);
+    expect([...unitsLoaded(POS_SHELF)].sort()).toEqual(['r1', 'r2']);
     // The wrong load comes off the second truck first thing, and nothing is ever parked.
-    expect(grid.isBed(result.plan![0].from)).toBe(true);
+    expect(grid.kind[result.plan![0].from]).toBe(POS_STACK);
     expect(result.plan!.every((m) => grid.steps[m.drop] !== null)).toBe(true);
   });
 

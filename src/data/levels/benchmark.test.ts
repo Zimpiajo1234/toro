@@ -11,6 +11,8 @@ import { BENCHMARK_ID, LEVELS, LEVEL_SOURCES, SPECIAL_LEVELS, SPECIAL_LEVEL_SOUR
 import { DEAD_END_STATES, checkLevelTargets, levelMetrics } from './metrics';
 import {
   LevelGrid,
+  POS_SHELF,
+  POS_STACK,
   carrySearch,
   deadEndCorridors,
   deadEnds,
@@ -98,10 +100,10 @@ describe('Benchmark (especiales/benchmark.level)', () => {
       if (win.wall !== truck.wall) continue;
       for (const bed of beds) expect(along(bed.front.x, bed.front.z) < win.at || along(bed.front.x, bed.front.z) >= win.at + win.width).toBe(true);
     }
-    // Each bed column is a position of the model off the map, asking for its destined kinds, bottom → top.
+    // Each bed column is a position of the model off the map (a stack), asking for its destined kinds, bottom → top.
     for (const bed of beds) {
       const pos = grid.posOf(bed.cell.x, bed.cell.z);
-      expect(grid.isBed(pos)).toBe(true);
+      expect(grid.kind[pos]).toBe(POS_STACK);
       expect(grid.steps[pos]).toHaveLength(bed.cues.length);
     }
   });
@@ -139,7 +141,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
       expect(level.forklift.x === door.x && level.forklift.z === door.z, at).toBe(false);
     }
     // The box loaded at the start rests on its bed cell, outside the map.
-    const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
+    const loaded = level.boxes.filter((b) => grid.kind[grid.posOf(b.x, b.z, b.level)] === POS_STACK);
     expect(loaded.map((b) => [b.x, b.z, b.level])).toEqual([[1, -1, 0]]);
     // A guard rail at each end of the door run, a plant behind each (docs/DOCKS.md): reached only from the row behind.
     expect(dockRailsOf(level).map((r) => r.side)).toEqual([
@@ -224,7 +226,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(deep).toBeDefined();
     // Loaded on the truck at the start, on a level that is not its destiny: its destiny is the level above it, in the
     // same column (it has to come off, and back on top of the locked box that goes under it).
-    const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
+    const loaded = level.boxes.filter((b) => grid.kind[grid.posOf(b.x, b.z, b.level)] === POS_STACK);
     expect(loaded).toHaveLength(1);
     const [box] = loaded;
     const ref = storageSlotsOf(level).findIndex((s) => s.cell.x === box.x && s.cell.z === box.z && s.level === box.level);
@@ -268,15 +270,15 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(result.plan!.length).toBe(result.lower);
     expect(replayMoves(level, result.plan!)).toBe(true);
     // Some move lifts a box out of a slot and some drops one into a slot above the bottom one.
-    expect(result.plan!.some((m) => grid.isSlot(m.from))).toBe(true);
-    expect(result.plan!.some((m) => grid.isSlot(m.drop) && slots[m.drop - grid.cellCount].level > 0)).toBe(true);
+    expect(result.plan!.some((m) => grid.kind[m.from] === POS_SHELF)).toBe(true);
+    expect(result.plan!.some((m) => grid.kind[m.drop] === POS_SHELF && grid.levelAt(m.drop) > 0)).toBe(true);
     // The truck: its wrong load comes off, and a box is loaded on top of the locked one at the bottom.
-    expect(result.plan!.some((m) => grid.isBed(m.from))).toBe(true);
+    expect(result.plan!.some((m) => grid.kind[m.from] === POS_STACK)).toBe(true);
     let stacks = stacksOf(grid, level);
     let onTop = false;
     for (const m of result.plan!) {
       const next = lift(stacks, m.from);
-      if (grid.isBed(m.drop) && next[m.drop].length > 0 && lockedAt(grid, next, m.drop)) onTop = true;
+      if (grid.kind[m.drop] === POS_STACK && next[m.drop].length > 0 && lockedAt(grid, next, m.drop)) onTop = true;
       next[m.drop] += stacks[m.from].slice(-1);
       stacks = next;
     }

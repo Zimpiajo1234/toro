@@ -387,6 +387,55 @@ U = camión muelle oeste: amarillo ■ + caja amarillo ■ / ✚
   propia): el piloto grabado a 20 fps (4991 frames) reproducido en el `Game` real sobre el Benchmark lo termina, 14
   movimientos y 12/12 objetivos, hasta la tarjeta final, sin un error en la consola.
 
+## Fase 4: lo entregado (2026-09-30)
+
+- **Una tabla de posiciones** (`data/levels/solver.ts`, `LevelGrid`): tras las casillas, cada columna de
+  `storageColumnsOf` en su orden (regla 12), según el soporte de su unidad: baldas, una posición por nivel (capacidad
+  1); pila, una por columna (capacidad = sus niveles, nunca el `limit`). Así salen los mismos números de antes
+  (estanterías, hueco a hueco, y luego camiones, columna a columna): los mismos textos de estado, el mismo orden de
+  búsqueda. `grid.columns` (`GridColumn`: `ref` = su `StorageColumnRef`, `support`, `positions`) y un solo juego de
+  datos por posición: `kind` (`POS_FLOOR` / `POS_SHELF` / `POS_STACK`), `capacity` (el `limit` en el suelo), `front`
+  (la casilla desde la que se carga), `inward` (la dirección hacia dentro) y `steps` (el tipo destinado de cada nivel,
+  leído por su índice en `storageSlotsOf`: `LevelDestinies.slots[firstSlot + nivel]`, nunca por aspecto ni por id); por
+  pose, `columnAtPose` (la columna que se carga desde esa pose: su frente, mirando hacia dentro). Consultas:
+  `isStorage`, `columnOfPos`, `posOf`, `positionOfSlot` (por id de nivel), `levelAt` / `slotAt` (posición + altura →
+  nivel / índice en `storageSlotsOf`), `cellOfPos`, `accessOf`, `inMap`. Fuera: `slotCount`, `bedBase`, `racks`,
+  `columnAt`, `columnDir`, `columnSlots`, `slotCell` / `slotFront` / `slotDir`, `bedLevels`, `bedFront`, `bedDir`,
+  `bedCells`, `bedAtPose`, `isSlot`, `isBed` y `capacity()` (ahora un array).
+- **Reglas por soporte** (sin un caso por aspecto): `lockedAt`, en una zona o una balda, su caja destinada sola; en una
+  pila, toda su pila en su prefijo correcto (y no vacía). `validDrop`: nunca lleno (`capacity`); en el suelo, ni celda
+  sólida ni encima de una caja fija; en almacenaje, siempre que quepa (una pila carga su siguiente nivel sobre una caja
+  fija). **Por acceso** (el frente de la columna, `front` / `inward`, igual en `front` y en `door`): `carrySearch` carga
+  una columna solo con un paso adelante desde la casilla de detrás de su frente, mirando hacia dentro (cualquier balda
+  vacía de la columna, encima de una pila con sitio; nunca con un giro ni de lado); una caja recién sacada
+  (`columnAtPose[pose] ≥ 0`) solo sale marcha atrás; `chainTo`, `carryBackTo`, `pickupStarts` y `deadEnds`, lo mismo.
+  Las cotas (`destTerm`, `targetDestinations`: una pila nunca es nodo de un ciclo) no cambian: admisibles y consistentes
+  (`levels/docks.test.ts`).
+- **Métricas** (`metrics.ts`): un recuento por aspecto, igual para todos (`storageCounts`: unidades, columnas,
+  niveles, con pista, cargados al empezar); `huecos` y `camion` son sus dos vistas publicadas (los mismos números).
+  `trampas` y `ambiguas`, por tipo de pista `[aspecto, color, símbolo]` (en una pila, también su altura), sin ramas por
+  aspecto; `hasStorage` en lugar de `usesTargetRules` (también en el solver).
+- **Informe** (`report.ts`): cada unidad por la palabra de su aspecto y su letra (`PLAN_WORDS`: la letra de su casilla,
+  o de su frente si queda tras el muro) y según su soporte: una balda es un sitio («hueco 2 de R»), una pila nombra la
+  unidad y la altura («camión T, nivel 2»). El mismo texto de antes.
+- **Piloto** (`integration/autopilot.ts`): `liveStacks` por `slotId` (`positionOfSlot`), la caja a coger por su nivel
+  (la de arriba en una pila) y F / V donde la horquilla va por teclas (`!STORAGE_ACCESS[acceso].autoForks`; el nivel,
+  genérico: `slotAt(posición, altura)`). El camión, sin teclas hasta la fase 6: los mismos frames.
+- **Mínimos**: nada que cambiar (solo usan `minMoves`).
+- **Caracterización**: `solverSection` nombra las posiciones con `slotAt` (el nivel en que queda o de donde sale la
+  caja); el JSON, tal cual, y pasa entero.
+- **Tests**: adaptados sin cambiar lo que comprueban (`docks.test.ts`, `racks.test.ts`, `benchmark.test.ts` y siete
+  líneas de `storageFixture.test.ts`: pilas por `kind`, unidades por `columnOfPos`); nuevo `data/levels/storage.test.ts`
+  (8): la tabla del nivel de prueba (columnas, posiciones seguidas, capacidades 1,1,1,1,1,2,1,1,2, frente y dirección,
+  una pose por columna, ida y vuelta nivel ↔ posición, destinos por índice) y un nivel mixto (estantería de 2 alturas y
+  camión de 2 columnas): bloqueo y descargas por soporte, salida solo marcha atrás, carga solo por el frente, 3
+  movimientos exactos, métricas e informe.
+- **Medido**: 1124 tests (los 1116 de antes y 8 nuevos), dos veces; la caracterización en verde sin tocar el JSON;
+  `npm run levels`, la misma tabla y el mismo plan de 14 movimientos (Benchmark OK 8/8, repartos 1, callejones 0 (60));
+  `levels:fmt`, los 4 canónicos; los mínimos, al día. Tiempo: el mismo trabajo (callejones: 49 360 estados, 274
+  comprobaciones completas) y, alternando solver viejo y nuevo en un mismo proceso, tiempo de CPU nuevo / viejo 1,00;
+  el absoluto depende de la carga del equipo (el Benchmark tardó 2,5–2,8 s al empezar y ~10–13 s después, con los dos).
+
 ## Huecos para las fases siguientes
 
 Encontrados en la fase 1. El código de entonces aguantaba el nivel de prueba sin cambios: varios camiones, norte y oeste
@@ -418,14 +467,16 @@ anotado:
 Encontrados en la fase 2:
 8. **Vistas derivadas en cada llamada**: `racksOf` / `trucksOf` / `slotsOf` / `truckSlotsOf` / `truckColumnsOf` crean
    sus objetos cada vez. Hoy da igual (nada por frame). Fase 3: `GameState`, `LevelGrid` y `CollisionWorld` ya leen
-   `storageColumnsOf` / `storageSlotsOf` una vez; quedan `LevelView` (fase 5) y el solver (fase 4).
+   `storageColumnsOf` / `storageSlotsOf` una vez; quedan `LevelView` (fase 5) y el solver (fase 4). Fase 4: el solver
+   lee `storageColumnsOf` una vez por `LevelGrid`, y métricas, informe y piloto, `storageSlotsOf` una vez por nivel.
 9. **Un «libre» en un camión, a medias** (fase 6): `trucksOf` lo da como `{}`, una pista que no pide nada, y de ahí
    `truckSlotsOf` → `TruckSlotState.accepts` = `{}` (con `cueFits`, encaja cualquier caja) y el cartel pediría una
    pista vacía; `targetsOf` y `zoneMatchKinds` ya lo saltan (null). Antes de abrir «libre» en el camión, sus
    consumidores tienen que pasar a `storageSlotsOf` (null = «libre»).
 10. **Objetivos con la forma de antes** (hecho en la fase 3): un solo índice en `storageSlotsOf`
     (`LevelTarget.skin`, `LevelDestinies.slots`). El solver aún los lee por id de nivel (`destinyOf`) y las métricas
-    distinguen `trampas` por `skin` hasta la fase 4.
+    distinguen `trampas` por `skin` hasta la fase 4. Fase 4, hecho: el solver los lee por índice (`firstSlot + nivel`)
+    y las métricas cuentan `trampas` por tipo de pista `[aspecto, color, símbolo]`, sin ramas por aspecto.
 11. **Mensajes con nombres de aspecto**: `validateLevel` nombra `racks[i]` / `trucks[i]` y varios textos siguen siendo
     de estantería o de camión (`a level with storage racks or trucks needs one box per target (…)`, `a level needs at
     least one zone or rack slot with a cue`, `…in a level with storage racks floor stacks only park boxes`, `…is a
@@ -438,7 +489,8 @@ Encontrados en la fase 2:
 14. **`STORAGE_SKINS.fillToMax`**, declarado y sin leer hasta la fase 6; `.sound` lo lee ya el audio (fase 3), `support`
     y `access`, la validación, la rejilla y la colisión.
 15. **`usesTargetRules`** (core/docks) repite `hasStorage`: sus llamadas (`LevelView`, métricas, solver) cambian en sus
-    fases (`GameState` ya usa `hasStorage`); la fase 7 lo quita.
+    fases (`GameState` ya usa `hasStorage`); la fase 7 lo quita. Fase 4: métricas y solver ya usan `hasStorage`; quedan
+    `LevelView` (fase 5) y los tests de core.
 
 Encontrados en la fase 3:
 16. **`autoForks` y sus ramas** (fase 6 las quita): `STORAGE_ACCESS.door.autoForks` y, en `GameState`, `forkKeys` (F / V
@@ -455,10 +507,33 @@ Encontrados en la fase 3:
 19. **Render por aspecto a mano** (fase 5): `LevelView` reparte cada `StorageSlotState` a `RackView` o `TruckView` por
     `skin`, y alturas, fantasmas y el «dip» de la pila por soporte con `shelfSlots` (también `BoxView`); `buildRacks` /
     `buildTrucks` siguen con `racksOf` / `trucksOf`.
-20. **El solver con sus índices** (fase 4): huecos (`cellCount + hueco`, `slotsOf`) y columnas de camión (`bedBase +
-    columna`); lee `LevelDestinies.slots` por id de nivel. `solverSection` de la caracterización, igual.
+20. **El solver con sus índices** (hecho en la fase 4: «Fase 4: lo entregado»): huecos (`cellCount + hueco`,
+    `slotsOf`) y columnas de camión (`bedBase + columna`); lee `LevelDestinies.slots` por id de nivel. `solverSection`
+    de la caracterización, igual.
 21. **DOCKS.md y RACKS.md** nombran aún `refreshTruckAim`, `setDoorOpen`, `RackAim`, `hint.rack`, `truckSlots`… (una
     nota antes de sus «Reglas» avisa y apunta aquí): la fase 7 los deja con lo propio de cada aspecto apuntando aquí.
+
+Encontrados en la fase 4:
+22. **`autoForks` en el piloto** (fase 6): `autopilot.ts` pulsa F / V solo donde `STORAGE_ACCESS[acceso].autoForks` es
+    false (`keyed`). Al quitarlo, las pulsará también en el camión con el nivel que ya calcula (`slotAt`: el de la caja
+    de arriba al coger, el siguiente libre al dejar); `selectLevel` espera a `forkHeight ≈ nivel`, medido en huecos de
+    estantería: en una pila hay que comprobarlo con sus alturas.
+23. **«Libre» en una pila** (fase 6): el solver da un paso por nivel a cada columna de pila, y un nivel «libre» saldría
+    hoy `{}` (cualquier caja lo cumple, cuenta como colocada y se bloquea con las de debajo), contra la regla 7. Con
+    `libre` en el camión: `steps` solo con los niveles con pista (de abajo arriba) y `capacity` con todos; revisar
+    `correctPrefix`, `lockedAt`, `misplacedCount`, `targetDestinations` y la cota. El informe ya pone «(libre:
+    aparcar)» por altura frente a `steps`.
+24. **Una métrica por aspecto**: el recuento es uno (`storageCounts`), pero `huecos` es la de la estantería y `camion`
+    la del camión (`DifficultyMetric`, `metricRange`, fila y columna del informe). Un aspecto nuevo se cuenta solo; para
+    salir en `npm run levels` o en `dificultad:` trae su métrica y su fila en `PLAN_WORDS` (report.ts).
+25. **Tres tablas de palabras por aspecto**: `UNIT_WORDS` (asciiLevel), `SKIN_WORDS` (validateLevel) y `PLAN_WORDS`
+    (report). Podrían ser una (fase 7).
+26. **Posiciones a mano en tests**: `benchmarkPlayable.test.ts`, `moveCounter.test.ts` y `racksPlayable.test.ts` sacan
+    la posición de un hueco como `cellCount + índice en slotsOf` (vale porque las estanterías van primero, regla 12); en
+    la fase 7, `grid.positionOfSlot(id)`.
+27. **DOCKS.md y RACKS.md** («Solver, métricas y piloto automático») describen aún el solver de antes (`bedBase`,
+    `isSlot`, `isBed`, `bedLevels`, `bedAtPose`, `cellCount + hueco`, `usesTargetRules`): la fase 7, apuntando aquí.
+28. **El registro del piloto** (`log`, solo para depurar) nombra una columna de pila `stack t1:0` (antes `bed x,z`).
 
 ## Fases
 

@@ -6,6 +6,9 @@ import { parseTargets } from '../difficulty';
 import { levelsReport } from './report';
 import {
   LevelGrid,
+  POS_FLOOR,
+  POS_SHELF,
+  POS_STACK,
   boxCode,
   canLift,
   carrySearch,
@@ -25,10 +28,11 @@ import {
 } from './solver';
 
 /*
- * The grid model with loading docks (docs/DOCKS.md): the truck waits outside, so each bed column is a position after
- * the rack slots (off the map, beyond its door cell, which is floor) holding a stack whose steps are the destined kinds
- * of its levels; it is loaded by one step on from behind its door cell (through the door) and a box lifted off it backs
- * straight out; its satisfied levels are locked, but the next level still loads on top.
+ * The grid model with loading docks (docs/DOCKS.md, docs/STORAGE.md): the truck waits outside, so each bed column is a
+ * storage position of support `stack` (after the cells and any rack's shelves; off the map, beyond its door cell, which
+ * is floor) holding a stack whose steps are the destined kinds of its levels; it is loaded by one step on from behind
+ * its door cell (through the door) and a box lifted off it backs straight out; its satisfied levels are locked, but the
+ * next level still loads on top.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -87,25 +91,35 @@ T = camión muelle norte: azul
 `);
 
 describe('grid model with trucks', () => {
-  it('bed columns are positions after the slots, off the map, asking for the destined kind of each level, reached from their door cell', () => {
+  it('bed columns are storage positions after the cells (one stack each), off the map, asking for the destined kind of each level, reached from their door cell', () => {
     const grid = new LevelGrid(EXAMPLE);
     const [bed0, bed1] = [grid.posOf(2, -1), grid.posOf(3, -1)];
-    expect([bed0, bed1]).toEqual([grid.bedBase, grid.bedBase + 1]);
-    expect(grid.bedBase).toBe(grid.cellCount + grid.slotCount);
-    expect(grid.posCount).toBe(grid.bedBase + 2);
+    // No rack: the truck's two columns are the first storage positions, one each (support `stack`).
+    expect([bed0, bed1]).toEqual([grid.cellCount, grid.cellCount + 1]);
+    expect(grid.posCount).toBe(grid.cellCount + 2);
+    expect(grid.columns.map((c) => [c.ref.unit.id, c.ref.column, c.support, c.positions])).toEqual([
+      ['t1', 0, 'stack', [bed0]],
+      ['t1', 1, 'stack', [bed1]],
+    ]);
     expect(grid.targets).toBe(true);
-    expect(grid.racks).toBe(false);
+    expect(grid.kind.includes(POS_SHELF)).toBe(false);
     expect(grid.sorting).toBe(false);
     // The door cells are plain floor.
     expect([grid.solid[grid.index(2, 0)], grid.solid[grid.index(3, 0)]]).toEqual([0, 0]);
-    expect([grid.bedLevels[bed0], grid.bedLevels[bed1]]).toEqual([2, 1]);
-    expect([grid.isBed(bed0), grid.isBed(grid.index(3, 0)), grid.isSlot(bed0), grid.isBed(grid.posCount)]).toEqual([true, false, false, false]);
+    expect([grid.kind[bed0], grid.kind[grid.index(3, 0)], grid.isStorage(bed0), grid.isStorage(grid.index(3, 0)), grid.isStorage(grid.posCount)]).toEqual([
+      POS_STACK,
+      POS_FLOOR,
+      true,
+      false,
+      false,
+    ]);
     expect([grid.cellOfPos(bed1), grid.posOf(3, -2), grid.posOf(4, -1)]).toEqual([{ x: 3, z: -1 }, -1, -1]);
     expect(grid.accessOf(bed1)).toBe(grid.index(3, 0));
-    expect(grid.bedDir[bed1]).toBe(DIR.N);
-    expect(grid.bedAtPose[grid.index(3, 0) * 4 + DIR.N]).toBe(bed1);
-    expect(grid.bedAtPose[grid.index(3, 0) * 4 + DIR.E]).toBe(-1);
-    expect([grid.capacity(bed0), grid.capacity(bed1), grid.capacity(grid.index(0, 0))]).toEqual([2, 1, 2]);
+    expect(grid.inward[bed1]).toBe(DIR.N);
+    expect(grid.columnAtPose[grid.index(3, 0) * 4 + DIR.N]).toBe(1);
+    expect(grid.columnAtPose[grid.index(3, 0) * 4 + DIR.E]).toBe(-1);
+    // A column holds its levels (not the level's stack limit); a floor cell, the stack limit.
+    expect([grid.capacity[bed0], grid.capacity[bed1], grid.capacity[grid.index(0, 0)]]).toEqual([2, 1, 2]);
     expect(grid.steps[bed0]).toEqual([
       { color: 'blue', symbol: 'triangle' },
       { color: 'mint', symbol: 'triangle' },
@@ -119,7 +133,7 @@ describe('grid model with trucks', () => {
     // A west dock: its bed columns at x = -1, loaded from its door cells (column 0) facing west.
     const west = new LevelGrid(WEST);
     expect(west.accessOf(west.posOf(-1, 2))).toBe(west.index(0, 2));
-    expect(west.bedDir[west.posOf(-1, 2)]).toBe(DIR.W);
+    expect(west.inward[west.posOf(-1, 2)]).toBe(DIR.W);
     expect(stacksOf(west, WEST)[west.posOf(-1, 1)]).toBe(boxCode({ color: 'blue', symbol: 'circle' }));
   });
 
@@ -259,8 +273,8 @@ describe('searches on truck levels', () => {
           const lifted = lift(s.stacks, from);
           if (from < grid.cellCount) occupancy[from] = lifted[from].length > 0 ? 0 : -1;
           for (const drop of carrySearch(grid, occupancy, lifted, pickupStarts(grid, region, from)).drops.keys()) {
-            if (drop === from || drop >= grid.posCount || lifted[drop].length >= grid.capacity(drop)) continue;
-            if (!grid.isSlot(drop) && !grid.isBed(drop) && (grid.solid[drop] === 1 || lockedAt(grid, lifted, drop))) continue;
+            if (drop === from || drop >= grid.posCount || lifted[drop].length >= grid.capacity[drop]) continue;
+            if (!grid.isStorage(drop) && (grid.solid[drop] === 1 || lockedAt(grid, lifted, drop))) continue;
             const next = lifted.slice();
             next[drop] += s.stacks[from].slice(-1);
             pairs++;

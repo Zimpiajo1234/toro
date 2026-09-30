@@ -12,14 +12,15 @@
  * that finds none within its budget. Each move is driven along the carry chain that leaves the forklift where the
  * plan expects it (`Move.after`).
  * Driver: closed-loop steering toward cell centers with world-space input; steps back in reverse with the vehicle
- * controls (S = drive throttle < 0), as a player would. Storage racks (docs/RACKS.md): in front of a rack column it
- * picks the slot level with the fork keys (InputFrame.forkStep, one press per slot, like F / V), waits for the forks,
- * then drives the load in (or lifts the slot's box) and backs straight out. Loading docks (docs/DOCKS.md): a truck bed
- * is a stack position of the same model (outside the map, beyond its door), so the plan drives straight up to its door
- * cell, the load going through the door, and drops (the fork height is automatic, no fork keys); with a box lifted off
- * it, it backs straight out through the door.
+ * controls (S = drive throttle < 0), as a player would. Storage (docs/STORAGE.md): a storage position of the same model
+ * (a shelf, a stack column; its cell inside the map or beyond a wall) is worked from its column's front cell, so the
+ * plan drives straight up to it, the load going in (through the door of a truck), and a box lifted out of it backs
+ * straight out. Where the unit's forks go by the keys (STORAGE_ACCESS[access].autoForks false: the racks), it first
+ * picks the level with the fork keys (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for
+ * the forks; where they go by themselves (the truck, until phase 6), it just drives in and drops.
  */
 import { angleDelta } from '../core/math';
+import { storageSlotsOf, type StorageSlotRef } from '../core/storage';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
 import {
   DIR_X,
@@ -38,19 +39,19 @@ import {
   type Stacks,
 } from '../data/levels/solver';
 import { GameState } from '../logic/GameState';
-import { slotsOf } from '../core/racks';
+import { STORAGE_ACCESS } from '../logic/storageAccess';
 
 const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 
 /**
- * Live stacks from the snapshot (resting boxes by position — floor cell, rack slot or truck bed column, whose cell lies
- * outside the map — ordered by level). A stored box names its level (`slotId`, any skin): the solver's grid reads it
- * as a rack slot, and a bed cell as its bed column whatever the level.
+ * Live stacks from the snapshot (resting boxes by position — floor cell or storage position — ordered by level). A
+ * stored box names its storage level (`slotId`, any skin): the position it rests on (a shelf; a stack column, whatever
+ * the level).
  */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
-  for (const b of resting) stacks[grid.posOf(b.cell!.x, b.cell!.z, b.slotId !== null ? b.level : undefined)] += boxCode(b);
+  for (const b of resting) stacks[b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z)] += boxCode(b);
   return stacks;
 }
 
@@ -121,8 +122,8 @@ class Pilot {
     this.tick(0, 0);
   }
   /**
-   * In front of a rack column: press F / V until slot `level` is selected (hint.storage), then wait for the forks to
-   * stand at it. False when the rig is not at a rack or it takes too long.
+   * At a storage column whose forks go by the keys: press F / V until level `level` is selected (hint.storage), then
+   * wait for the forks to stand at it. False when the rig is not at such a column or it takes too long.
    */
   selectLevel(level: number, budgetSec = 6): boolean {
     let t = 0;
@@ -266,7 +267,14 @@ export interface Outcome {
 export function autopilot(level: LevelData, dt: number, opening: readonly Move[] = [], log?: (line: string) => void): Outcome {
   const pilot = new Pilot(level, dt);
   const grid = new LevelGrid(level);
-  const slots = slotsOf(level);
+  const slots = storageSlotsOf(level);
+  /**
+   * The storage level a move works at on position `pos` with the box `height` boxes up (a shelf's own; on a stack
+   * column, the top box's or the one the box lands at), or null off storage.
+   */
+  const slotAt = (pos: number, height: number): StorageSlotRef | null => (grid.isStorage(pos) ? slots[grid.slotAt(pos, height)] : null);
+  /** The level to select first with F / V where the unit's forks go by the keys; null where they go by themselves. */
+  const keyed = (slot: StorageSlotRef | null) => (slot && !STORAGE_ACCESS[slot.unit.access.kind].autoForks ? slot : null);
   let moves = 0;
   let queue: Move[] = opening.slice();
   /** Stacks the remaining plan expects; any mismatch with the live state triggers a replan. */
@@ -324,21 +332,23 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     const lifted = lift(stacks, from);
     expected = lifted.slice();
     expected[plan.drop] += stacks[from][stacks[from].length - 1];
-    const fromSlot = grid.isSlot(from) ? slots[from - grid.cellCount] : null;
-    // A floor cell, or a truck bed's cell outside the map (its boxes carry it).
-    const fromCell = grid.cellOfPos(from);
+    // A stored box by its storage level (the top one of a stack column); a floor box on top of its cell.
+    const fromSlot = slotAt(from, stacks[from].length - 1);
+    const fromCell = grid.cellOf(from);
     const box = fromSlot
-      ? snap.boxes.find((b) => b.slotId === fromSlot.id)!
+      ? snap.boxes.find((b) => b.slotId === fromSlot.id)
       : snap.boxes.filter((b) => b.cell && b.cell.x === fromCell.x && b.cell.z === fromCell.z).sort((a, b) => b.level - a.level)[0];
     if (!box) return fail(`no box at ${from}`);
     if (!found) return fail(`no executable route for ${box.id}`);
     const bestChain = found.chain;
     const bestEmpty = found.path;
-    const toSlot = grid.isSlot(plan.drop) ? slots[plan.drop - grid.cellCount] : null;
+    const pickSlot = keyed(fromSlot);
+    const toSlot = keyed(slotAt(plan.drop, lifted[plan.drop].length));
     const cellText = (c: number) => {
-      if (grid.isSlot(c)) return `slot ${slots[c - grid.cellCount].id}`;
-      const cell = grid.cellOfPos(c);
-      return `${grid.isBed(c) ? 'bed ' : ''}${cell.x},${cell.z}`;
+      const column = grid.columnOfPos(c);
+      if (column) return column.support === 'shelves' ? `slot ${slots[grid.slotAt(c)].id}` : `stack ${column.ref.unit.id}:${column.ref.column}`;
+      const cell = grid.cellOf(c);
+      return `${cell.x},${cell.z}`;
     };
     log?.(
       `move ${moves + 1}: ${box.id} ${cellText(from)} → ${cellText(plan.drop)}${plan.after === undefined ? '' : ` (then ${cellText(plan.after)}${found.after ? '' : ', elsewhere'})`}` +
@@ -351,8 +361,8 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     if (!pilot.follow(pts)) return fail(`stuck driving to ${box.id}`);
     const dir = bestChain[0] & 3;
     if (!pilot.face(dir)) return fail(`cannot face ${box.id}`);
-    // A box in a rack slot: select its level first (the forks must stand at it to reach under the box).
-    if (fromSlot && !pilot.selectLevel(fromSlot.level)) return fail(`cannot select slot ${fromSlot.id} for ${box.id}`);
+    // A stored box where the forks go by the keys: select its level first (the forks must stand at it to reach under it).
+    if (pickSlot && !pilot.selectLevel(pickSlot.level)) return fail(`cannot select slot ${pickSlot.id} for ${box.id}`);
     // 2) nudge forward until the box is targeted, then pick
     let t = 0;
     while (pilot.snap.hint.targetBoxId !== box.id) {
@@ -380,9 +390,10 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
       let j = i;
       while (j + 1 < bestChain.length && (bestChain[j + 1] & 3) === (pose & 3) && bestChain[j + 1] >> 2 !== bestChain[j] >> 2 && backStep(bestChain[j], bestChain[j + 1]) === reverse) j++;
       if (toSlot && !reverse && j === bestChain.length - 1) {
-        // Into a rack slot: stop one cell short (the forks reach the level there), select it, then drive the load in.
+        // Into storage where the forks go by the keys: stop one cell short (the forks reach the level there), select
+        // it, then drive the load in.
         if (j > i) {
-          if (!pilot.ahead(grid.center(bestChain[j - 1] >> 2), pose & 3)) return fail(`stuck carrying ${box.id} to the rack`);
+          if (!pilot.ahead(grid.center(bestChain[j - 1] >> 2), pose & 3)) return fail(`stuck carrying ${box.id} to the ${toSlot.unit.skin}`);
         }
         if (!pilot.selectLevel(toSlot.level)) return fail(`cannot select slot ${toSlot.id} for ${box.id}`);
         i = j - 1;

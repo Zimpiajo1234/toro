@@ -25,8 +25,7 @@
  * With the variable set the test only rewrites the file; `-u` alone never touches it.
  */
 import type { BoxState, Facing, LevelData, WallSide, ZoneCriteria } from '../core/types';
-import { hasRacks, slotsOf } from '../core/racks';
-import { truckColumnsOf } from '../core/docks';
+import { hasRacks } from '../core/racks';
 import { STORAGE_SKINS, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
 import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
@@ -211,15 +210,11 @@ export function metricsSection(level: LevelData): LevelCharacterization['metrics
 export function solverSection(level: LevelData): LevelCharacterization['solver'] {
   const result = minMoves(level);
   const grid = new LevelGrid(level);
-  const slots = slotsOf(level);
-  const beds = truckColumnsOf(level);
+  const slots = storageSlotsOf(level);
   const zoneAt = new Map(level.zones.map((z) => [cellText(z), z.id]));
   const posText = (pos: number, height: number) => {
-    if (grid.isSlot(pos)) return slots[pos - grid.cellCount].id;
-    if (grid.isBed(pos)) {
-      const bed = beds[pos - grid.bedBase];
-      return `${bed.truck.id}:${bed.column}:${height}`;
-    }
+    // A storage position: the level the box leaves or lands at (a shelf's own, a stack column's at that height).
+    if (grid.isStorage(pos)) return slots[grid.slotAt(pos, height)].id;
     const cell = cellText(grid.cellOf(pos));
     const zone = zoneAt.get(cell);
     return `${cell}@${height}${zone === undefined ? '' : `[${zone}]`}`;
