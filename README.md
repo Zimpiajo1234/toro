@@ -124,7 +124,7 @@ src/
   game/        bucle, input, orquestación
 ```
 
-Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md).
+Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías y camiones (en curso): [docs/STORAGE.md](docs/STORAGE.md).
 
 ## Apilar
 
