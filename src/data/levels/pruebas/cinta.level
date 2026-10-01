@@ -1,0 +1,17 @@
+# 901 · Cinta de prueba
+id: cinta-prueba
+limit: 1
+dificultad: movimientos=3, repartos=1, cinta=1
+nota: Nivel de prueba (docs/CONVEYOR.md), fuera del juego: ni el registro ni npm run levels leen src/data/levels/pruebas/. Lo usa src/integration/conveyorFixture.test.ts.
+
+  0123456789
+0 ..pBp....p
+1 ...~......
+2 ...~..1.2.
+3 .a.A......
+4 ..........
+5 .c..^..b..
+
+1 = zona ■               2 = zona menta
+a = caja azul ●          b = caja azul ■          c = caja menta ▲
+A = cinta entrada        B = cinta final: azul    ~ = cinta

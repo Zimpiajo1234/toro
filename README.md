@@ -72,7 +72,7 @@ desbloqueados; un nivel abierto solo por el Modo prueba no guarda tiempo (guarda
 la tarjeta final lo dice: solo "Tiempo" y "Modo prueba · este tiempo no se guarda".
 
 Con el Modo prueba encendido aparece junto al interruptor el botón **Benchmark**: un almacén de prueba fuera de la
-progresión que reúne todo el juego de estanterías almacenables y del muelle de carga (ver abajo). El cronómetro corre, pero no guarda nada:
+progresión que reúne todo el juego de estanterías almacenables, del muelle de carga y de la cinta transportadora (ver abajo). El cronómetro corre, pero no guarda nada:
 ni récord, ni desbloqueos, ni "Continuar" (el HUD dice "Benchmark", con un discreto "sin récord"). R lo reinicia,
 RePág / AvPág no hacen nada en él y al terminarlo la tarjeta vuelve al inicio. Esc lo deja en pausa detrás del título
 ("Continuar" o el mismo botón lo retoman); apagar el Modo prueba lo descarta.
@@ -135,7 +135,7 @@ src/
   game/        bucle, input, orquestación
 ```
 
-Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías y camiones (las reglas que comparten): [docs/STORAGE.md](docs/STORAGE.md).
+Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías, camiones y cintas (las reglas que comparten): [docs/STORAGE.md](docs/STORAGE.md).
 
 ## Apilar
 
@@ -205,6 +205,20 @@ atascada en la puerta: marcha atrás y otra vez, alineada).
 Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas comunes:
 [docs/STORAGE.md](docs/STORAGE.md); lo propio del muelle: [docs/DOCKS.md](docs/DOCKS.md).
 
+## Cinta transportadora (Benchmark, Modo prueba)
+
+Una **cinta** es una banda baja de goma grafito, recta, que lleva sola una caja desde su **entrada** (una almohadilla
+del color de la cinta, a ras del suelo) hasta su **salida final** (una bandeja con ribete de ese color y un cartelito
+con la pista de su hueco), adonde la carretilla no llega. Deja la caja en la entrada **de frente**, como en el hueco de
+abajo de una estantería (Espacio, con la horquilla abajo): se asienta un momento, la cinta arranca suave con un zumbido
+eléctrico, sus franjas se deslizan y la caja viaja hasta la bandeja. Si es **su** caja, la salida brilla y la caja
+queda fija, como en un hueco; si no, suena el zumbido suave y la caja se queda allí (el botón que la devuelve llega más
+adelante: R reinicia). **Una caja a la vez**: mientras viaja, la entrada no admite otra; con la salida ya llena, una
+caja dejada en la entrada se queda en ella (zumbido suave) y se puede volver a coger. Dejarla en la entrada cuenta un
+movimiento; el viaje, ninguno; y la caja sigue contando en «Quedan N» hasta que llega. Sin teclas nuevas. Hoy solo el
+Benchmark lleva una (de (8,2) a (8,0), junto a la estantería de madera del fondo); los niveles 1–3 no cambian. Detalle,
+decisiones e hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
+
 ## Sonidos de la carretilla
 
 Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha atrás, a su altura); M lo silencia todo:
@@ -221,6 +235,8 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
   en el techo una lucecita ámbar que gira al compás, con un brillo cálido en el suelo detrás, y se apaga suave al
   parar; se ve también con el pitido quitado o el sonido en silencio.
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
+- **Cinta**: un «tup» de goma al dejar la caja en su entrada, un zumbido eléctrico suave mientras corre (sube y baja
+  con ella) y un golpe suave al llegar a la bandeja, con la campana si es su caja.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y
 `src/audio/sfx.ts`, listos para ajustar a oído.
@@ -250,7 +266,8 @@ Todos los valores están en tablas con nombre al principio de `src/audio/motor.t
   `.` suelo, `#` estantería, `p` planta, `^ > v <` carretilla; el resto se explica en la leyenda: `caja`, `pila azul,menta`
   (de abajo arriba), `zona azul` / `zona ▲` / `zona azul ■` / `zona pila azul,menta`, combinaciones como
   `zona azul + caja coral`, `estantería 3 alturas`, las estanterías almacenables (`estantería frente sur: …`,
-  [docs/RACKS.md](docs/RACKS.md)) y los camiones (`camión muelle norte: …`, [docs/DOCKS.md](docs/DOCKS.md)). El `id`
+  [docs/RACKS.md](docs/RACKS.md)), los camiones (`camión muelle norte: …`, [docs/DOCKS.md](docs/DOCKS.md)) y las cintas
+  (`cinta entrada`, `cinta`, `cinta final: …`, [docs/CONVEYOR.md](docs/CONVEYOR.md)). El `id`
   guarda los mejores tiempos: no lo cambies. Se valida al
   cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
   y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista

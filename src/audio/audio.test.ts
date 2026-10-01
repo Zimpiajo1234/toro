@@ -20,6 +20,9 @@ import { beepFrequency } from './beeper';
 import {
   BEAM_LOWPASS_HZ,
   BEAM_MODES,
+  BELT_HUM_HZ,
+  BELT_HUM_LEVEL,
+  BELT_HUM_LOWPASS_HZ,
   SfxPlayer,
   TRUCK_BED_CAVITY_HZ,
   TRUCK_BED_LOWPASS_HZ,
@@ -409,6 +412,65 @@ describe('SfxPlayer', () => {
     sfx.truckDrop(2, 79, true, 1, 'exact');
     expect(bell.mock.calls.map((c) => c[0])).toEqual([79, 74]); // the last target's second strike
     expect(wood.mock.calls.map((c) => c[0])).toEqual([79]);
+  });
+
+  it('a conveyor belt: a soft rubbery tup on its input and a softer knock in its end exit, no sub; the knock chimes only when handed its chime', () => {
+    const onInput = setup();
+    onInput.sfx.beltDrop(0);
+    const inExit = setup();
+    inExit.sfx.beltLand(0, null);
+    const floor = setup();
+    floor.sfx.drop(0, null);
+    const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+    const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+    for (const { ctx } of [onInput, inExit]) {
+      // Muffled sines, nothing as low as the floor's sub thump, never louder than it.
+      for (const o of ctx.ofKind(FakeOscillator)) {
+        expect(o.type).toBe('sine');
+        expect(o.frequency.value).toBeGreaterThan(100);
+      }
+      for (const b of ctx.ofKind(FakeBiquad)) expect(b.frequency.value).toBeLessThan(2000);
+      expect(Math.max(...peaksOf(ctx))).toBeLessThan(Math.max(...peaksOf(floor.ctx)));
+    }
+    expect(sum(peaksOf(inExit.ctx))).toBeLessThan(sum(peaksOf(onInput.ctx)));
+    expect(bell).not.toHaveBeenCalled();
+    expect(wood).not.toHaveBeenCalled();
+    // In the end exit with its destined box: the chime in its cue's timbre follows the knock.
+    const destined = setup();
+    destined.sfx.beltLand(1, 79, false, 'symbol');
+    expect(wood.mock.calls.map((c) => [c[0], c[1] > 1.03])).toEqual([[79, true]]);
+    expect(bell).not.toHaveBeenCalled();
+  });
+
+  it('a running belt hums softly for its whole run: easing in and out with it, climbing as it speeds up, one voice', () => {
+    const { ctx, sfx } = setup();
+    sfx.beltHum(2, 3, 0.6);
+    const tones = ctx.ofKind(FakeOscillator);
+    expect(tones.map((o) => o.type)).toEqual(['sine', 'sine']);
+    const [root, octave] = tones;
+    // Low → high over the ramp, held, back down over the last ramp, at the end of the run.
+    const glide = (o: FakeOscillator) => o.frequency.events.map((e) => [e.kind, e.value, e.time]);
+    expect(glide(root)).toEqual([
+      ['set', BELT_HUM_HZ[0], 2],
+      ['linear', BELT_HUM_HZ[1], 2.6],
+      ['set', BELT_HUM_HZ[1], 4.4],
+      ['linear', BELT_HUM_HZ[0], 5],
+    ]);
+    expect(octave.frequency.events[1].value).toBeCloseTo(2 * BELT_HUM_HZ[1], 9);
+    // Its envelope: silent at both ends, its peak well under the music (a hum, not a motor).
+    const env = ctx.ofKind(FakeGain).find((g) => g.gain.events.length === 4 && g.gain.events[0].value === 0)!;
+    expect(env.gain.events.map((e) => [e.kind, e.time])).toEqual([
+      ['set', 2],
+      ['linear', 2.6],
+      ['set', 4.4],
+      ['linear', 5],
+    ]);
+    expect(env.gain.events.at(-1)!.value).toBe(0);
+    expect(env.gain.events[1].value).toBeLessThan(BELT_HUM_LEVEL * 1.2);
+    expect(BELT_HUM_LEVEL).toBeLessThan(0.03);
+    // The band's whisper: band-passed looping noise, under the warm low-pass of the drive.
+    expect(ctx.ofKind(FakeBufferSource).every((s) => s.loop)).toBe(true);
+    expect(ctx.ofKind(FakeBiquad).some((b) => b.type === 'lowpass' && b.frequency.value === BELT_HUM_LOWPASS_HZ)).toBe(true);
   });
 
   it('a fork step clicks about half as loud as a UI click, a little higher per level and going up', () => {
@@ -951,6 +1013,39 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
       engine.handleEvent({ type: 'boxPicked', boxId: 'b', fromZoneId: null, level: 1, fromSlotId: 't1:1:1', skin: 'truck' });
       expect(pickup.mock.calls).toEqual([[ctx.currentTime, 1]]);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('a conveyor belt: the tup on its input, its hum while it runs, the knock as the box slides into its end exit (chime or soft «no»)', async () => {
+      const { engine, ctx, warn } = await live();
+      const beltDrop = vi.spyOn(SfxPlayer.prototype, 'beltDrop');
+      const hum = vi.spyOn(SfxPlayer.prototype, 'beltHum');
+      const land = vi.spyOn(SfxPlayer.prototype, 'beltLand');
+      const buzz = vi.spyOn(SfxPlayer.prototype, 'wrongBuzz');
+      const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
+      const onInput = { type: 'boxDropped', boxId: 'b1', cell: { x: 3, z: 2 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0, total: 2, slotId: 'e1:0:0', skin: 'beltIn' } as const;
+      engine.handleEvent(onInput);
+      expect(beltDrop.mock.calls).toEqual([[expect.closeTo(ctx.currentTime + DROP_LAND_SEC, 9), null, false, 'color']]);
+      expect(drop).not.toHaveBeenCalled();
+      expect(buzz).not.toHaveBeenCalled(); // a belt's input is «libre»
+      engine.handleEvent({ type: 'beltStarted', conveyorId: 'c1', boxId: 'b1', runSec: 2.8, rampSec: 0.6 });
+      expect(hum.mock.calls).toEqual([[ctx.currentTime, 2.8, 0.6]]);
+      // Its destined box: the knock at once (it slid in), with the chime; the last target, the final one.
+      const delivered = { type: 'beltDelivered', conveyorId: 'c1', boxId: 'b1', slotId: 's1:0:0', skin: 'beltOut', correct: true, recipeLength: 1, satisfiedCount: 2, total: 2 } as const;
+      engine.handleEvent(delivered, 'exact');
+      expect(land.mock.calls).toEqual([[ctx.currentTime, expect.any(Number), true, 'exact']]);
+      // Any other box: the knock alone, then the soft «no».
+      engine.handleEvent({ ...delivered, correct: false, satisfiedCount: 1, wrongTarget: true });
+      expect(land.mock.calls[1]).toEqual([ctx.currentTime, null, false, 'color']);
+      expect(buzz.mock.calls).toEqual([[expect.closeTo(ctx.currentTime + WRONG_AFTER_LAND_SEC, 9)]]);
+      // Its end exit full: the box stays on the input, the soft «no» after its tup.
+      engine.handleEvent({ type: 'beltBlocked', conveyorId: 'c1', boxId: 'b2' });
+      expect(buzz.mock.calls[1]).toEqual([expect.closeTo(ctx.currentTime + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC, 9)]);
+      // Picking a box off the input: the classic knock.
+      const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 0, fromSlotId: 'e1:0:0', skin: 'beltIn' });
+      expect(pickup.mock.calls).toEqual([[ctx.currentTime, 0]]);
       expect(warn).not.toHaveBeenCalled();
       engine.dispose();
     });

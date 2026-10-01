@@ -112,7 +112,9 @@ describe('render/storage: the registry', () => {
     expect(Object.keys(STORAGE_RENDER)).toEqual([...STORAGE_SKIN_ORDER]);
     for (const skin of STORAGE_SKIN_ORDER) expect(typeof STORAGE_RENDER[skin].builder).toBe('function');
     // A rack's marker frames the chosen shelf; a truck's, the chosen level's cell on its sign (docs/STORAGE.md rule 9).
-    for (const skin of STORAGE_SKIN_ORDER) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeDefined();
+    for (const skin of ['rack', 'truck'] as const) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeDefined();
+    // A conveyor belt (docs/CONVEYOR.md): its input has one level only, its end exit is never worked at: no marker.
+    for (const skin of ['beltIn', 'beltOut'] as const) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeUndefined();
     // The truck's is the size of a sign cell: a door cell wide, one row high, on both faces of the sign.
     const sign = STORAGE_RENDER.truck.markerGeometry!();
     sign.computeBoundingBox();

@@ -12,8 +12,10 @@
  */
 import {
   BOX_KINDS,
+  FACINGS,
   type BoxKind,
   type ColorId,
+  type ConveyorPiece,
   type Facing,
   type LevelData,
   type LevelStorage,
@@ -24,7 +26,8 @@ import {
   type WallSide,
   type ZoneCriteria,
 } from '../core/types';
-import { runsAlongX } from '../core/racks';
+import { FACING_X, FACING_Z, runsAlongX } from '../core/racks';
+import { conveyorOfUnit, conveyorsOf } from '../core/conveyors';
 import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, cellOf, frontOf, storageOf } from '../core/storage';
 import { DifficultySyntaxError, formatTargets, parseTargets, type DifficultyTarget } from './difficulty';
 import { validateLevel } from './validateLevel';
@@ -182,7 +185,22 @@ const HEADER_KEYS: Readonly<Record<string, HeaderKey>> = {
   notas: 'nota',
 };
 const HEADER_LIST = 'id, limit, tema, ventanas, rumbo, dificultad o nota';
-const ELEMENTS = ['caja', 'pila', 'zona', 'estantería', 'camión', 'planta'];
+const ELEMENTS = ['caja', 'pila', 'zona', 'estantería', 'camión', 'cinta', 'planta'];
+/** A conveyor belt's legend entries (docs/CONVEYOR.md): its input, its cells and its end exit. */
+const BELT_EXAMPLE = '«A = cinta entrada», «~ = cinta» y «B = cinta final: azul ●»';
+/** First word of a belt entry. */
+const BELT_HEADS: ReadonlySet<string> = new Set(['cinta', 'belt', 'conveyor']);
+/** The pieces of a belt cell (docs/CONVEYOR.md «Las tres piezas»): «cinta» alone is the floor's. */
+const BELT_PIECE_WORDS: Readonly<Record<string, ConveyorPiece>> = {
+  suelo: 'suelo',
+  floor: 'suelo',
+  rampa: 'rampa',
+  ramp: 'rampa',
+  techo: 'techo',
+  ceiling: 'techo',
+};
+/** The map character of a floor belt cell in the canonical form (a level without belts never takes it). */
+const BELT_CHAR = '~';
 const RACK_EXAMPLE = '«a = estantería frente sur: azul / ▲ + caja coral / libre»';
 /** A loading dock's truck (docs/DOCKS.md): «camión muelle norte: …». */
 const TRUCK_EXAMPLE = '«T = camión muelle norte: azul / ▲ | coral ●»';
@@ -328,7 +346,32 @@ const COLUMN_WORDS: { readonly [S in StorageSkin]: ColumnWords } = {
     colon: 'los dos puntos van una sola vez, tras «camión muelle …»',
     one: 'un nivel del camión',
   },
+  // A belt's input and end exit hold one level each (docs/CONVEYOR.md): their legend entry is not a column list.
+  beltIn: {
+    missing: `la entrada de la cinta no pide nada: es «libre» (${BELT_EXAMPLE})`,
+    tooMany: 'la entrada de una cinta tiene un solo hueco, a ras del suelo',
+    colon: 'la entrada de la cinta no lleva dos puntos: «A = cinta entrada»',
+    one: 'la entrada de la cinta',
+  },
+  beltOut: {
+    missing: `falta la pista de la salida final de la cinta (color, símbolo, ambos o «libre»), p. ej. ${BELT_EXAMPLE}`,
+    tooMany: 'la salida final de una cinta pide una sola pista',
+    colon: 'los dos puntos van una sola vez, tras «cinta final»',
+    one: 'la salida final de la cinta',
+  },
 };
+
+/**
+ * One end of a conveyor belt in the legend (docs/CONVEYOR.md): its input «cinta entrada [(id)]» or its end exit
+ * «cinta final [(id)]: pista». The id names the belt (either end may carry it).
+ */
+interface BeltEndSpec {
+  role: 'entrada' | 'final';
+  /** The end exit's cue (none = «libre»). */
+  cue?: SlotSpec;
+  id?: string;
+  idPos?: Pos;
+}
 
 interface LegendDef {
   char: string;
@@ -342,6 +385,10 @@ interface LegendDef {
   plant?: { variant?: number };
   /** A storage unit character: a storage rack or a loading dock's truck. */
   unit?: UnitSpec;
+  /** A conveyor belt's input or end exit. */
+  beltEnd?: BeltEndSpec;
+  /** A conveyor belt's cell: its piece. */
+  beltCell?: { piece: ConveyorPiece };
 }
 
 interface Header {
@@ -496,6 +543,8 @@ class LevelParser {
     const shelfCells = new Map<string, Set<number>>();
     /** The cells of each storage unit character (a rack's own cells, a truck's door cells). */
     const unitCells = new Map<string, Set<number>>();
+    /** The cells of each conveyor belt character (its inputs, end exits and belt cells: docs/CONVEYOR.md). */
+    const beltCells = new Map<string, Set<number>>();
     const plants: { x: number; z: number; variant?: number }[] = [];
     const cellsOf = new Map<string, { x: number; z: number }[]>();
     for (let z = 0; z < depth; z++) {
@@ -521,6 +570,10 @@ class LevelParser {
           const set = unitCells.get(ch) ?? new Set<number>();
           set.add(z * width + x);
           unitCells.set(ch, set);
+        } else if (def.beltEnd || def.beltCell) {
+          const set = beltCells.get(ch) ?? new Set<number>();
+          set.add(z * width + x);
+          beltCells.set(ch, set);
         } else if (def.plant) {
           plants.push({ x, z, ...(def.plant.variant === undefined ? {} : { variant: def.plant.variant }) });
         } else {
@@ -536,9 +589,11 @@ class LevelParser {
           ? shelfCells.has(def.char)
           : def.unit
             ? unitCells.has(def.char)
-            : def.plant
-              ? rowsContain(rows, def.char)
-              : cellsOf.has(def.char);
+            : def.beltEnd || def.beltCell
+              ? beltCells.has(def.char)
+              : def.plant
+                ? rowsContain(rows, def.char)
+                : cellsOf.has(def.char);
       if (!used) this.fail(def.pos, `«${def.char}» está en la leyenda pero no en el mapa`);
     }
 
@@ -585,8 +640,37 @@ class LevelParser {
     const storage: Record<string, unknown>[] = [];
     const unitOrigins: UnitOrigin[] = [];
     const originsBySkin = Object.fromEntries(STORAGE_SKIN_ORDER.map((skin) => [skin, [] as UnitOrigin[]])) as Record<StorageSkin, UnitOrigin[]>;
+    // Conveyor belts (docs/CONVEYOR.md): read off the map first; their inputs and end exits are storage units of their
+    // own skins (beltIn, beltOut), placed below in STORAGE_SKIN_ORDER like every other unit.
+    const belts = this.readBelts(legendOrder, beltCells, width, depth, cellPos);
+    const beltUnitIds: { input: string; output: string }[] = belts.map(() => ({ input: '', output: '' }));
     for (const skin of STORAGE_SKIN_ORDER) {
       const words = STORAGE_WORDS[skin];
+      if (skin === 'beltIn' || skin === 'beltOut') {
+        const order = skin === 'beltIn' ? belts.map((_, i) => i) : beltExitOrder(belts, legendOrder);
+        for (const i of order) {
+          const belt = belts[i];
+          const end = skin === 'beltIn' ? belt.input : belt.exit;
+          const id = `${STORAGE_SKINS[skin].idPrefix}${originsBySkin[skin].length + 1}`;
+          const cue = end.def.beltEnd!.cue;
+          storage.push({
+            id,
+            skin,
+            x: end.x,
+            z: end.z,
+            w: 1,
+            access: skin === 'beltIn' ? { kind: 'front', facing: belt.facing } : { kind: 'belt', facing: belt.facing },
+            columns: [[cue ? cueOfSlot(cue) : null]],
+          });
+          if (skin === 'beltIn') beltUnitIds[i].input = id;
+          else beltUnitIds[i].output = id;
+          const at = cellPos(end.x, end.z);
+          const origin: UnitOrigin = { def: end.def, cell: at, columns: [at] };
+          unitOrigins.push(origin);
+          originsBySkin[skin].push(origin);
+        }
+        continue;
+      }
       for (const def of legendOrder) {
         const spec = def.unit;
         const cells = unitCells.get(def.char);
@@ -663,7 +747,8 @@ class LevelParser {
     // cell). In a stack (a truck bed) a box needs one under it.
     storage.forEach((unit, i) => {
       const origin = unitOrigins[i];
-      const spec = origin.def.unit!;
+      const spec = origin.def.unit;
+      if (!spec) return; // a conveyor belt's input or end exit: belts start empty
       const stack = STORAGE_SKINS[spec.skin].support === 'stack';
       spec.columns.forEach((levels, column) => {
         const cell = cellOf({ x: unit.x as number, z: unit.z as number, access: spec.access }, column);
@@ -698,13 +783,21 @@ class LevelParser {
       if (first === i) return;
       const [a, b] = [unitOrigins[first], unitOrigins[i]];
       const [here, other] = b.idPos ? [b, a] : [a, b];
-      const skinOf = (o: UnitOrigin) => o.def.unit!.skin;
+      const skinOf = (o: UnitOrigin) => storage[unitOrigins.indexOf(o)].skin as StorageSkin;
       this.fail(
         here.idPos ?? here.def.pos,
         `id repetido «${String(unit.id)}»: también es el ${STORAGE_WORDS[skinOf(other)].of} «${other.def.char}» (línea ${other.def.pos.line}); ${STORAGE_WORDS[skinOf(a)].a} y ${STORAGE_WORDS[skinOf(b)].a} no comparten id`,
       );
     });
 
+    // Each belt: its id, its two units and its cells from the input on, each with the piece its character names (every
+    // piece lies on the floor here: validateLevel builds only the floor one so far, docs/CONVEYOR.md).
+    const conveyors = belts.map((belt, i) => ({
+      id: belt.id,
+      input: beltUnitIds[i].input,
+      output: beltUnitIds[i].output,
+      cells: belt.cells.map((c) => ({ x: c.x, z: c.z, piece: c.def.beltCell!.piece, height: 0 })),
+    }));
     const raw = {
       id: idHeader.value,
       order,
@@ -716,6 +809,7 @@ class LevelParser {
       zones,
       shelves,
       ...(storage.length > 0 ? { storage } : {}),
+      ...(conveyors.length > 0 ? { conveyors } : {}),
       decor: { plants, windows },
       ...(themeHeader ? { theme: themeHeader.value } : {}),
     };
@@ -728,6 +822,7 @@ class LevelParser {
       boxes: boxOrigins,
       zones: zoneOrigins,
       units: originsBySkin,
+      belts: belts.map((belt) => belt.cells.map((c) => ({ cell: cellPos(c.x, c.z), def: c.def }))),
       boxIds: boxes.map((b) => String(b.id)),
       zoneIds: zones.map((z) => String(z.id)),
       cell: cellPos,
@@ -918,6 +1013,11 @@ class LevelParser {
     }
     if (toks[0].kind === 'word' && TRUCK_HEADS.has(toks[0].key)) {
       def.unit = this.readTruck(toks);
+      return;
+    }
+    // A conveyor belt (docs/CONVEYOR.md): its input, its end exit («cinta final: pista») or one of its cells.
+    if (toks[0].kind === 'word' && BELT_HEADS.has(toks[0].key)) {
+      this.readBelt(def, toks);
       return;
     }
     const stray = toks.find((t) => t.kind === ':' || t.kind === '/' || t.kind === '|');
@@ -1138,6 +1238,169 @@ class LevelParser {
   }
 
   /**
+   * A conveyor belt's legend entry (docs/CONVEYOR.md): «cinta» or «cinta suelo | rampa | techo» (a belt cell: the floor
+   * piece unless another is named; validateLevel builds only the floor one so far), «cinta entrada [(id)]» (its input,
+   * «libre») or «cinta final [(id)]: pista» (its end exit: «libre», a colour, a symbol or both, like a storage level).
+   * The id names the belt; belts start empty («+ caja» never goes there). Side exits and the button come later.
+   */
+  private readBelt(def: Omit<LegendDef, 'char' | 'pos'>, toks: Tok[]): void {
+    const [head, word] = toks;
+    if (!word) {
+      def.beltCell = { piece: 'suelo' };
+      return;
+    }
+    if (word.kind !== 'word') this.fail(word.pos, `«${word.text}» sobra: una casilla de cinta es «cinta»; sus extremos, ${BELT_EXAMPLE}`);
+    const piece = lookup(BELT_PIECE_WORDS, word.key);
+    if (piece) {
+      if (toks.length > 2) this.fail(toks[2].pos, `«${toks[2].text}» sobra: una casilla de cinta es «cinta ${word.text}», sin nada más`);
+      def.beltCell = { piece };
+      return;
+    }
+    if (word.key !== 'entrada' && word.key !== 'final') {
+      if (word.key === 'salida' || word.key === 'desvio')
+        this.fail(word.pos, 'las salidas laterales de la cinta llegan en el siguiente hito: por ahora una cinta va recta de su entrada a su salida final');
+      if (word.key === 'boton') this.fail(word.pos, 'el botón de la cinta llega más adelante: por ahora una cinta va recta de su entrada a su salida final');
+      const options = ['entrada', 'final', 'suelo', 'rampa', 'techo'];
+      this.fail(word.pos, `«${word.text}» no es una pieza de cinta: usa «cinta» para sus casillas y ${BELT_EXAMPLE} para sus extremos${suggest(word.text, options)}`);
+    }
+    const role = word.key === 'entrada' ? 'entrada' : 'final';
+    const end: BeltEndSpec = { role };
+    let k = 2;
+    if (toks[k]?.kind === 'id') {
+      end.id = toks[k].text;
+      end.idPos = toks[k].pos;
+      k++;
+    }
+    if (role === 'entrada') {
+      if (toks[k]) {
+        const t = toks[k];
+        this.fail(t.pos, t.kind === ':' ? 'la entrada de la cinta no pide nada (es «libre»): se escribe «A = cinta entrada»' : `«${t.text}» sobra: la entrada se escribe «cinta entrada», con su id de cinta si quieres («cinta entrada (c2)»)`);
+      }
+    } else {
+      if (toks[k]?.kind !== ':') this.fail((toks[k] ?? toks[k - 1]).pos, `después de «cinta final» van dos puntos y su pista: «B = cinta final: azul ●» (o «libre»)`);
+      const cue = toks.slice(k + 1);
+      if (cue.length === 0) this.fail(toks[k].pos, COLUMN_WORDS.beltOut.missing);
+      const extra = cue.find((t) => t.kind === '/' || t.kind === '|' || t.kind === ':');
+      if (extra) this.fail(extra.pos, extra.kind === ':' ? COLUMN_WORDS.beltOut.colon : COLUMN_WORDS.beltOut.tooMany);
+      const plus = cue.find((t) => t.kind === '+');
+      if (plus) this.fail(plus.pos, 'la cinta empieza vacía: una caja llega a su salida final por la cinta, dejándola en su entrada');
+      end.cue = this.readSlot(cue, 'beltOut');
+    }
+    if (head.kind !== 'word') this.fail(head.pos, 'se esperaba «cinta»');
+    def.beltEnd = end;
+  }
+
+  /**
+   * The conveyor belts on the map (docs/CONVEYOR.md): every connected group of one belt cell character is one belt's
+   * run of cells, a straight line with its input («cinta entrada») just past one end and its end exit («cinta final»)
+   * just past the other, in line (nothing beside it for now: side exits come later); every input and end exit belongs
+   * to exactly one belt. Belts come in the order of their inputs (legend order, then reading order); a belt's id is the
+   * one either end carries (both: the same), else c1, c2… in that order.
+   */
+  private readBelts(
+    legendOrder: readonly LegendDef[],
+    beltCells: ReadonlyMap<string, ReadonlySet<number>>,
+    width: number,
+    depth: number,
+    cellPos: (x: number, z: number) => Pos,
+  ): BeltRead[] {
+    type End = BeltRead['input'];
+    const roleOf = (end: End) => (end.def.beltEnd!.role === 'entrada' ? 'entrada' : 'salida final');
+    const ends = new Map<number, End>();
+    for (const def of legendOrder) {
+      if (!def.beltEnd) continue;
+      for (const c of [...(beltCells.get(def.char) ?? [])].sort((a, b) => a - b)) ends.set(c, { def, x: c % width, z: Math.floor(c / width) });
+    }
+    const found: Omit<BeltRead, 'id'>[] = [];
+    const claimed = new Map<number, number>();
+    for (const def of legendOrder) {
+      const cells = def.beltCell ? beltCells.get(def.char) : undefined;
+      if (!cells) continue;
+      for (const group of groupsOf(cells, width, depth)) {
+        const xs = group.map((c) => c % width);
+        const zs = group.map((c) => Math.floor(c / width));
+        const start = cellPos(Math.min(...xs), Math.min(...zs));
+        const alongX = zs.every((z) => z === zs[0]);
+        const alongZ = xs.every((x) => x === xs[0]);
+        if (!alongX && !alongZ)
+          this.fail(start, `la cinta «${def.char}» que empieza aquí no es recta: una cinta va en línea recta de su entrada a su salida final (para dos cintas pegadas, otro carácter, p. ej. «- = cinta»)`);
+        // The ends that touch the run: one input and one end exit.
+        const touching: { index: number; end: End; cell: number }[] = [];
+        for (const c of group) {
+          const x = c % width;
+          const z = Math.floor(c / width);
+          for (const [dx, dz] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ]) {
+            const nx = x + dx;
+            const nz = z + dz;
+            const end = nx >= 0 && nz >= 0 && nx < width && nz < depth ? ends.get(nz * width + nx) : undefined;
+            if (end) touching.push({ index: nz * width + nx, end, cell: c });
+          }
+        }
+        const inputs = touching.filter((t) => t.end.def.beltEnd!.role === 'entrada');
+        const exits = touching.filter((t) => t.end.def.beltEnd!.role === 'final');
+        if (inputs.length === 0) this.fail(start, `la cinta «${def.char}» que empieza aquí no tiene entrada: pon una «cinta entrada» pegada a uno de sus extremos, en línea (${BELT_EXAMPLE})`);
+        if (inputs.length > 1) this.fail(start, `la cinta «${def.char}» que empieza aquí toca ${inputs.length} entradas: lleva una sola, pegada a uno de sus extremos`);
+        if (exits.length === 0) this.fail(start, `la cinta «${def.char}» que empieza aquí no tiene salida final: pon una «cinta final: pista» pegada a su otro extremo, en línea (${BELT_EXAMPLE})`);
+        if (exits.length > 1) this.fail(start, `la cinta «${def.char}» que empieza aquí toca ${exits.length} salidas finales: lleva una sola, pegada a su otro extremo (las salidas laterales llegan más adelante)`);
+        const [input] = inputs;
+        const [exit] = exits;
+        // From the input into the run: every belt cell one after another, then the end exit, all in one line.
+        const fx = input.cell % width;
+        const fz = Math.floor(input.cell / width);
+        const dx = fx - input.end.x;
+        const dz = fz - input.end.z;
+        const inLine = (k: number) => cells.has((fz + k * dz) * width + fx + k * dx);
+        if ((group.length > 1 && (alongX ? dz !== 0 : dx !== 0)) || !group.every((_, k) => inLine(k)))
+          this.fail(cellPos(input.end.x, input.end.z), `esta entrada de cinta va en línea con su cinta, pegada a uno de sus extremos (no a un lado): entrada, cinta y salida final, en una sola línea recta`);
+        const ex = fx + group.length * dx;
+        const ez = fz + group.length * dz;
+        if (exit.end.x !== ex || exit.end.z !== ez)
+          this.fail(cellPos(exit.end.x, exit.end.z), `esta salida final de cinta va en línea con su cinta, pegada a su otro extremo (no a un lado): entrada, cinta y salida final, en una sola línea recta`);
+        for (const t of [input, exit]) {
+          if (claimed.has(t.index)) this.fail(cellPos(t.end.x, t.end.z), `esta ${roleOf(t.end)} toca dos cintas: cada cinta lleva su propia entrada y su propia salida final`);
+          claimed.set(t.index, found.length);
+        }
+        const facing = FACINGS.find((f) => FACING_X[f] === -dx && FACING_Z[f] === -dz)!;
+        found.push({ input: input.end, exit: exit.end, cells: group.map((_, k) => ({ x: fx + k * dx, z: fz + k * dz, def })), facing });
+      }
+    }
+    for (const [index, end] of ends) {
+      if (!claimed.has(index))
+        this.fail(cellPos(end.x, end.z), `esta ${roleOf(end)} de cinta («${end.def.char}») no toca ninguna casilla de cinta: entre la entrada y la salida final va al menos una, todo en línea (${BELT_EXAMPLE})`);
+    }
+    // The order of their inputs: legend order, then reading order.
+    const legendIndex = new Map(legendOrder.map((def, i) => [def, i]));
+    found.sort((a, b) => legendIndex.get(a.input.def)! - legendIndex.get(b.input.def)! || a.input.z - b.input.z || a.input.x - b.input.x);
+    // An id on a character used by several belts names none of them.
+    for (const def of legendOrder) {
+      const end = def.beltEnd;
+      if (!end?.id) continue;
+      const n = found.filter((b) => b.input.def === def || b.exit.def === def).length;
+      if (n > 1) this.fail(end.idPos ?? def.pos, `«${def.char}» lleva un id de cinta y está en ${n} cintas: un id solo puede ir en una`);
+    }
+    const read = found.map((belt, i): BeltRead => {
+      const a = belt.input.def.beltEnd!;
+      const f = belt.exit.def.beltEnd!;
+      if (a.id !== undefined && f.id !== undefined && a.id !== f.id)
+        this.fail(f.idPos ?? belt.exit.def.pos, `la entrada y la salida final de una cinta llevan el mismo id: aquí «${f.id}» y en su entrada «${a.id}» (basta con ponerlo en una)`);
+      return { id: a.id ?? f.id ?? `c${i + 1}`, ...belt };
+    });
+    read.forEach((belt, i) => {
+      const j = read.findIndex((other) => other.id === belt.id);
+      if (j === i) return;
+      const named = [belt, read[j]].find((b) => b.input.def.beltEnd!.id === belt.id || b.exit.def.beltEnd!.id === belt.id) ?? belt;
+      const def = named.input.def.beltEnd!.id === belt.id ? named.input.def : named.exit.def;
+      this.fail(def.beltEnd!.idPos ?? def.pos, `id de cinta repetido «${belt.id}»: lo lleva otra cinta (los ids de cinta sin paréntesis son c1, c2… por orden de sus entradas)`);
+    });
+    return read;
+  }
+
+  /**
    * A unit's cells on the map, a straight run placed by its access (docs/STORAGE.md): `front` — its own cells, 1 cell
    * deep along its front (a row for a front north / south, a column for east / west); `door` — its door cells, along its
    * wall, on row 0 (north) or column 0 (west). `at` = its first cell.
@@ -1147,11 +1410,11 @@ class LevelParser {
     const { access } = spec;
     const x0 = Math.min(...xs);
     const z0 = Math.min(...zs);
-    const alongX = access.kind === 'front' ? runsAlongX(access.facing) : access.wall === 'north';
+    const alongX = access.kind === 'door' ? access.wall === 'north' : runsAlongX(access.facing);
     const line = alongX ? 'fila' : 'columna';
     const straight = alongX ? zs.every((z) => z === z0) : xs.every((x) => x === x0);
     const others = `para dos ${words.many} ${words.together} usa otro carácter`;
-    if (access.kind === 'front') {
+    if (access.kind !== 'door') {
       if (!straight)
         this.fail(at, `${words.the} «${char}» que empieza aquí no es una ${line} recta: con el frente ${FACING_NAMES[access.facing]} va a lo largo de una ${line}, con 1 casilla de fondo; ${others}`);
       return;
@@ -1314,6 +1577,8 @@ function structuredCloneDef(def: Omit<LegendDef, 'char' | 'pos'>): Omit<LegendDe
     ...(def.shelfTiers === undefined ? {} : { shelfTiers: def.shelfTiers }),
     ...(def.plant ? { plant: { ...def.plant } } : {}),
     ...(def.unit ? { unit: { ...def.unit, access: { ...def.unit.access }, columns: cloneColumns(def.unit.columns) } } : {}),
+    ...(def.beltEnd ? { beltEnd: { ...def.beltEnd, ...(def.beltEnd.cue ? { cue: { ...def.beltEnd.cue } } : {}) } } : {}),
+    ...(def.beltCell ? { beltCell: { ...def.beltCell } } : {}),
   };
 }
 
@@ -1368,6 +1633,24 @@ interface UnitOrigin extends Origin {
   columns: Pos[];
 }
 
+/** A conveyor belt as read off the map (LevelParser.readBelts): its id, its two ends, its cells from the input on. */
+interface BeltRead {
+  id: string;
+  input: { def: LegendDef; x: number; z: number };
+  exit: { def: LegendDef; x: number; z: number };
+  cells: { x: number; z: number; def: LegendDef }[];
+  /** The side both ends are worked from: away from the belt (the input's front, the end exit's feeding side). */
+  facing: Facing;
+}
+
+/** The belts by their end exits (indices into `belts`): legend order of the exit's character, then reading order. */
+function beltExitOrder(belts: readonly BeltRead[], legendOrder: readonly LegendDef[]): number[] {
+  const legendIndex = new Map(legendOrder.map((def, i) => [def, i]));
+  return belts
+    .map((_, i) => i)
+    .sort((a, b) => legendIndex.get(belts[a].exit.def)! - legendIndex.get(belts[b].exit.def)! || belts[a].exit.z - belts[b].exit.z || belts[a].exit.x - belts[b].exit.x);
+}
+
 interface ValidationContext {
   title: Pos;
   map: Pos;
@@ -1379,6 +1662,8 @@ interface ValidationContext {
   zones: Origin[];
   /** Per skin, its units in storage order: validateLevel's `racks[i]` / `trucks[i]` (the i-th unit of that skin). */
   units: Record<StorageSkin, UnitOrigin[]>;
+  /** Per conveyor belt (validateLevel's `conveyors[i]`), its cells in order: their map cell and legend entry. */
+  belts: { cell: Pos; def: LegendDef }[][];
   boxIds: string[];
   zoneIds: string[];
   cell: (x: number, z: number) => Pos;
@@ -1467,7 +1752,15 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
     };
   if ((m = /^no complete assignment exists: box "([^"]+)"/.exec(message))) {
     const origin = boxOf(m[1]);
-    const places = ctx.units.truck.length > 0 ? 'sin zona, hueco ni nivel de camión' : 'sin zona ni hueco';
+    const belts = ctx.units.beltOut.length > 0;
+    const places =
+      ctx.units.truck.length > 0
+        ? belts
+          ? 'sin zona, hueco, nivel de camión ni salida de cinta'
+          : 'sin zona, hueco ni nivel de camión'
+        : belts
+          ? 'sin zona, hueco ni salida de cinta'
+          : 'sin zona ni hueco';
     return {
       pos: origin?.cell ?? ctx.title,
       reason: `no hay reparto completo: la caja «${origin?.def.char ?? m[1]}» de esta casilla siempre se queda ${places} que la acepte`,
@@ -1548,6 +1841,33 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
     const column = Number(m[3]);
     return { pos: rack?.columns[column] ?? rack?.def.pos ?? ctx.title, reason: `hay más de un reparto: ${levelText('rack', rack, column, Number(m[4]))} ${kinds}; ${advice}` };
   }
+  // Conveyor belts (docs/CONVEYOR.md «Validación»: what validateLevel says about a belt that a .level can give it).
+  if ((m = /^conveyors\[(\d+)\]\.cells\[(\d+)\] is a (rampa|techo) piece/.exec(message))) {
+    const cell = ctx.belts[Number(m[1])]?.[Number(m[2])];
+    return {
+      pos: cell?.def.pos ?? ctx.title,
+      reason: `la cinta ${m[3] === 'rampa' ? 'en rampa' : 'de techo'} llega más adelante: por ahora solo se construye la cinta de suelo («~ = cinta»)`,
+    };
+  }
+  if ((m = /^beltInputs\[(\d+)\] column \d+ has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
+    const input = ctx.units.beltIn[Number(m[1])];
+    return {
+      pos: input?.cell ?? ctx.title,
+      reason: `la entrada de cinta «${input?.def.char ?? '?'}» se carga por delante, por el lado contrario a su cinta, y esa casilla (la ${m[2]},${m[3]}) es una pared, una estantería, una planta u otro mueble: déjale sitio`,
+    };
+  }
+  if ((m = /^a level with storage needs one box per target \((\d+) boxes, (\d+) zones, (\d+) slots with a cue, (\d+) truck levels, (\d+) belt exits with a cue\)/.exec(message)))
+    return {
+      pos: ctx.title,
+      reason: `cada zona, cada hueco o nivel de camión con pista y cada salida final de cinta con pista lleva una caja: hay ${m[1]} cajas para ${m[2]} zonas, ${m[3]} huecos con pista, ${m[4]} niveles de camión con pista y ${m[5]} salidas de cinta con pista (lo «libre» no cuenta)`,
+    };
+  if ((m = /^more than one complete assignment: beltExits\[(\d+)\]\.columns\[0\]\[0\] may take (\S+) or (\S+)/.exec(message))) {
+    const exit = ctx.units.beltOut[Number(m[1])];
+    return {
+      pos: exit?.cell ?? ctx.title,
+      reason: `hay más de un reparto: la salida final de cinta «${exit?.def.char ?? '?'}» puede llevar la caja ${kindText(m[2])} o la ${kindText(m[3])}; cada caja tiene un único sitio: afina las pistas (color, símbolo o ambos) hasta que solo quede un reparto`,
+    };
+  }
   if (/^level starts already solved/.test(message)) return { pos: ctx.title, reason: 'el nivel empieza ya resuelto: todas las zonas tienen lo que piden' };
   if (/^a level needs at least one zone/.test(message)) return { pos: ctx.title, reason: 'el nivel necesita al menos una zona' };
   if ((m = /^zones\[(\d+)\] asks for a symbol and a stack/.exec(message)))
@@ -1596,8 +1916,25 @@ function take(preferred: string, used: Set<string>): string {
 interface RenderEntry {
   char: string;
   text: string;
-  /** Its kind of entry (a storage unit: its skin). */
-  group: 'zona' | 'caja' | 'otro' | StorageSkin;
+  /** Its kind of entry (a storage unit: its skin; every piece of a conveyor belt: `cinta`, one line). */
+  group: 'zona' | 'caja' | 'otro' | 'cinta' | StorageSkin;
+}
+
+/** A level's cue as the legend writes it: «libre», a colour, a symbol or both. */
+function cueText(cue: ZoneCriteria | null): string {
+  if (cue === null) return 'libre';
+  return [cue.color ? COLOR_NAMES[cue.color] : '', cue.symbol ? SYMBOL_GLYPHS[cue.symbol] : ''].filter((w) => w !== '').join(' ');
+}
+
+/**
+ * A conveyor belt's input or end exit entry (docs/CONVEYOR.md): «cinta entrada» (with its belt's id when it is not the
+ * generated one) or «cinta final: pista».
+ */
+function beltEndText(unit: LevelStorage, level: Pick<LevelData, 'conveyors'>): string {
+  if (unit.skin === 'beltOut') return `cinta final: ${cueText(unit.columns[0]?.[0] ?? null)}`;
+  const index = conveyorOfUnit(level, unit.id);
+  const id = conveyorsOf(level)[index]?.id;
+  return `cinta entrada${id === undefined || id === `c${index + 1}` ? '' : ` (${id})`}`;
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -1633,7 +1970,7 @@ function unitText(unit: LevelStorage, id: string | null, boxAt: (column: number,
   const implicit = STORAGE_SKINS[unit.skin].fillToMax;
   const columns = unit.columns.map((levels, column) => {
     const texts = levels.map((cue, level) => {
-      const words = cue === null ? 'libre' : [cue.color ? COLOR_NAMES[cue.color] : '', cue.symbol ? SYMBOL_GLYPHS[cue.symbol] : ''].filter((w) => w !== '').join(' ');
+      const words = cueText(cue);
       const box = boxAt(column, level);
       return { text: `${words}${box === null ? '' : ` + ${box}`}`, filled: cue === null && box === null };
     });
@@ -1645,7 +1982,7 @@ function unitText(unit: LevelStorage, id: string | null, boxAt: (column: number,
       .join(' / ');
   });
   const { access } = unit;
-  const where = access.kind === 'front' ? `frente ${FACING_NAMES[access.facing]}` : `muelle ${WALL_NAMES[access.wall]}`;
+  const where = access.kind === 'door' ? `muelle ${WALL_NAMES[access.wall]}` : `frente ${FACING_NAMES[access.facing]}`;
   return `${STORAGE_WORDS[unit.skin].name} ${where}${id === null ? '' : ` (${id})`}: ${columns.join(' | ')}`;
 }
 
@@ -1709,6 +2046,9 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
   const { width, depth } = level.size;
   const grid = Array.from({ length: depth }, () => new Array<string>(width).fill('.'));
   const used = new Set<string>([...RESERVED, '=', ':']);
+  // A floor belt's cells are always «~» (docs/CONVEYOR.md); a level without belts keeps it as a spare character.
+  const belts = conveyorsOf(level);
+  if (belts.length > 0) used.add(BELT_CHAR);
   const legendTail: RenderEntry[] = [];
   const key = (x: number, z: number) => z * width + x;
 
@@ -1776,12 +2116,24 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     const ch = take(STORAGE_SKINS[unit.skin].chars, used);
     unit.columns.forEach((_, column) => {
       const cell = cellOf(unit, column);
-      const drawn = unit.access.kind === 'front' ? cell : frontOf(unit, column);
+      const drawn = unit.access.kind === 'door' ? frontOf(unit, column) : cell;
       grid[drawn.z][drawn.x] = ch;
       storageCells.add(`${cell.x},${cell.z}`);
     });
     return ch;
   });
+  // Conveyor belts: every belt cell takes its piece's character (a floor belt «~»; a piece not built yet, its own).
+  const pieceChars = new Map<string, string>();
+  for (const belt of belts) {
+    for (const cell of belt.cells) {
+      let ch = cell.piece === 'suelo' ? BELT_CHAR : pieceChars.get(cell.piece);
+      if (ch === undefined) {
+        ch = take('/\\-_', used);
+        pieceChars.set(cell.piece, ch);
+      }
+      grid[cell.z][cell.x] = ch;
+    }
+  }
   /** Boxes that start stored: in a rack slot or loaded on a truck (the rest are floor boxes and stacks). */
   const isStored = (b: LevelData['boxes'][number]) => b.level !== undefined && storageCells.has(`${b.x},${b.z}`);
 
@@ -1844,6 +2196,11 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
   const inSkin = Object.fromEntries(STORAGE_SKIN_ORDER.map((skin) => [skin, 0])) as Record<StorageSkin, number>;
   units.forEach((unit, u) => {
     const generated = `${STORAGE_SKINS[unit.skin].idPrefix}${++inSkin[unit.skin]}`;
+    // A belt's input or end exit (docs/CONVEYOR.md): its own entry; belts start empty and their unit ids are generated.
+    if (unit.skin === 'beltIn' || unit.skin === 'beltOut') {
+      entries.push({ char: unitChars[u], text: beltEndText(unit, level), group: 'cinta' });
+      return;
+    }
     const boxAt = (column: number, level: number) => {
       const cell = cellOf(unit, column);
       const box = levelBoxes.find((b) => b.x === cell.x && b.z === cell.z && b.level === level);
@@ -1853,6 +2210,11 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     };
     entries.push({ char: unitChars[u], text: unitText(unit, unit.id === generated ? null : unit.id, boxAt), group: unit.skin });
   });
+  // The belt cells' characters, once each, after the belts' ends: «~ = cinta».
+  if (belts.length > 0) {
+    if (belts.some((belt) => belt.cells.some((cell) => cell.piece === 'suelo'))) entries.push({ char: BELT_CHAR, text: 'cinta', group: 'cinta' });
+    for (const [piece, ch] of pieceChars) entries.push({ char: ch, text: `cinta ${piece}`, group: 'cinta' });
+  }
 
   return { grid, legend: layoutLegend([...entries, ...legendTail]) };
 }

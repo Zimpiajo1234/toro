@@ -36,6 +36,14 @@
  * (`lockedAt`). A locked box is never lifted again; nothing is dropped on a locked zone or shelf box, while a stack
  * column still takes its next level on top (`validDrop`). A move that locks a box can no longer be undone, so the
  * dead-end check fully checks it.
+ *
+ * Conveyor belts (docs/CONVEYOR.md): a belt's input is a shelf of its own (one level, «libre»), loaded like any shelves
+ * column; its end exit is a shelf too, never lifted and never reached by the forklift: it is filled through its input.
+ * One move puts a box on the input and the belt carries it on, so in the model it lands straight in the end exit, which
+ * is loaded from the input's front cell (`feeds` / `fedBy`, `front`); while the end exit is full the box stays on the
+ * input (parking). The belt's cells are solid. Until the button of the next milestones a wrong box in an end exit could
+ * never come back, so the model sends down a belt only the end exit's destined box (H1: the one move it leaves out;
+ * docs/CONVEYOR.md «Reglas»), and every move it makes can still be undone or fully checked.
  */
 import {
   COLOR_IDS,
@@ -52,6 +60,7 @@ import {
 } from '../../core/types';
 import { assignBoxes, criteriaOf, levelDestinies, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
 import { STORAGE_SKINS, hasStorage, slotIdOf, storageColumnsOf, type StorageColumnRef } from '../../core/storage';
+import { conveyorsOf } from '../../core/conveyors';
 
 /* ------------------------------------------------------------------ */
 /* Grid model                                                          */
@@ -140,6 +149,12 @@ export class LevelGrid {
   readonly inward: Int8Array;
   /** Per pose (cell * 4 + dir): the storage column (in `columns`) it loads, on its front cell facing in; else -1. */
   readonly columnAtPose: Int32Array;
+  /**
+   * Conveyor belts (docs/CONVEYOR.md), per position: on a belt's input, the position of its end exit (`feeds`); on an
+   * end exit, its input's (`fedBy`, which also gives it the input's `front` and `inward`); -1 elsewhere.
+   */
+  readonly feeds: Int32Array;
+  readonly fedBy: Int32Array;
   /** Neighbour of each cell in each direction, indexed like a pose (cell * 4 + dir); -1 outside the warehouse. */
   readonly links: Int32Array;
   /** Per position: its storage column (index in `columns`), -1 on a floor cell. */
@@ -177,6 +192,8 @@ export class LevelGrid {
     this.inward = new Int8Array(this.posCount).fill(-1);
     this.columnIndex = new Int32Array(this.posCount).fill(-1);
     this.columnAtPose = new Int32Array(this.cellCount * 4).fill(-1);
+    this.feeds = new Int32Array(this.posCount).fill(-1);
+    this.fedBy = new Int32Array(this.posCount).fill(-1);
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
     for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
@@ -193,7 +210,8 @@ export class LevelGrid {
       // A column inside the map is solid for the body and the floor boxes; one beyond a wall lies off the map.
       if (this.inMap(ref.cell.x, ref.cell.z)) this.solid[this.index(ref.cell.x, ref.cell.z)] = 1;
       this.columnAtCell.set(`${ref.cell.x},${ref.cell.z}`, c);
-      this.columnAtPose[front * 4 + inward] = c;
+      // A belt's end exit is never loaded from its own front (its belt's last cell): see the belts below.
+      if (ref.unit.access.kind !== 'belt') this.columnAtPose[front * 4 + inward] = c;
       for (const pos of positions) {
         this.kind[pos] = KIND_OF[support];
         this.front[pos] = front;
@@ -221,6 +239,19 @@ export class LevelGrid {
         ref.cues.forEach((_, lvl) => this.slotPos.set(slotId(lvl), pos));
       }
     });
+    // Conveyor belts: each end exit is filled through its input (loaded from the input's front cell, facing in), and
+    // the belt's cells are solid.
+    const columnOfUnit = (id: string) => columns.findIndex((col) => col.ref.unit.id === id);
+    for (const belt of conveyorsOf(level)) {
+      const input = columns[columnOfUnit(belt.input)]?.positions[0];
+      const output = columns[columnOfUnit(belt.output)]?.positions[0];
+      if (input === undefined || output === undefined) continue;
+      this.feeds[input] = output;
+      this.fedBy[output] = input;
+      this.front[output] = this.front[input];
+      this.inward[output] = this.inward[input];
+      for (const cell of belt.cells) if (this.inMap(cell.x, cell.z)) this.solid[this.index(cell.x, cell.z)] = 1;
+    }
     level.zones.forEach((zone, i) => {
       const destined = destinies?.zones[i];
       this.steps[this.index(zone.x, zone.z)] = destined ? [{ color: destined.color, symbol: destined.symbol }] : zoneSteps(zone);
@@ -366,9 +397,9 @@ export function lockedAt(grid: LevelGrid, stacks: Stacks, pos: number): boolean 
   return stacks[pos].length === 1 && meets(steps[0], boxOfCode(stacks[pos]));
 }
 
-/** The top box of `pos` can be lifted: there is one and it is not locked (lockedAt). */
+/** The top box of `pos` can be lifted: there is one, it is not locked (lockedAt) and not in a belt's end exit. */
 export function canLift(grid: LevelGrid, stacks: Stacks, pos: number): boolean {
-  return stacks[pos].length > 0 && !lockedAt(grid, stacks, pos);
+  return stacks[pos].length > 0 && grid.fedBy[pos] < 0 && !lockedAt(grid, stacks, pos);
 }
 
 /** Boxes on a zone that already fit it from the floor up (the bottom one accepted, the rest its recipe's colors). */
@@ -590,6 +621,7 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
   const capacity = grid.capacity;
   const columns = grid.columns;
   const columnAtPose = grid.columnAtPose;
+  const feeds = grid.feeds;
   /** The pose's box is inside a storage column: on its front cell facing in (only a start pose: just lifted out of it). */
   const inside = (pose: number) => columnAtPose[pose] >= 0;
   const drops = new Map<number, number[]>();
@@ -635,9 +667,15 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
         else if (stackable(ahead)) record(ahead, front, pose, front * 4 + dir);
         else {
           // Facing a storage column from behind its front cell: one step on loads it, into any empty level of a shelves
-          // column (the forks choose the level) or on top of a stack column with room.
+          // column (the forks choose the level) or on top of a stack column with room; through a belt's input, also into
+          // its end exit, where the belt carries the box on (validDrop says which of the two the box takes).
           const column = columnAtPose[front * 4 + dir];
-          if (column >= 0) for (const pos of columns[column].positions) if (stacks[pos].length < capacity[pos]) record(pos, front, pose, front * 4 + dir);
+          if (column >= 0)
+            for (const pos of columns[column].positions) {
+              if (stacks[pos].length < capacity[pos]) record(pos, front, pose, front * 4 + dir);
+              const exit = feeds[pos];
+              if (exit >= 0 && stacks[exit].length < capacity[exit]) record(exit, front, pose, front * 4 + dir);
+            }
         }
       }
       for (let turn = 1; turn < 4; turn += 2) {
@@ -771,12 +809,22 @@ export interface Move {
 }
 
 /**
- * A drop the rules allow: not back where it was, nowhere full (a floor stack, a shelf, a stack column: capacity), not
- * into a shelf / plant / storage cell of the map, nor onto a locked zone box (by support: a shelf holds one box, and a
- * stack column takes its next level on a locked box).
+ * A drop of `box` (a code) the rules allow: not back where it was, nowhere full (a floor stack, a shelf, a stack column:
+ * capacity), not into a shelf / plant / storage cell of the map, nor onto a locked zone box (by support: a shelf holds
+ * one box, and a stack column takes its next level on a locked box). Conveyor belts (docs/CONVEYOR.md): a box set down
+ * on an empty input rides on into its end exit while that is free, so it lands there, and only the end exit's destined
+ * box is sent (a wrong one could never come back before the button: the one move the model leaves out); with the end
+ * exit full it stays on the input.
  */
-function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: number): boolean {
+export function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: number, box: string): boolean {
   if (drop === from || drop < 0 || drop >= grid.posCount || lifted[drop].length >= grid.capacity[drop]) return false;
+  const input = grid.fedBy[drop];
+  if (input >= 0) {
+    const steps = grid.steps[drop];
+    return lifted[input].length === 0 && steps !== null && meets(steps[0], boxOfCode(box));
+  }
+  const exit = grid.feeds[drop];
+  if (exit >= 0) return lifted[exit].length >= grid.capacity[exit];
   return grid.isStorage(drop) || (grid.solid[drop] === 0 && !lockedAt(grid, lifted, drop));
 }
 
@@ -917,7 +965,7 @@ export function greedySearch(grid: LevelGrid, stacks0: Stacks, forklift: number,
       if (floorFrom) occupancy[from] = stacks[from].length > 0 ? 0 : -1;
       const shift = regionShift(grid, occupancy, region, lowest, from);
       for (const [drop, cells] of carrySearch(grid, occupancy, stacks, starts).drops) {
-        if (!validDrop(grid, stacks, from, drop)) continue;
+        if (!validDrop(grid, stacks, from, drop, box)) continue;
         const placing = extendsZone(grid, stacks, drop, box);
         if (!options.allowParking && !placing) continue;
         const layout = moveInLayout(node.layout, from, drop, box);
@@ -1579,7 +1627,7 @@ class MoveSearch {
         const fromTop = rest.length > prefixRest ? rest[rest.length - 1] : null;
         const fromOpen = stepsFrom && prefixRest === rest.length && rest.length < stepsFrom.length ? stepsFrom[rest.length] : null;
         for (const [drop, cells] of carrySearch(grid, occupancy, stacks, pickupStarts(grid, region, from)).drops) {
-          if (!validDrop(grid, stacks, from, drop)) continue;
+          if (!validDrop(grid, stacks, from, drop, box)) continue;
           const extendsIt = extendsZone(grid, stacks, drop, box);
           const placed = placedLifted + (extendsIt ? 1 : 0);
           const sum = sumLifted + (extendsIt ? 0 : this.costOf(box, drop));
@@ -1793,7 +1841,7 @@ function applyMove(grid: LevelGrid, stacks: Stacks, forklift: number, move: Move
   const lifted = lift(stacks, from);
   if (from < grid.cellCount) occupancy[from] = lifted[from].length > 0 ? 0 : -1;
   const cells = carrySearch(grid, occupancy, lifted, pickupStarts(grid, region, from)).drops.get(drop);
-  if (!cells || !validDrop(grid, lifted, from, drop) || (after !== undefined && !cells.includes(after))) return null;
+  if (!cells || !validDrop(grid, lifted, from, drop, stacks[from].slice(-1)) || (after !== undefined && !cells.includes(after))) return null;
   lifted[drop] += stacks[from].slice(-1);
   return { stacks: lifted, forklift: after ?? cells[0] };
 }
@@ -1863,7 +1911,7 @@ export function deadEnds(level: LevelData, options: DeadEndOptions = {}): DeadEn
       // Poses from which the box can be carried back onto `from`, leaving the forklift in this state's region.
       const back = carryBackTo(grid, occupancy, lifted, from, state.region);
       for (const [drop, cells] of drops) {
-        if (!validDrop(grid, lifted, from, drop)) continue;
+        if (!validDrop(grid, lifted, from, drop, box)) continue;
         const next = lifted.slice();
         next[drop] += box;
         const floorDrop = drop < grid.cellCount;

@@ -1,5 +1,5 @@
 import type { Box3, BufferGeometry, Group, Material } from 'three';
-import type { ColorId, LevelData, LevelStorage, StorageSlotState, WallSide, ZoneCriteria } from '../../core/types';
+import type { ColorId, GameSnapshot, LevelData, LevelStorage, StorageSlotState, WallSide, ZoneCriteria } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import type { ZoneMark } from '../builders/zone';
 import type { FitBox } from '../CameraRig';
@@ -100,6 +100,16 @@ export interface StorageUnitView {
    * shelf ghosts with it. Asked for the levels of a shelves support only (a box in a stack ghosts as a stack).
    */
   hidesActorAt(slotId: string): boolean;
+  /**
+   * Seconds between one of its levels getting satisfied and its burst (default: the drop glide, DROP_GLIDE_SEC, so a
+   * dropped box lands first). A conveyor belt's end exit gets its box sliding in, already there: 0.
+   */
+  readonly landDelay?: number;
+  /**
+   * Every frame, for a unit that moves on its own (a conveyor belt: its stripes slide while it runs, by
+   * snapshot.conveyors); absent for the static ones.
+   */
+  animate?(snapshot: GameSnapshot, dt: number): void;
 }
 
 /** What LevelView lends every skin's builder: the level, its theme and resources, and a few shared looks. */

@@ -195,17 +195,18 @@ Su fila dice `sound: 'metal'`:
   y oeste 2-4). El registro lo carga aparte (`SPECIAL_LEVELS`, `getSpecialLevel(BENCHMARK_ID)`; docs/LEVELS.md): nunca
   entra en `LEVELS` ni en ProgressStore (tiempos y desbloqueos van por los ids de `LEVELS`). Contenido y cadena de
   deducción: sus líneas `nota:`; lo comprueban `benchmark.test.ts` y `benchmarkPlayable.test.ts` (piloto automático a
-  60 y 20 fps con F / V y marcha atrás). Reúne las estanterías y un camión (docs/DOCKS.md «Nivel Benchmark»): 12 cajas,
-  12 objetivos (3 zonas + 6 huecos con pista + 3 niveles de camión con pista), un solo reparto.
+  60 y 20 fps con F / V y marcha atrás). Reúne las estanterías, un camión (docs/DOCKS.md «Nivel Benchmark») y una
+  cinta transportadora (docs/CONVEYOR.md): 13 cajas, 13 objetivos (3 zonas + 6 huecos con pista + 3 niveles de camión con
+  pista + la salida final de la cinta), un solo reparto.
 - Sus estanterías: **R** (frente sur, contra el muro norte, mira a la cámara) y **S** (frente norte, en medio, le da la
   espalda: sus pistas se leen por detrás o girando con Q / E, y se carga rodeándola), de 2 columnas de 3 huecos, con una
   estantería de madera a una casilla de cada una para comparar. La trampa (el menta ◆ en el hueco «menta», que es del
   «◆» de encima), el hueco equivocado (el menta ▲ en el «◆»: se cambian aparcando uno en el hueco libre de arriba) y un
   coral ◆ aparcado arriba en S.
-- Medido (`npm run levels -- benchmark`, 2026-10-01): movimientos 14 (exacto), extra 2, bloqueos 4, trampas 12,
-  repartos 1, huecos 12 (6 con pista, 6 libres), camión 4 (3 con pista, 1 libre), estrechas 8, libre 78 %, callejones 0
-  en 60 estados; sus 8 objetivos `dificultad:` se cumplen. Mínimo del contador de movimientos: 14
-  (`levelMinimums.json`).
+- Medido (`npm run levels -- benchmark`, 2026-10-01, ya con la cinta): movimientos 15 (exacto), extra 2, bloqueos 5,
+  trampas 13, repartos 1, huecos 12 (6 con pista, 6 libres), camión 4 (3 con pista, 1 libre), cinta 1, estrechas 8,
+  libre 75 %, ambiguas 12, callejones 0 en 60 estados; sus 9 objetivos `dificultad:` se cumplen. Mínimo del contador
+  de movimientos: 15 (`levelMinimums.json`). Antes de la cinta: 14 movimientos, bloqueos 4, trampas 12, libre 78 %.
 - **Entrada**: botón «Benchmark» del pie del título, junto al interruptor, solo con el Modo prueba encendido
   (`GameActions.startBenchmark()`; sin Modo prueba la acción no hace nada). Es un botón normal: Tab lo alcanza y
   Enter / Espacio lo pulsan. En el título el mando solo tiene A / Start = «Continuar» (igual que para los puntos de

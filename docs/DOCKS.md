@@ -401,10 +401,10 @@ Su fila dice `sound: 'wood'` (`audio.test.ts`):
   nivel de encima: se aparca, en el suelo o en el nivel libre de la columna 2 una vez cargado su amarillo ✚; entra el
   azul ✚, queda fijo, y el amarillo ■ va encima de él). Trampas del camión: el azul ▲ y el azul ■ encajan en «azul» (y
   el azul ■ en «■»), pero no brillan: zumban y se pueden sacar.
-- Medido: 14 movimientos (exacto, el mismo plan desde que F / V van también en el camión: aparcar en el nivel libre o
-  en el suelo es un movimiento igual), extra 2 (el cambio de las mentas y la carga equivocada), `camion` 4 (3 con
-  pista, 1 libre). El piloto, a 60 y 20 fps, pulsa F / V una vez en el camión (7 en las estanterías) y saca marcha atrás
-  la carga equivocada (`benchmarkPlayable.test.ts`).
+- Medido: 15 movimientos (exacto; 14 hasta que llegó la cinta, docs/CONVEYOR.md, con una caja más; aparcar en el
+  nivel libre o en el suelo es un movimiento igual), extra 2 (el cambio de las mentas y la carga equivocada), `camion` 4
+  (3 con pista, 1 libre). El piloto, a 60 y 20 fps, pulsa F / V una vez en el camión (7 en las estanterías) y saca
+  marcha atrás la carga equivocada (`benchmarkPlayable.test.ts`).
 
 ## Ajustes
 

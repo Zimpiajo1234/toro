@@ -356,6 +356,8 @@ export class LevelView {
       this.slotWasSatisfied[i] = slot.satisfied;
     }
     for (let i = 0; i < this.bursts.length; i++) this.bursts[i].update(dt);
+    // Units that move on their own (a conveyor belt's stripes while it runs).
+    for (let i = 0; i < this.units.length; i++) this.units[i].animate?.(snapshot, dt);
 
     // The preview takes the carried box's zone tone when it would land on a zone that takes that box, on a shelf whose
     // cue fits it, or on a stack level (a truck bed's) that would take it now: loadable, its cue fitting (hint.storage
@@ -640,7 +642,8 @@ export class LevelView {
     const tone = slot.destined ? this.sparkleTones.get(slot.destined.color) : undefined;
     if (!tone || !unit) return;
     const p = unit.burstAt(slot, cameraYaw, this.burstPlace);
-    this.takeBurst()?.play('slot', p.x, p.y, p.z, p.yaw, tone, DROP_GLIDE_SEC, p.halfW, p.halfH);
+    // As the box lands: a dropped box glides first; one a belt brings is already there (the unit's own delay).
+    this.takeBurst()?.play('slot', p.x, p.y, p.z, p.yaw, tone, unit.landDelay ?? DROP_GLIDE_SEC, p.halfW, p.halfH);
   }
 
   /** A stack zone was just completed: its boxes glow one after another, bottom → top, once the last has landed. */

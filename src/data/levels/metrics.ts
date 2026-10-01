@@ -5,6 +5,7 @@
 import type { LevelBox, LevelData, StorageSkin, ZoneCriteria } from '../../core/types';
 import { assignBoxes, assignmentsOf, criteriaOf, meets, sortableOf, targetsOf, usesSymbols, type Sortable } from '../../core/sorting';
 import { STORAGE_SKINS, STORAGE_SKIN_ORDER, hasStorage, storageColumnsOf, storageOf, storageSlotsOf, type StorageSlotRef } from '../../core/storage';
+import { conveyorsOf } from '../../core/conveyors';
 import { targetHolds, targetRefuted, type DifficultyMetric, type DifficultyTarget, type MetricRange } from '../difficulty';
 import {
   LevelGrid,
@@ -65,6 +66,11 @@ export interface LevelMetrics {
    * (storageCounts), reported for this one.
    */
   trucks: { trucks: number; columns: number; levels: number; cued: number; free: number; loaded: number };
+  /**
+   * «cinta»: the conveyor belts (docs/CONVEYOR.md): how many, their belt cells (all of them, and the floor ones), and
+   * their end exits (those with a cue are targets; the «libre» ones keep any box).
+   */
+  belts: { belts: number; cells: number; floor: number; exits: number; cued: number };
   /**
    * «callejones»: states the forklift can reach from which the level can no longer be finished, explored around a
    * shortest plan (solver.deadEnds); null when not measured.
@@ -128,7 +134,9 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     ? { lower: mustMove, upper: null, exact: false, plan: null, unsolvable: false, states: 0 }
     : minMoves(level, options);
   const blockers = blockersOf(level, grid);
-  const { rack, truck } = storageCounts(level, grid);
+  const { rack, truck, beltOut } = storageCounts(level, grid);
+  const belts = conveyorsOf(level);
+  const beltCells = belts.flatMap((belt) => belt.cells);
   return {
     id: level.id,
     order: level.order,
@@ -152,6 +160,13 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
     sortings: hasStorage(level) ? targetAssignments(level) : usesSymbols(level) ? distinctSortings(level) : null,
     slots: { total: rack.levels, cued: rack.cued, free: rack.levels - rack.cued },
     trucks: { trucks: truck.units, columns: truck.columns, levels: truck.levels, cued: truck.cued, free: truck.levels - truck.cued, loaded: truck.loaded },
+    belts: {
+      belts: belts.length,
+      cells: beltCells.length,
+      floor: beltCells.filter((cell) => cell.piece === 'suelo').length,
+      exits: beltOut.units,
+      cued: beltOut.cued,
+    },
     deadEnds:
       options.deadEndStates === undefined
         ? null
@@ -195,6 +210,8 @@ export function metricRange(metrics: LevelMetrics, metric: DifficultyMetric): Me
       return exact(metrics.slots.total);
     case 'camion':
       return exact(metrics.trucks.levels);
+    case 'cinta':
+      return exact(metrics.belts.belts);
   }
 }
 

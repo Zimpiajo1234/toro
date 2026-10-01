@@ -5,7 +5,9 @@ almacenaje: un solo modelo en los datos del nivel (`LevelData.storage`), un solo
 métricas, el piloto y el render, y las mismas reglas en toda unidad (la horquilla por teclas, los niveles «libre»). Este
 documento es la referencia: el modelo, sus reglas, los contratos por capa, cómo añadir un aspecto y la red de
 seguridad. Lo propio de cada aspecto (dibujo, medidas, detalles de su acceso, el Benchmark) está en docs/RACKS.md
-(estanterías almacenables) y docs/DOCKS.md (muelles de carga).
+(estanterías almacenables), docs/DOCKS.md (muelles de carga) y docs/CONVEYOR.md (la cinta transportadora: sus dos
+puntas son los aspectos `beltIn` y `beltOut`, con el acceso nuevo `belt`, el primer aspecto añadido sobre el modelo
+común).
 
 Ojo con el nombre: `src/storage/` es el progreso guardado (ProgressStore), nada que ver con esto. El almacenaje vive en
 `src/core/storage.ts` (sobre la geometría de sus accesos: `core/racks.ts` y `core/docks.ts`), `src/logic/storageAccess.ts`
@@ -40,33 +42,41 @@ Decisiones (2026-09-30):
 
 ```ts
 // core/types.ts. LevelData.storage?: LevelStorage[] (ausente sin almacenaje; su orden: regla 12).
-type StorageSkin = 'rack' | 'truck';                // el aspecto: dibujo + propiedades declaradas
+type StorageSkin = 'rack' | 'truck' | 'beltIn' | 'beltOut';   // el aspecto: dibujo + propiedades declaradas
 type StorageSupport = 'shelves' | 'stack';          // baldas: cada nivel aparte · pila: de abajo arriba
 type StorageAccess =
-  | { kind: 'front'; facing: Facing }               // estantería: desde la casilla de delante; su celda, sólida
-  | { kind: 'door'; wall: WallSide };               // camión: desde su casilla de puerta; su celda, tras el muro
+  | { kind: 'front'; facing: Facing }               // estantería, entrada de cinta: desde la casilla de delante; su celda, sólida
+  | { kind: 'door'; wall: WallSide }                // camión: desde su casilla de puerta; su celda, tras el muro
+  | { kind: 'belt'; facing: Facing };               // salida de cinta: la carretilla nunca; la llena su cinta (docs/CONVEYOR.md)
 interface LevelStorage {
-  id: string;                                       // r1, r2… / t1, t2… (idPrefix + nº dentro de su aspecto)
+  id: string;                                       // r1… / t1… / e1… / s1… (idPrefix + nº dentro de su aspecto)
   skin: StorageSkin;
   x: number; z: number;                             // primera casilla: de la estantería / primera de puerta
   w: number;                                        // columnas, una por casilla
   access: StorageAccess;
   columns: (ZoneCriteria | null)[][];               // por columna, de abajo arriba; null = «libre» (nunca `{}`)
 }
-type FrontUnit; type DoorUnit;                      // una unidad de ese acceso (isFrontUnit / isDoorUnit)
+type FrontUnit; type DoorUnit; type BeltUnit;       // una unidad de ese acceso (isFrontUnit / isDoorUnit / isBeltUnit)
 
 // core/storage.ts: una fila por aspecto en cada tabla; el tipo exige las dos.
 const STORAGE_SKINS = {
-  rack:  { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r',
-           chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
-  truck: { support: 'stack', maxLevels: 2, maxColumns: 3, access: 'door', idPrefix: 't',
-           chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
+  rack:    { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r',
+             chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
+  truck:   { support: 'stack', maxLevels: 2, maxColumns: 3, access: 'door', idPrefix: 't',
+             chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
+  beltIn:  { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'front', idPrefix: 'e',
+             chars: 'ADFJ', fillToMax: false, sound: 'belt' },
+  beltOut: { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'belt', idPrefix: 's',
+             chars: 'BEGK', fillToMax: false, sound: 'belt' },
 };
-const STORAGE_SKIN_ORDER = Object.keys(STORAGE_SKINS);   // ['rack', 'truck']: el orden de la regla 12
+const STORAGE_SKIN_ORDER = Object.keys(STORAGE_SKINS);   // ['rack', 'truck', 'beltIn', 'beltOut']: la regla 12
 const STORAGE_WORDS = {                                   // cómo lo nombran los textos
-  rack:  { name: 'estantería', the: 'la estantería', …, level: 'hueco', en: { list: 'racks', one: 'rack', … } },
-  truck: { name: 'camión', the: 'el camión', …, level: 'nivel', en: { list: 'trucks', one: 'truck', … } },
+  rack:    { name: 'estantería', the: 'la estantería', …, level: 'hueco', en: { list: 'racks', one: 'rack', … } },
+  truck:   { name: 'camión', the: 'el camión', …, level: 'nivel', en: { list: 'trucks', one: 'truck', … } },
+  beltIn:  { name: 'cinta entrada', the: 'la entrada de la cinta', …, en: { list: 'beltInputs', one: 'belt input', … } },
+  beltOut: { name: 'cinta final', the: 'la salida final de la cinta', …, en: { list: 'beltExits', one: 'belt exit', … } },
 };
+// Las cintas en sí: LevelData.conveyors (docs/CONVEYOR.md), que enlaza una entrada y una salida por id.
 // fillToMax: cada columna se completa con «libre» hasta min(maxLevels, limit) (validateLevel; la forma canónica no
 // escribe esos «libre» sin caja). chars: las letras que reparte la forma canónica. sound: el de dejar y coger.
 // La geometría, una para todos: facingOf(unit), cellOf(unit, col), frontOf(unit, col), slotIdOf(unitId, col, nivel),
@@ -124,6 +134,11 @@ enganche (una estantería antes que un camión). La horquilla va por teclas en t
 | Rumbo fijo | con la carga dentro del hueco abierto | con la carga pasada la línea del muro; los dos, una sola medida en vivo (`loadInOpening`: la columna enganchada, abierta, y el borde de la carga `INSIDE_MARGIN` pasada su cara) |
 | Celda | dentro del mapa, sólida para el cuerpo y las cajas del suelo; sus cajas no chocan solas | fuera del mapa (`z = -1` / `x = -1`); la casilla de puerta es suelo; sus cajas, una pila como la del suelo |
 
+El acceso **`belt`** (la salida final de una cinta, docs/CONVEYOR.md) es una fila con `engages: false`: la carretilla
+nunca lo encara ni lo mantiene (`refreshStorageAim` lo salta), no tiene abertura para la carga y su celda es un estático
+de `CollisionWorld`; su hueco está sellado (`LevelGrid.seal`): solo lo llena su cinta. Su geometría (`cellOf` /
+`frontOf` / `facingOf`) es la de `front`. La entrada de una cinta (`beltIn`) usa `front` tal cual.
+
 ## Reglas
 
 1. **Unidad**: una fila recta de 1 a `maxColumns` columnas (una por casilla), cada una de 1 a `maxLevels` niveles; en
@@ -157,11 +172,12 @@ enganche (una estantería antes que un camión). La horquilla va por teclas en t
     (`cueFits`), y si ninguno libre la toma, muy suave los ocupados que encajan sin brillar. Apagadas, nada. Nunca un
     «libre».
 11. **Ids** (estables: el modelo común no cambió ninguno): unidad = `idPrefix` + nº dentro de su aspecto, en orden de
-    leyenda; nivel = `unidad:columna:nivel` desde 0; una estantería y un camión nunca comparten id. Cajas `b1…`: las
-    del suelo, luego las de las unidades, unidad a unidad, columna a columna, de abajo arriba.
-12. **Orden de las unidades**: estanterías y luego camiones (aspecto a aspecto, en el orden de `STORAGE_SKINS`; dentro
-    de cada aspecto, el de la leyenda). Es el orden de los ids de caja, `targetsOf`, `snapshot` y las posiciones del
-    solver: cambiarlo cambia el plan del Benchmark.
+    leyenda (un carácter en varias casillas, en orden de lectura); nivel = `unidad:columna:nivel` desde 0; dos unidades
+    nunca comparten id. Cajas `b1…`: las del suelo, luego las de las unidades, unidad a unidad, columna a columna, de
+    abajo arriba.
+12. **Orden de las unidades**: estanterías, camiones, entradas y salidas de cinta (aspecto a aspecto, en el orden de
+    `STORAGE_SKINS`; dentro de cada aspecto, el de la leyenda). Es el orden de los ids de caja, `targetsOf`,
+    `snapshot` y las posiciones del solver: cambiarlo cambia el plan del Benchmark.
 13. **Movimientos**: coger y dejar en otro sitio = 1 (`snapshot.moves` = la métrica `movimientos`); dejarla donde estaba
     (el mismo nivel, o la misma casilla y altura) no cuenta.
 
@@ -264,7 +280,12 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
 - **UI / audio / game**: `UIState.storage` = `hasStorage` (la fila de F / V); `Game` publica esa bandera al cargar,
   cuenta F / V como primera entrada del cronómetro, deja sonar su clic (`ForkStepWatcher`) y da a cada evento su
   `matchKind` (`matchOf`, por `slotId`); el audio elige el sonido por `STORAGE_SKINS[skin].sound` (`metal`: `slotDrop`
-  / `slotLift`; `wood`: `truckDrop` / `pickup`).
+  / `slotLift`; `wood`: `truckDrop` / `pickup`; `belt`: `beltDrop` / `pickup`).
+- **Cintas** (docs/CONVEYOR.md), encima de lo de arriba: `core/conveyors.ts` (`conveyorsOf`, `beltPathOf`,
+  `conveyorOfUnit`…); `LevelData.conveyors` (asciiLevel y validateLevel); `logic/conveyor.ts` (`ConveyorSystem`, desde
+  `GameState.update`; `snapshot.conveyors`; eventos `beltStarted` / `beltDelivered` / `beltBlocked`) y
+  `LevelGrid.seal`; en el solver, `feeds` / `fedBy` y `validDrop`; en el render, `animate` y `landDelay` (opcionales
+  de `StorageUnitView`).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -324,9 +345,15 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   13842 frames a 60 fps y 5056 a 20, 8 pulsaciones de F / V (7 en las estanterías y 1 en el camión); nivel de prueba 9
   movimientos, 6684 y 2512 frames, 5 pulsaciones (3 + 2). Un cambio de 0,1 en el fondo del bolsillo de la puerta
   (`DOOR_POCKET`) ya cambia los frames de los dos.
+- **Regenerada con la cinta** (H1 de docs/CONVEYOR.md, 2026-10-01): el Benchmark ganó una cinta (unidades `e1` / `s1`
+  y sus huecos), una caja (el coral ✚, `b9`: las de las unidades pasan de `b9–b12` a `b10–b13`) y un objetivo (13). Su
+  sección `conveyors` y `belts` en `metrics` y `start` solo salen en un nivel con cintas. Medido: 15 movimientos
+  (exacto), bloqueos 5, trampas 13, ambiguas 12, libre 75 %; el plan aparca ahora junto a la cinta (9,0) / (9,1) en vez
+  de en (10,8) (otro plan de 15 igual de corto); piloto 14960 / 5466 frames, la entrega de la cinta en el registro
+  («b9 e1:0:0 → s1:0:0 ok 8/13 (cinta)»). El nivel de prueba de los camiones no cambió.
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
-  una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 8/8, 14 movimientos,
-  repartos 1, callejones 0; el nivel de prueba no sale); `npm run levels -- --minimos --check`; la caracterización
+  una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
+  repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización
   intacta.
 
 ## Nivel de prueba: `src/data/levels/pruebas/tres-camiones.level`
@@ -426,9 +453,9 @@ huecos y plataformas aparte en el solver, `buildRacks` / `buildTrucks`, constant
    target (…)`, `a level needs at least one zone or rack slot with a cue`, `…in a level with storage racks floor stacks
    only park boxes`, `…is a wall, a shelf, a plant or another rack`). Con dos aspectos basta; un tercero traería sus
    casos en `explainValidation`.
-6. **Una métrica por aspecto**: el recuento es uno (`storageCounts`), pero `huecos` es la de la estantería y `camion` la
-   del camión (`DifficultyMetric`, `metricRange`, fila y columna del informe). Un aspecto nuevo se cuenta solo; para
-   salir en `npm run levels` o en `dificultad:` trae su métrica.
+6. **Una métrica por aspecto**: el recuento es uno (`storageCounts`), pero `huecos` es la de la estantería, `camion` la
+   del camión y `cinta` la de las cintas (`DifficultyMetric`, `metricRange`, fila y columna del informe). Un aspecto
+   nuevo se cuenta solo; para salir en `npm run levels` o en `dificultad:` trae su métrica.
 7. **La vista previa, en dos ramas por soporte**: `LevelView` distingue «sobre una balda» (el suelo de la balda, la
    escala del hueco, el tono con `cueFits`) de «en una pila» (`loadable` y `cueFits`), y `takesNow` mira `occupiedBy`
    en las baldas y `loadable` en las pilas. Un soporte nuevo traería su rama o una propiedad más en `SUPPORT_LOOK`;
@@ -437,5 +464,5 @@ huecos y plataformas aparte en el solver, `buildRacks` / `buildTrucks`, constant
    el Benchmark y el nivel de prueba lo comprueban en su test con `deadEnds`.
 9. **Nombres de aspecto en lo que es de un acceso o de un soporte**: la geometría de `front` se llama `rackCellOf` /
    `frontCellOf` y la de `door` `truckCellOf` / `truckFrontOf` / `TRUCK_FACING`; `RACK_WALL` (collision) es de toda
-   abertura `front`, y `RACK_*_LAMBDA` / `RACK_PITCH_SHARE` (`ForkliftView`) del soporte `shelves`. Con un solo aspecto
-   por acceso da igual; un segundo aspecto de un mismo acceso los compartiría con esos nombres.
+   abertura `front`, y `RACK_*_LAMBDA` / `RACK_PITCH_SHARE` (`ForkliftView`) del soporte `shelves`. Ya pasa: la
+   entrada de una cinta (`beltIn`, acceso `front`) y su salida (`belt`) usan esa geometría con esos nombres.

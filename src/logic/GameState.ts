@@ -17,6 +17,7 @@ import { FACING_X, columnFrame, inwardHeading } from '../core/racks';
 import { hasStorage, storageSlotsOf } from '../core/storage';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, pointRectDistance } from './collision';
+import { CONVEYOR, ConveyorSystem, type ConveyorHost } from './conveyor';
 import { forkRiseRate } from './forkRise';
 import { ForkliftController, MOVE_EPSILON } from './forklift';
 import { LevelGrid } from './grid';
@@ -114,6 +115,13 @@ export class GameState {
    * snapshot.moves (see countMove).
    */
   private readonly origin = { x: -1, z: -1, level: 0, slotId: null as string | null };
+  /** Conveyor belts (docs/CONVEYOR.md; none in most levels): a box set down on an input rides into its end exit. */
+  private readonly belts: ConveyorSystem;
+  /** What the belts call back (built once: nothing allocated per frame). */
+  private readonly beltHost: ConveyorHost = {
+    started: (belt) => this.beltStarted(belt),
+    arrived: (belt, box) => this.deliver(belt, box),
+  };
 
   constructor(level: LevelData, config: GameConfig = GAME_CONFIG) {
     this.config = config;
@@ -208,12 +216,14 @@ export class GameState {
     this.motion.z = forklift.pos.z;
     this.motion.heading = forklift.heading;
     this.interaction = new Interaction(level, config, forklift, boxes, zones, this.grid, this.world, this.aim);
+    this.belts = new ConveyorSystem(level, this.grid);
     this.snapshot = {
       level,
       forklift,
       boxes,
       zones,
       storageSlots,
+      conveyors: this.belts.states,
       hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, storage: null },
       completed: false,
       progress: { satisfied: 0, total: zones.length + storageSlots.filter((slot) => slot.accepts !== null).length },
@@ -270,6 +280,9 @@ export class GameState {
     if (this.grid.stackLimit > 1) this.trackMotion(step, driving ? throttle : moving ? this.moveThrottle(moveX, moveZ) : 0);
     const f = snap.forklift;
     f.forkLift = approach(f.forkLift, f.carrying ? 1 : 0, this.config.forklift.forkLiftSpeed * step);
+    // Conveyor belts: a settled box starts riding, a riding one moves on, one that arrives rests in its end exit (which
+    // may complete the level). Before the hint, which sees an input free again at once.
+    if (this.belts.count > 0) this.belts.update(step, snap.boxes, this.beltHost);
     this.refreshHint();
     this.stepForkHeight(step);
     this.refreshLoadPassage();
@@ -453,6 +466,14 @@ export class GameState {
     this.refreshLoadPassage();
     this.refreshStoragePassage();
     this.countMove(box);
+    // A belt's input (docs/CONVEYOR.md): the box rides on into the end exit, held out of reach until it gets there; with
+    // the end exit full it stays here instead, pickable again, with the soft buzz (beltBlocked).
+    const belt = this.belts.atInput(column);
+    const waits = belt >= 0 && this.grid.slotBox(this.belts.outputSlotOf(belt)) >= 0;
+    if (belt >= 0 && !waits) {
+      this.grid.seal(firstSlot + box.level, true);
+      this.belts.load(belt, index, box.id);
+    }
 
     const progress = this.recountProgress();
     const drop: BoxDropped = {
@@ -472,7 +493,56 @@ export class GameState {
     // level below that is not satisfied); «libre» slots never.
     if (state.accepts !== null && !state.satisfied) drop.wrongTarget = true;
     this.emit(drop);
+    if (waits) this.emit({ type: 'beltBlocked', conveyorId: snap.conveyors[belt].id, boxId: box.id });
     if (progress.satisfied === progress.total) {
+      snap.completed = true;
+      this.emit({ type: 'levelComplete' });
+    }
+  }
+
+  /** Belt `belt` starts carrying its box (it has settled on the input): the run's length, for the audio's hum. */
+  private beltStarted(belt: number): void {
+    const state = this.snapshot.conveyors[belt];
+    this.emit({ type: 'beltStarted', conveyorId: state.id, boxId: state.boxId ?? '', runSec: this.belts.runSecOf(belt), rampSec: CONVEYOR.rampSec });
+  }
+
+  /**
+   * Belt `belt`'s box (`index`) reached its end exit (docs/CONVEYOR.md): out of the input's slot (unsealed, free for the
+   * next box) into the end exit's, where it rests for good (a belt's end exit is never picked). Its slot is satisfied
+   * only by its destined box, which locks there; any other box on a cued end exit is a wrong target (the soft buzz).
+   * No box move: the drop on the input was counted. The last target satisfied completes the level, as a drop would.
+   */
+  private deliver(belt: number, index: number): void {
+    const snap = this.snapshot;
+    const box = snap.boxes[index];
+    const input = this.belts.inputOf(belt);
+    const output = this.belts.outputOf(belt);
+    this.grid.takeBox(input, 0);
+    this.grid.seal(this.belts.inputSlotOf(belt), false);
+    const { cell, firstSlot } = this.grid.columns[output];
+    box.level = this.grid.putBox(output, 0, index);
+    const state = snap.storageSlots[firstSlot + box.level];
+    box.cell = { x: cell.x, z: cell.z };
+    box.pos.x = state.pos.x;
+    box.pos.z = state.pos.z;
+    box.slotId = state.id;
+    this.refreshColumn(input);
+    this.refreshColumn(output);
+    const progress = this.recountProgress();
+    const delivered: Extract<GameEvent, { type: 'beltDelivered' }> = {
+      type: 'beltDelivered',
+      conveyorId: snap.conveyors[belt].id,
+      boxId: box.id,
+      slotId: state.id,
+      skin: state.skin,
+      correct: state.satisfied,
+      recipeLength: state.accepts !== null ? 1 : 0,
+      satisfiedCount: progress.satisfied,
+      total: progress.total,
+    };
+    if (state.accepts !== null && !state.satisfied) delivered.wrongTarget = true;
+    this.emit(delivered);
+    if (!snap.completed && progress.satisfied === progress.total) {
       snap.completed = true;
       this.emit({ type: 'levelComplete' });
     }
@@ -539,6 +609,8 @@ export class GameState {
     let depth = 0;
     for (const kind of STORAGE_ACCESS_ORDER) {
       const row = STORAGE_ACCESS[kind];
+      // A belt's end exit: only its belt fills it.
+      if (!row.engages) continue;
       let best = -1;
       let bestScore = Infinity;
       for (let c = 0; c < columns.length; c++) {
@@ -629,6 +701,8 @@ export class GameState {
     const aim = this.aim;
     const forkHeight = this.snapshot.forklift.forkHeight;
     for (let c = 0; c < columns.length; c++) {
+      // A belt's end exit never opens for the load (its cell is a static obstacle: CollisionWorld.fromLevel).
+      if (columns[c].access === 'belt') continue;
       if (columns[c].access === 'door') {
         let opens = false;
         if (load) {

@@ -86,7 +86,7 @@ describe('truck levels are playable with the real controls', () => {
     expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
     // The fork keys at the truck (no rack here): every press is there, one per level up.
     expect(out.controls.forkSteps).toBeGreaterThan(0);
-    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: out.controls.forkSteps });
+    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: out.controls.forkSteps, beltIn: 0, beltOut: 0 });
     const truckSlots = storageSlotsOf(lvl)
       .filter((s) => s.unit.skin === 'truck' && s.cue !== null)
       .map((s) => s.id);

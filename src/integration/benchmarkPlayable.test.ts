@@ -3,7 +3,8 @@
  * (src/data/levels/especiales/benchmark.level) with the real GameState and the real controls — slot levels with
  * InputFrame.forkStep (one press per slot, like F / V), loads backed out of slots, off the truck and out of the 1-cell
  * corridor with the reverse gear (S), the truck loaded through its door with its levels chosen by F / V too
- * (docs/STORAGE.md rule 9) — at 60 fps and at Game's worst dt (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
+ * (docs/STORAGE.md rule 9), the conveyor belt fed from its input (docs/CONVEYOR.md) — at 60 fps and at Game's worst dt
+ * (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
  * the destined one leaves its slot or truck level dark (a soft `wrongTarget`, never anything negative), and a box put
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
  */
@@ -18,13 +19,15 @@ import { autopilot, liveStacks } from './autopilot';
 
 const level = getSpecialLevel(BENCHMARK_ID)!;
 const grid = new LevelGrid(level);
-/** Every target: 3 zones, 6 slots with a cue, 3 truck levels. */
-const TARGETS = 12;
+/** Every target: 3 zones, 6 slots with a cue, 3 truck levels, the conveyor belt's end exit. */
+const TARGETS = 13;
 
 type Dropped = Extract<GameEvent, { type: 'boxDropped' }>;
 type Picked = Extract<GameEvent, { type: 'boxPicked' }>;
+type Delivered = Extract<GameEvent, { type: 'beltDelivered' }>;
 const drops = (events: readonly GameEvent[]) => events.filter((e): e is Dropped => e.type === 'boxDropped');
 const picks = (events: readonly GameEvent[]) => events.filter((e): e is Picked => e.type === 'boxPicked');
+const deliveries = (events: readonly GameEvent[]) => events.filter((e): e is Delivered => e.type === 'beltDelivered');
 /** The live storage slots of each skin (snapshot.storageSlots: rack slots, then truck levels). */
 const rackSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'rack');
 const truckSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'truck');
@@ -62,17 +65,32 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(out.controls.forkStepsAt.rack + out.controls.forkStepsAt.truck).toBe(out.controls.forkSteps);
     expect(onTruck.every((d) => d.zoneId === null && d.recipeLength === 1)).toBe(true);
     expect(onTruck.some((d) => d.level === 1 && d.correct)).toBe(true);
-    // Everything lit at the end: the last drop completes the last target.
-    expect(drops(out.events).at(-1)).toMatchObject({ correct: true, satisfiedCount: TARGETS, total: TARGETS });
-    // Each box placed on its destiny locks there: it is never picked up again, and every target is lit once.
-    const placed = drops(out.events).filter((d) => d.correct);
+    // Everything lit at the end: the last box placed (set down, or brought in by the belt) completes the last target.
+    const lit = out.events.filter((e): e is Dropped | Delivered => (e.type === 'boxDropped' || e.type === 'beltDelivered') && e.correct);
+    expect(lit.at(-1)).toMatchObject({ satisfiedCount: TARGETS, total: TARGETS });
+    // The conveyor belt (docs/CONVEYOR.md): the coral ✚ set down on its input rides into its end exit, which it lights;
+    // the drop counts as the move, the ride as none.
+    const [belt] = level.conveyors!;
+    const ride = deliveries(out.events);
+    expect(ride).toHaveLength(1);
+    expect(ride[0]).toMatchObject({ conveyorId: belt.id, slotId: `${belt.output}:0:0`, skin: 'beltOut', correct: true });
+    expect(ride[0]).not.toHaveProperty('wrongTarget');
+    const ontoBelt = drops(out.events).filter((d) => d.skin === 'beltIn');
+    expect(ontoBelt).toEqual([expect.objectContaining({ boxId: ride[0].boxId, slotId: `${belt.input}:0:0`, correct: false, recipeLength: 0 })]);
+    expect(ontoBelt[0]).not.toHaveProperty('wrongTarget'); // a belt's input is «libre»
+    const started = out.events.findIndex((e) => e.type === 'beltStarted');
+    expect(started).toBeGreaterThan(out.events.indexOf(ontoBelt[0]));
+    expect(out.events.indexOf(ride[0])).toBeGreaterThan(started);
+    // Each box placed on its destiny locks there: it is never picked up again, and every target is lit once (the end
+    // exit by its delivery).
+    const placed = [...drops(out.events).filter((d) => d.correct), ...ride.filter((d) => d.correct)];
     expect(placed).toHaveLength(TARGETS);
     for (const d of placed) {
       expect(d).not.toHaveProperty('wrongTarget');
       const after = out.events.slice(out.events.indexOf(d) + 1);
       expect(picks(after).some((p) => p.boxId === d.boxId), d.boxId).toBe(false);
     }
-    expect(out.events.some((e) => e.type === 'zoneReleased')).toBe(false);
+    expect(out.events.some((e) => e.type === 'zoneReleased' || e.type === 'beltBlocked')).toBe(false);
   });
 });
 

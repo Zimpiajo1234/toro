@@ -4,7 +4,8 @@
  * ./storageCharacterization.json (./storageCharacterization.ts says what each section holds). Phases 1–5 of the shared
  * storage model left it unchanged and phase 7 must too: when a phase renames an API, it ports storageCharacterization.ts,
  * never the JSON. Phase 6 (the rule changes) regenerated it on purpose, with the command in storageCharacterization.ts,
- * which runs the last test below instead of the comparisons.
+ * which runs the last test below instead of the comparisons; so did the conveyor belt's H1 (docs/CONVEYOR.md: the
+ * Benchmark gained a belt, its coral ✚ box and one target).
  */
 import { describe, expect, it } from 'vitest';
 import stored from './storageCharacterization.json';
@@ -41,16 +42,20 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
     });
   }
 
-  it('the Benchmark: 14 moves (exact), one complete assignment, 12 targets; the autopilot finishes it at 60 and 20 fps, F / V at the truck too', () => {
+  it('the Benchmark: 15 moves (exact), one complete assignment, 13 targets; the autopilot finishes it at 60 and 20 fps, F / V at the truck too, its belt delivering', () => {
     const benchmark = FROZEN.levels.benchmark;
-    expect(benchmark.solver).toMatchObject({ lower: 14, upper: 14, exact: true, unsolvable: false });
-    expect(benchmark.solver.plan).toHaveLength(14);
-    expect(benchmark.targets.counts).toEqual({ zones: 3, slots: 6, truckLevels: 3, assignments: 1 });
+    expect(benchmark.solver).toMatchObject({ lower: 15, upper: 15, exact: true, unsolvable: false });
+    expect(benchmark.solver.plan).toHaveLength(15);
+    expect(benchmark.targets.counts).toEqual({ zones: 3, slots: 6, truckLevels: 3, beltExits: 1, assignments: 1 });
     // Its truck's second column: «amarillo ✚» and a «libre» level on top (phase 6, docs/STORAGE.md rule 7).
     expect(benchmark.storage.slots.filter((s) => s.startsWith('t1:1:'))).toEqual(['t1:1:0 cell 2,-1 front 2,0 south · yellow/cross', 't1:1:1 cell 2,-1 front 2,0 south · libre']);
+    // Its conveyor belt (docs/CONVEYOR.md): one floor cell from its «libre» input e1 to its end exit s1.
+    expect(benchmark.storage.conveyors).toEqual(['c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@0']);
     for (const run of [benchmark.autopilot60, benchmark.autopilot20]) {
-      expect(run).toMatchObject({ solved: true, moves: 14, counter: 14 });
+      // The ride counts no move: the counter is the box moves driven.
+      expect(run).toMatchObject({ solved: true, moves: 15, counter: 15 });
       expect(run.forkStepsAt.truck).toBeGreaterThan(0);
+      expect(run.log.filter((line) => line.endsWith('(cinta)'))).toEqual(['b9 e1:0:0 → s1:0:0 ok 8/13 (cinta)']);
     }
   });
 });

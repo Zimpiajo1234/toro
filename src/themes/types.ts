@@ -99,6 +99,22 @@ export interface Theme {
     rail: string;
     railCap: string;
   };
+  /**
+   * Conveyor belts (docs/CONVEYOR.md): their own material, unlike the shelves' wood, the racks' slate metal and the
+   * truck. `belt` = the band's soft graphite rubber (its surface and body, and the end exit's tray floor), `stripe` = the
+   * faint lighter stripes across it (they slide only while it runs), `edge` = the fine light rails along its sides and
+   * the end exit tray's low walls, `board` = the small board that holds the end exit's cue sticker (Theme.rack.cue*
+   * stickers, like a rack slot's). `identity` = one colour per belt in level order (cycling): its input's pad and a thin
+   * rim on its end exit (later its button too), so several belts pair up at a glance; none of the box colours (base,
+   * tape, locked), the rails' orange, the beacon's amber or the plants' sage, never red (src/integration/themes.test.ts).
+   */
+  conveyor: {
+    belt: string;
+    stripe: string;
+    edge: string;
+    board: string;
+    identity: readonly string[];
+  };
   plant: { pot: string; soil: string; leaves: string[] };
   forklift: {
     body: string;

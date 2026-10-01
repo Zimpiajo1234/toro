@@ -87,6 +87,18 @@ export const TRUCK_BED_CAVITY_HZ = 330;
 export const TRUCK_LEVEL_DAMP = 0.55;
 
 /**
+ * Conveyor belts (docs/CONVEYOR.md): the belt's electric drive while it runs, a soft hum well under the music (never a
+ * combustion rumble). Its rotor tone climbs from BELT_HUM_HZ[0] to BELT_HUM_HZ[1] as the belt eases up to speed and
+ * sinks back as it eases to rest, with a faint octave (BELT_HUM_OCTAVE), under a warm low-pass; the rubber band over
+ * its bed whispers along (BELT_HUM_WHISPER of it, band-passed noise). Level: the envelope's peak (SFX bus).
+ */
+export const BELT_HUM_HZ = [140, 196] as const;
+export const BELT_HUM_OCTAVE = 0.28;
+export const BELT_HUM_LEVEL = 0.014;
+export const BELT_HUM_WHISPER = 0.6;
+export const BELT_HUM_LOWPASS_HZ = 760;
+
+/**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
  * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh; the only "no" is
  * the soft, muffled wrong-target buzz of the levels with storage (wrongBuzz).
@@ -208,6 +220,79 @@ export class SfxPlayer {
     this.noiseHit(t, { type: 'bandpass', freq: vary(r, (up > 0 ? 760 : 950) * c, VARIANCE), q: 1.3, peak: vary(r, up > 0 ? 0.22 : 0.14, VARIANCE), attack: 0.002, tau: up > 0 ? 0.028 : 0.018 });
     if (chimeMidi === null) return;
     this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Conveyor belts: a box set down on a belt's input pad, at `t` (as it lands): a soft rubbery "tup", a short body with
+   * no floor sub and a muffled contact, lighter than the floor's felt thump. A belt's input is «libre»: it never chimes
+   * (`chimeMidi` is there for the shared drop path and is played only when given).
+   */
+  beltDrop(t: number, chimeMidi: number | null = null, final = false, match: MatchKind = 'color'): void {
+    const r = this.rng;
+    this.toneHit(t, { type: 'sine', freq: vary(r, 170, VARIANCE), freqEnd: vary(r, 112, VARIANCE), glideSec: 0.07, peak: vary(r, 0.16, VARIANCE), attack: 0.004, tau: 0.05, lowpass: 480 });
+    this.noiseHit(t, { type: 'lowpass', freq: vary(r, 520, VARIANCE), q: 0.6, peak: vary(r, 0.2, VARIANCE), attack: 0.003, tau: 0.028 });
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 880, VARIANCE), q: 1.2, peak: vary(r, 0.1, VARIANCE), attack: 0.002, tau: 0.018 });
+    if (chimeMidi === null) return;
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Conveyor belts: the box comes to rest in the belt's end exit, at `t`: a soft landing knock (the box easing into the
+   * tray against its back stop: a light muffled "tok", no sub), softer than a drop. Pass `chimeMidi` only when the end
+   * exit now holds its destined box: the chime in the timbre of its cue's `match` follows, as in a rack slot.
+   */
+  beltLand(t: number, chimeMidi: number | null, final = false, match: MatchKind = 'color'): void {
+    const r = this.rng;
+    this.toneHit(t, { type: 'sine', freq: vary(r, 205, VARIANCE), freqEnd: vary(r, 140, VARIANCE), glideSec: 0.06, peak: vary(r, 0.12, VARIANCE), attack: 0.005, tau: 0.045, lowpass: 560 });
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 720, VARIANCE), q: 1.4, peak: vary(r, 0.16, VARIANCE), attack: 0.003, tau: 0.024 });
+    if (chimeMidi === null) return;
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Conveyor belts: the belt's drive while it runs, from `t` for `runSec` (BELT_HUM_*): a soft electric hum that eases
+   * in and climbs in pitch over `rampSec` as the belt speeds up, holds while it cruises and sinks away as it slows to
+   * rest, with the faint whisper of its rubber band. One voice for the whole run, well under the music.
+   */
+  beltHum(t: number, runSec: number, rampSec: number): void {
+    const ctx = this.ctx;
+    const r = this.rng;
+    const start = Math.max(t, ctx.currentTime);
+    const ramp = Math.max(0.05, Math.min(rampSec, runSec / 2));
+    const end = start + Math.max(runSec, 2 * ramp);
+    const voice = new NoteVoice(ctx, this.out, this.pool);
+    const env = voice.node(gain(ctx, 0));
+    env.connect(voice.output);
+    const peak = vary(r, BELT_HUM_LEVEL, VARIANCE);
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(peak, start + ramp);
+    env.gain.setValueAtTime(peak, end - ramp);
+    env.gain.linearRampToValueAtTime(0, end);
+    const lp = voice.node(filter(ctx, 'lowpass', BELT_HUM_LOWPASS_HZ, 0.5));
+    lp.connect(env);
+    const [low, high] = BELT_HUM_HZ;
+    for (const [ratio, level] of [
+      [1, 1],
+      [2, BELT_HUM_OCTAVE],
+    ] as const) {
+      const g = voice.node(gain(ctx, level));
+      g.connect(lp);
+      const o = voice.source(osc(ctx, 'sine', low * ratio));
+      o.frequency.setValueAtTime(low * ratio, start);
+      o.frequency.linearRampToValueAtTime(high * ratio, start + ramp);
+      o.frequency.setValueAtTime(high * ratio, end - ramp);
+      o.frequency.linearRampToValueAtTime(low * ratio, end);
+      o.connect(g);
+    }
+    const whisper = voice.node(gain(ctx, BELT_HUM_WHISPER));
+    whisper.connect(env);
+    const band = voice.node(filter(ctx, 'bandpass', vary(r, 460, VARIANCE), 0.9));
+    band.connect(whisper);
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    voice.bufferSource(src, range(r, 0, Math.max(0, this.noise.duration - 0.5))).connect(band);
+    voice.play(start, end + 0.05);
   }
 
   /**

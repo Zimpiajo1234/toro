@@ -48,19 +48,23 @@ const TW = unit('t2', 'truck', 0, 3, { kind: 'door', wall: 'west' }, [[{ color: 
 const MANY: Pick<LevelData, 'storage' | 'size'> = { storage: [RN, RE, RS, RW, TN, TW], size: { width: 9, depth: 8 } };
 
 describe('STORAGE_SKINS (docs/STORAGE.md «Modelo»)', () => {
-  it('one row per skin, in the order of a level\'s units: racks (shelves, front), then trucks (stack, door)', () => {
-    expect(STORAGE_SKIN_ORDER).toEqual(['rack', 'truck']);
+  it('one row per skin, in the order of a level\'s units: racks (shelves, front), trucks (stack, door), then a belt\'s input and end exit', () => {
+    expect(STORAGE_SKIN_ORDER).toEqual(['rack', 'truck', 'beltIn', 'beltOut']);
     expect(STORAGE_SKINS).toEqual({
       rack: { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r', chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
       truck: { support: 'stack', maxLevels: 2, maxColumns: 3, access: 'door', idPrefix: 't', chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
+      // A conveyor belt (docs/CONVEYOR.md): one row per access, one slot each, on shelves of their own at the floor.
+      beltIn: { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'front', idPrefix: 'e', chars: 'ADFJ', fillToMax: false, sound: 'belt' },
+      beltOut: { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'belt', idPrefix: 's', chars: 'BEGK', fillToMax: false, sound: 'belt' },
     });
   });
 
   it('one row of words per skin: the Spanish ones of the .level messages and the plan, the English ones of validateLevel', () => {
     expect(Object.keys(STORAGE_WORDS)).toEqual([...STORAGE_SKIN_ORDER]);
     expect([STORAGE_WORDS.rack.name, STORAGE_WORDS.rack.level, STORAGE_WORDS.truck.name, STORAGE_WORDS.truck.level]).toEqual(['estantería', 'hueco', 'camión', 'nivel']);
-    // A unit is named `${en.list}[i]` in validateLevel's messages: the legacy JSON lists.
-    expect(STORAGE_SKIN_ORDER.map((skin) => STORAGE_WORDS[skin].en.list)).toEqual(['racks', 'trucks']);
+    expect([STORAGE_WORDS.beltIn.name, STORAGE_WORDS.beltOut.name]).toEqual(['cinta entrada', 'cinta final']);
+    // A unit is named `${en.list}[i]` in validateLevel's messages: the legacy JSON lists (a belt's units have none).
+    expect(STORAGE_SKIN_ORDER.map((skin) => STORAGE_WORDS[skin].en.list)).toEqual(['racks', 'trucks', 'beltInputs', 'beltExits']);
   });
 
   it('id prefixes differ (no two slot ids clash); each skin\'s letters are distinct capitals, never a fixed map character', () => {

@@ -39,14 +39,19 @@ export interface StorageSkinRow {
    * rule 7; validateLevel fills them, the canonical `.level` form leaves those implicit ones out: data/asciiLevel).
    */
   readonly fillToMax: boolean;
-  /** How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup): audio/AudioEngine. */
-  readonly sound: 'metal' | 'wood';
+  /**
+   * How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup, belt = beltDrop / pickup):
+   * audio/AudioEngine.
+   */
+  readonly sound: 'metal' | 'wood' | 'belt';
 }
 
 /**
  * One row per skin (docs/STORAGE.md): adding a skin = a row here, its words (STORAGE_WORDS) and its drawing. The key
- * order is the order of a level's units (rule 12: racks, then trucks). `chars` are the canonical letters of before the
- * shared model (three trucks are written T, C, U), so the canonical form of every level stays the same.
+ * order is the order of a level's units (rule 12: racks, then trucks, then the belts' inputs and end exits). `chars` are
+ * the canonical letters of before the shared model (three trucks are written T, C, U), so the canonical form of every
+ * level stays the same. A conveyor belt (docs/CONVEYOR.md) is two skins, one row per access: its input (`front`, loaded
+ * like a rack slot at the floor) and its end exit (`belt`, never engaged: the belt fills it); one drawing serves both.
  */
 export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   rack: {
@@ -70,6 +75,28 @@ export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
     chars: 'TCUVWXYZKLMNO',
     fillToMax: true,
     sound: 'wood',
+  },
+  beltIn: {
+    support: 'shelves',
+    // A belt's input (docs/CONVEYOR.md): one level, at the floor, «libre»; the box rides on from there.
+    maxLevels: 1,
+    maxColumns: 1,
+    access: 'front',
+    idPrefix: 'e',
+    chars: 'ADFJ',
+    fillToMax: false,
+    sound: 'belt',
+  },
+  beltOut: {
+    support: 'shelves',
+    // A belt's end exit: one level with its cue (or «libre»), filled by the belt only.
+    maxLevels: 1,
+    maxColumns: 1,
+    access: 'belt',
+    idPrefix: 's',
+    chars: 'BEGK',
+    fillToMax: false,
+    sound: 'belt',
   },
 };
 
@@ -133,9 +160,31 @@ export const STORAGE_WORDS: { readonly [S in StorageSkin]: StorageWords } = {
     level: 'nivel',
     en: { list: 'trucks', one: 'truck', level: 'level', at: 'on', cell: 'a truck bed cell', itsLevel: 'its truck level' },
   },
+  beltIn: {
+    name: 'cinta entrada',
+    the: 'la entrada de la cinta',
+    a: 'una entrada de cinta',
+    many: 'entradas de cinta',
+    one: 'una',
+    together: 'pegadas',
+    of: 'de la entrada de cinta',
+    level: 'entrada',
+    en: { list: 'beltInputs', one: 'belt input', level: 'level', at: 'on', cell: 'a belt input cell', itsLevel: 'its level' },
+  },
+  beltOut: {
+    name: 'cinta final',
+    the: 'la salida final de la cinta',
+    a: 'una salida final de cinta',
+    many: 'salidas finales de cinta',
+    one: 'una',
+    together: 'pegadas',
+    of: 'de la salida final de cinta',
+    level: 'final',
+    en: { list: 'beltExits', one: 'belt exit', level: 'level', at: 'in', cell: 'a belt exit cell', itsLevel: 'its level' },
+  },
 };
 
-/** A level's storage units (none → an empty list): racks, then trucks (rule 12). */
+/** A level's storage units (none → an empty list): racks, then trucks, then the belts' inputs and end exits (rule 12). */
 export function storageOf(level: Pick<LevelData, 'storage'>): readonly LevelStorage[] {
   return level.storage ?? [];
 }
@@ -154,28 +203,32 @@ export function slotIdOf(unitId: string, column: number, level: number): string 
   return `${unitId}:${column}:${level}`;
 }
 
-/** The side a unit is loaded from: its front's facing; through a door, TRUCK_FACING[wall] (into the room). */
+/**
+ * The side a unit is loaded from: its front's facing (a belt's end exit: the side its belt comes in from); through a
+ * door, TRUCK_FACING[wall] (into the room).
+ */
 export function facingOf(unit: Pick<LevelStorage, 'access'>): Facing {
-  return unit.access.kind === 'front' ? unit.access.facing : TRUCK_FACING[unit.access.wall];
+  return unit.access.kind === 'door' ? TRUCK_FACING[unit.access.wall] : unit.access.facing;
 }
 
 /**
- * The cell of `column` (0 = the unit's first): a front unit's own map cell (core/racks `rackCellOf`); a door unit's
- * cell outside the map, one step beyond the wall from its door cell (core/docks `truckCellOf`: z = -1 / x = -1). A box
- * stored in the column rests there.
+ * The cell of `column` (0 = the unit's first): a front or belt unit's own map cell (core/racks `rackCellOf`); a door
+ * unit's cell outside the map, one step beyond the wall from its door cell (core/docks `truckCellOf`: z = -1 / x = -1).
+ * A box stored in the column rests there.
  */
 export function cellOf(unit: Pick<LevelStorage, 'x' | 'z' | 'access'>, column: number): CellPos {
   const { x, z, access } = unit;
-  return access.kind === 'front' ? rackCellOf({ x, z, facing: access.facing }, column) : truckCellOf({ x, z, wall: access.wall }, column);
+  return access.kind === 'door' ? truckCellOf({ x, z, wall: access.wall }, column) : rackCellOf({ x, z, facing: access.facing }, column);
 }
 
 /**
- * Where the forklift stands to load `column`, facing it: the floor cell in front of it (core/racks `frontCellOf`), or
- * its door cell, a map cell against the wall (core/docks `truckFrontOf`).
+ * Where `column` is loaded from, facing it: the floor cell in front of it where the forklift stands (core/racks
+ * `frontCellOf`), or its door cell, a map cell against the wall (core/docks `truckFrontOf`); for a belt's end exit, the
+ * belt's last cell (the forklift never stands there: the belt fills it).
  */
 export function frontOf(unit: Pick<LevelStorage, 'x' | 'z' | 'access'>, column: number): CellPos {
   const { x, z, access } = unit;
-  return access.kind === 'front' ? frontCellOf({ x, z, facing: access.facing }, column) : truckFrontOf({ x, z, wall: access.wall }, column);
+  return access.kind === 'door' ? truckFrontOf({ x, z, wall: access.wall }, column) : frontCellOf({ x, z, facing: access.facing }, column);
 }
 
 /** One column of a level's storage, flattened: unit by unit, column by column. */

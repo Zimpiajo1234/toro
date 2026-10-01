@@ -13,6 +13,7 @@ import {
   LevelGrid,
   POS_SHELF,
   POS_STACK,
+  canLift,
   carrySearch,
   deadEndCorridors,
   deadEnds,
@@ -29,8 +30,9 @@ import {
 
 /*
  * The special levels (src/data/levels/especiales/, outside LEVELS) and the «Benchmark» of test mode: every storage
- * rack mechanic of docs/RACKS.md and the loading dock of docs/DOCKS.md in one small, crowded warehouse (plan
- * «estanterías almacenables + Benchmark», fase 3; muelles de carga, 2026-09-30).
+ * rack mechanic of docs/RACKS.md, the loading dock of docs/DOCKS.md and the conveyor belt of docs/CONVEYOR.md in one
+ * small, crowded warehouse (plan «estanterías almacenables + Benchmark», fase 3; muelles de carga, 2026-09-30; cinta
+ * transportadora H1, 2026-10-01).
  */
 
 const source = SPECIAL_LEVEL_SOURCES.find((s) => s.level.id === BENCHMARK_ID)!;
@@ -121,8 +123,10 @@ describe('Benchmark (especiales/benchmark.level)', () => {
   });
 
   it('has two racks of 3 slots per column, one front toward the default camera and one back to it, a wooden shelf one cell past an end', () => {
-    const racks = storageOf(level).filter(isFrontUnit);
-    expect(racks.map((r) => r.skin)).toEqual(['rack', 'rack']);
+    const fronts = storageOf(level).filter(isFrontUnit);
+    // Loaded from the front: the two racks and the conveyor belt's input (docs/CONVEYOR.md: a slot at floor level).
+    expect(fronts.map((r) => r.skin)).toEqual(['rack', 'rack', 'beltIn']);
+    const racks = fronts.filter((r) => r.skin === 'rack');
     for (const rack of racks) for (const column of rack.columns) expect(column).toHaveLength(3);
     // The default camera sits toward +x / +z: a front facing south or east looks at it, north or west turns its back.
     const toCamera = (facing: string) => facing === 'south' || facing === 'east';
@@ -162,9 +166,46 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     for (const { side } of dockRailsOf(level)) expect(level.decor.plants.some((pl) => pl.x === side.x && pl.z === side.z), `${side.x},${side.z}`).toBe(true);
   });
 
+  it('has a short conveyor belt (docs/CONVEYOR.md): one floor cell from its «libre» input to an end exit only the belt loads, destined to one box', () => {
+    expect(level.conveyors).toHaveLength(1);
+    const [belt] = level.conveyors!;
+    expect(belt.cells.map((c) => [c.x, c.z, c.piece, c.height])).toEqual([[8, 1, 'suelo', 0]]);
+    const unitOf = (id: string) => storageOf(level).find((u) => u.id === id)!;
+    const [input, output] = [unitOf(belt.input), unitOf(belt.output)];
+    expect([input.skin, input.x, input.z, output.skin, output.x, output.z]).toEqual(['beltIn', 8, 2, 'beltOut', 8, 0]);
+    expect(input.columns).toEqual([[null]]);
+    expect(output.columns).toEqual([[{ color: 'coral', symbol: 'cross' }]]);
+    // Its box is the one coral ✚; the end exit's position is fed by the input's: a box set down there rides in.
+    const exit = grid.positionOfSlot(`${output.id}:0:0`);
+    const entry = grid.positionOfSlot(`${input.id}:0:0`);
+    expect([grid.feeds[entry], grid.fedBy[exit]]).toEqual([exit, entry]);
+    const destinies = levelDestinies(level)!;
+    expect(destinies.slots[slots.findIndex((s) => s.unit.id === output.id)]).toMatchObject({ color: 'coral', symbol: 'cross' });
+    expect(level.boxes.filter((b) => b.color === 'coral' && b.symbol === 'cross')).toHaveLength(1);
+    // The shortest plan sends it down the belt in one move (the ride counts none) and never picks from the end exit.
+    const plan = shortestPlan().plan!;
+    expect(plan.filter((m) => m.drop === exit)).toHaveLength(1);
+    expect(plan.some((m) => m.from === exit || m.drop === entry)).toBe(false);
+    let stacks = stacksOf(grid, level);
+    for (const m of plan) {
+      expect(canLift(grid, stacks, exit)).toBe(false);
+      const next = lift(stacks, m.from);
+      next[m.drop] += stacks[m.from].slice(-1);
+      stacks = next;
+    }
+    expect(stacks[exit].length).toBe(1);
+  });
+
   it('every column can be loaded: its front (door) cell and the cell behind it are floor, and no zone stands there', () => {
-    const columns = storageColumnsOf(level).map((c) => ({ id: `${c.unit.id}:${c.column}`, front: c.front, facing: c.facing }));
-    expect(columns).toHaveLength(4 + beds.length);
+    // The conveyor belt's end exit is the one column the forklift never loads (docs/CONVEYOR.md): its belt brings its
+    // box in, from the belt's last cell, right in front of it.
+    const [belt] = level.conveyors!;
+    const exits = storageColumnsOf(level).filter((c) => c.unit.access.kind === 'belt');
+    expect(exits.map((c) => [c.unit.id, c.front.x, c.front.z])).toEqual([[belt.output, belt.cells.at(-1)!.x, belt.cells.at(-1)!.z]]);
+    const loadable = storageColumnsOf(level).filter((c) => c.unit.access.kind !== 'belt');
+    const columns = loadable.map((c) => ({ id: `${c.unit.id}:${c.column}`, front: c.front, facing: c.facing }));
+    // The racks' 4 columns, the belt's input, the truck's bed columns.
+    expect(columns).toHaveLength(4 + 1 + beds.length);
     for (const { id, front, facing } of columns) {
       const behind = { x: front.x + FACING_X[facing], z: front.z + FACING_Z[facing] };
       for (const c of [front, behind]) {
@@ -316,10 +357,11 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(result.checked).toBeGreaterThan(result.explored);
   });
 
-  it('with the lock the shortest plan never lifts a box off its destiny: 14 moves, each box placed once and for good', () => {
+  it('with the lock the shortest plan never lifts a box off its destiny: 15 moves, each box placed once and for good', () => {
     const plan = shortestPlan().plan!;
-    // 12 boxes + the mint swap's park + the wrong truck load's park.
-    expect(plan).toHaveLength(14);
+    // 13 boxes + the mint swap's park + the wrong truck load's park.
+    expect(level.boxes).toHaveLength(13);
+    expect(plan).toHaveLength(15);
     let stacks = stacksOf(grid, level);
     for (const move of plan) {
       expect(lockedAt(grid, stacks, move.from), `move from ${move.from}`).toBe(false);
@@ -327,21 +369,22 @@ describe('Benchmark (especiales/benchmark.level)', () => {
       next[move.drop] += stacks[move.from].slice(-1);
       stacks = next;
     }
-    // Every target ends full and locked: 3 zones + 6 slots with a cue (one box each) and the truck's 2 bed columns
-    // (one box per level).
+    // Every target ends full and locked: 3 zones + 6 slots with a cue + the belt's end exit (one box each) and the
+    // truck's 2 bed columns (one box per level).
     const targets = stacks.map((stack, pos) => ({ stack, steps: grid.steps[pos] })).filter((t) => t.steps !== null);
-    expect(targets).toHaveLength(9 + beds.length);
+    expect(targets).toHaveLength(10 + beds.length);
     expect(targets.every((t) => t.stack.length === t.steps!.length)).toBe(true);
     expect(stacks.every((_, pos) => grid.steps[pos] === null || lockedAt(grid, stacks, pos))).toBe(true);
   });
 
-  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 4 (3 with a cue, 1 «libre»), traps; its «dificultad:» targets all hold', () => {
+  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 4 (3 with a cue, 1 «libre»), cinta 1 (1 floor cell), traps; its «dificultad:» targets all hold', () => {
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 12, cued: 6, free: 6 });
     expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 4, cued: 3, free: 1, loaded: 1 });
+    expect(m.belts).toEqual({ belts: 1, cells: 1, floor: 1, exits: 1, cued: 1 });
     expect(m.traps).toBeGreaterThan(0);
-    expect(source.targets.map((t) => t.metric)).toEqual(expect.arrayContaining(['movimientos', 'repartos', 'huecos', 'camion', 'trampas', 'libre']));
+    expect(source.targets.map((t) => t.metric)).toEqual(expect.arrayContaining(['movimientos', 'repartos', 'huecos', 'camion', 'cinta', 'trampas', 'libre']));
     const failed = checkLevelTargets(level, source.targets).filter((c) => !c.ok);
     expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`)).toEqual([]);
   });

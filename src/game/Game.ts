@@ -739,8 +739,9 @@ export class Game implements GameActions {
    * «libre» slot, plain floor).
    */
   private matchOf(event: GameEvent): MatchKind {
-    if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
-    const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
+    if (event.type !== 'boxDropped' && event.type !== 'zoneRestored' && event.type !== 'beltDelivered') return 'color';
+    // A conveyor belt's delivery chimes by its end exit's cue (docs/CONVEYOR.md), like a drop into that slot.
+    const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.type === 'beltDelivered' ? event.slotId : event.zoneId;
     return (target !== null && this.zoneMatch.get(target)) || 'color';
   }
 

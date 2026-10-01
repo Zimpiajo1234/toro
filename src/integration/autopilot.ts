@@ -18,9 +18,12 @@
  * straight out. The forks go by the keys at every unit (rule 9): it first picks the level with the fork keys
  * (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for the forks there (a rack's shelf
  * or a stack's level: logic counts both in levels), then drives in and drops, or lifts the box there.
+ * Conveyor belts (docs/CONVEYOR.md): a box the plan sends to a belt's end exit is set down on the belt's input, and the
+ * belt brings it there; while it is on its way the planner already sees it in the end exit (liveStacks), and the next
+ * move at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
  */
 import { angleDelta } from '../core/math';
-import { storageSlotsOf, type StorageSlotRef } from '../core/storage';
+import { slotIdOf, storageSlotsOf, type StorageSlotRef } from '../core/storage';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type StorageSkin, type Vec2 } from '../core/types';
 import {
   DIR_X,
@@ -45,12 +48,18 @@ const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 /**
  * Live stacks from the snapshot (resting boxes by position — floor cell or storage position — ordered by level). A
  * stored box names its storage level (`slotId`, any skin): the position it rests on (a shelf; a stack column, whatever
- * the level).
+ * the level). A box on its way down a conveyor belt (settling on its input, riding it) is where the model puts it: in
+ * its belt's end exit.
  */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
+  const onItsWay = new Map<string, number>();
+  snap.conveyors.forEach((belt, i) => {
+    const conveyor = snap.level.conveyors?.[i];
+    if (belt.boxId !== null && conveyor) onItsWay.set(belt.boxId, grid.positionOfSlot(slotIdOf(conveyor.output, 0, 0)));
+  });
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
-  for (const b of resting) stacks[b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z)] += boxCode(b);
+  for (const b of resting) stacks[onItsWay.get(b.id) ?? (b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z))] += boxCode(b);
   return stacks;
 }
 
@@ -95,7 +104,7 @@ class Pilot {
    * Fork level presses (F / V), also by the skin of the unit they were pressed at, and frames driven in reverse (S):
    * what the controls did, for the tests.
    */
-  readonly controls = { forkSteps: 0, forkStepsAt: { rack: 0, truck: 0 } as Record<StorageSkin, number>, reverseFrames: 0 };
+  readonly controls = { forkSteps: 0, forkStepsAt: { rack: 0, truck: 0, beltIn: 0, beltOut: 0 } as Record<StorageSkin, number>, reverseFrames: 0 };
   constructor(
     readonly level: LevelData,
     readonly dt: number,
@@ -217,6 +226,18 @@ class Pilot {
     for (let k = 0; k < 40 && Math.abs(this.snap.forklift.speed) > 0.02; k++) this.tick(0, 0);
     return true;
   }
+  /** A conveyor belt is still carrying a box (settling on its input, or riding it). */
+  get beltBusy(): boolean {
+    return this.snap.conveyors.some((belt) => belt.phase !== 'idle');
+  }
+  /** Stand still until every conveyor belt has delivered its box (false when it takes too long). */
+  waitForBelts(budgetSec = 20): boolean {
+    for (let t = 0; this.beltBusy; t += this.dt) {
+      if (t > budgetSec) return false;
+      this.tick(0, 0);
+    }
+    return true;
+  }
   face(dir: number, budgetSec = 5): boolean {
     const h = dirHeading(dir);
     let t = 0;
@@ -317,9 +338,17 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     }
     return best;
   };
+  /** The move works at a conveyor belt: onto its input, into its end exit (through the input) or off its input. */
+  const atBelt = (move: Move) => grid.feeds[move.drop] >= 0 || grid.fedBy[move.drop] >= 0 || grid.feeds[move.from] >= 0;
   for (let iter = 0; iter < 80; iter++) {
     const snap = pilot.snap;
     if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events, controls: pilot.controls, snapshot: snap };
+    // A belt still carrying a box: the next move at a belt waits for it, and so does the end (its delivery may be what
+    // completes the level).
+    if (pilot.beltBusy && (queue.length === 0 || atBelt(queue[0]))) {
+      if (!pilot.waitForBelts()) return fail('a conveyor belt never delivered its box');
+      continue;
+    }
     const stacks = liveStacks(grid, snap);
     const fc = worldToCell(snap.forklift.pos, level.size);
     const fcell = grid.index(fc.x, fc.z);
@@ -349,9 +378,11 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     if (!found) return fail(`no executable route for ${box.id}`);
     const bestChain = found.chain;
     const bestEmpty = found.path;
-    // The storage levels to select first with F / V (every unit): where the box is lifted from, where it lands.
+    // The storage levels to select first with F / V (every unit): where the box is lifted from, where it is set down (a
+    // box bound for a belt's end exit goes onto its input: the belt brings it on).
     const pickSlot = fromSlot;
-    const toSlot = slotAt(plan.drop, lifted[plan.drop].length);
+    const dropAt = grid.fedBy[plan.drop] >= 0 ? grid.fedBy[plan.drop] : plan.drop;
+    const toSlot = slotAt(dropAt, lifted[dropAt].length);
     const cellText = (c: number) => {
       const column = grid.columnOfPos(c);
       if (column) return column.support === 'shelves' ? `slot ${slots[grid.slotAt(c)].id}` : `stack ${column.ref.unit.id}:${column.ref.column}`;

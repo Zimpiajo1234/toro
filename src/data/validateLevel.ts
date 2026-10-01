@@ -1,13 +1,16 @@
 import {
   BOX_KINDS,
   COLOR_IDS,
+  CONVEYOR_PIECES,
   FACINGS,
   SYMBOL_IDS,
   cellKey,
   type BoxKind,
   type ColorId,
+  type ConveyorPiece,
   type Facing,
   type LevelBox,
+  type LevelConveyor,
   type LevelData,
   type LevelShelf,
   type LevelStorage,
@@ -18,6 +21,7 @@ import {
   type WallSide,
   type ZoneCriteria,
 } from '../core/types';
+import { FACING_X, FACING_Z } from '../core/racks';
 import {
   assignBoxes,
   assignmentsOf,
@@ -129,13 +133,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   });
 
   // Storage units (docs/STORAGE.md): `storage`, or a legacy JSON level's `racks` (docs/RACKS.md) and `trucks`
-  // (docs/DOCKS.md). Skin by skin (rule 12: racks, then trucks), each skin in the order given. What every unit shares
-  // comes from its skin's row (STORAGE_SKINS: levels per column, columns, the id prefix; in a stack the «libre» levels
-  // on top; a stack within stackLimit and the `fillToMax` levels, below); then its access places it on the map: `front`
-  // — its own cells, solid, loaded from the floor cell in front of each column (checked once every obstacle is known);
-  // `door` — its door cells, a straight run of floor against the north (row z = 0) or west (column x = 0) wall, free of
-  // furniture and other doors (and of zones, boxes and the forklift at the start: checked below), its columns' cells
-  // just beyond the wall, outside the map.
+  // (docs/DOCKS.md). Skin by skin (rule 12: racks, then trucks, then the belts' inputs and end exits), each skin in the
+  // order given. What every unit shares comes from its skin's row (STORAGE_SKINS: levels per column, columns, the id
+  // prefix; in a stack the «libre» levels on top; a stack within stackLimit and the `fillToMax` levels, below); then its
+  // access places it on the map: `front` — its own cells, solid, loaded from the floor cell in front of each column
+  // (checked once every obstacle is known); `door` — its door cells, a straight run of floor against the north (row
+  // z = 0) or west (column x = 0) wall, free of furniture and other doors (and of zones, boxes and the forklift at the
+  // start: checked below), its columns' cells just beyond the wall, outside the map; `belt` — its own cell, solid, fed by
+  // its conveyor (docs/CONVEYOR.md: checked with the conveyors).
   const sources: { skin: StorageSkin; raw: unknown; path: string }[] = [];
   if (r.storage !== undefined) {
     if (r.racks !== undefined || r.trucks !== undefined) fail('storage and the legacy racks / trucks lists do not mix: give every storage unit in storage');
@@ -151,11 +156,13 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     arr(r.trucks, 'trucks').forEach((raw, i) => sources.push({ skin: 'truck', raw, path: `trucks[${i}]` }));
   }
   const legacy = r.storage === undefined;
+  const facingIn = (fields: Record<string, unknown>, where: string): Facing =>
+    (FACINGS as readonly string[]).includes(fields.facing as string) ? (fields.facing as Facing) : fail(`${where}.facing must be north, east, south or west`);
   /** A unit's access: in its own fields (legacy `facing` / `wall`) or in its `access` object; `where` names them. */
   const accessOf = (kind: StorageAccess['kind'], fields: Record<string, unknown>, where: string): StorageAccess =>
-    kind === 'front'
-      ? { kind, facing: (FACINGS as readonly string[]).includes(fields.facing as string) ? (fields.facing as Facing) : fail(`${where}.facing must be north, east, south or west`) }
-      : { kind, wall: fields.wall === 'north' || fields.wall === 'west' ? (fields.wall as WallSide) : fail(`${where}.wall must be "north" or "west"`) };
+    kind === 'door'
+      ? { kind, wall: fields.wall === 'north' || fields.wall === 'west' ? (fields.wall as WallSide) : fail(`${where}.wall must be "north" or "west"`) }
+      : { kind, facing: facingIn(fields, where) };
   /** A level's cue: a colour, a symbol or both; null (or `{}`, the legacy form) = «libre». */
   const readCue = (s: unknown, what: string): ZoneCriteria | null => {
     if (s === null) return null;
@@ -202,6 +209,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       if (above >= 0) fail(`${name}.columns[${j}][${above}] has a cue above a free level: in a stack the free levels go on top of the ones with a cue`);
       return cues;
     });
+    // A belt's input takes any box (docs/CONVEYOR.md): its one level is «libre».
+    if (skin === 'beltIn' && columns.some((levels) => levels.some((cue) => cue !== null)))
+      fail(`${name} asks for a cue: a belt input is «libre» (any box set down there rides its belt)`);
     const unit: LevelStorage = {
       id: o.id === undefined ? `${row.idPrefix}${inSkin[skin] + 1}` : str(o.id, `${name}.id`),
       skin,
@@ -224,7 +234,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     const u = units.length;
     columns.forEach((_, j) => {
       const cell = cellOf(unit, j);
-      if (unitAccess.kind === 'front') {
+      if (unitAccess.kind !== 'door') {
+        // Its own map cell (a rack's, a belt's input or end exit): solid.
         if (!inBounds(cell.x, cell.z)) fail(`${name} leaves the warehouse at ${cell.x},${cell.z}`);
         const k = cellKey(cell);
         if (blocked.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
@@ -246,6 +257,71 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   }
   /** With trucks, the one-box-per-target message counts their levels apart (its text as asciiLevel reads it). */
   const withTrucks = units.some((unit) => unit.skin === 'truck');
+  // Conveyor belts (docs/CONVEYOR.md): each a straight run of belt cells from its input (a unit of skin beltIn) to its
+  // end exit (one of skin beltOut), the input loaded from the side away from the belt, the end exit fed from the belt's
+  // last cell. Every cell a floor piece for now (the ramp and the ceiling pieces come later: the data already carries
+  // them), on cells of its own: nothing else stands on a belt (an obstacle for the body and the load).
+  const conveyors: LevelConveyor[] = arr(r.conveyors, 'conveyors').map((c, i) => {
+    const name = `conveyors[${i}]`;
+    const o = obj(c, name);
+    const cells = arr(o.cells, `${name}.cells`).map((cell, j) => {
+      const where = `${name}.cells[${j}]`;
+      const co = obj(cell, where);
+      const piece: ConveyorPiece =
+        co.piece === undefined
+          ? 'suelo'
+          : (CONVEYOR_PIECES as readonly string[]).includes(co.piece as string)
+            ? (co.piece as ConveyorPiece)
+            : fail(`${where}.piece must be ${CONVEYOR_PIECES.join(', ')}`);
+      return { x: int(co.x, `${where}.x`), z: int(co.z, `${where}.z`), piece, height: co.height === undefined ? 0 : num(co.height, `${where}.height`) };
+    });
+    return { id: o.id === undefined ? `c${i + 1}` : str(o.id, `${name}.id`), input: str(o.input, `${name}.input`), output: str(o.output, `${name}.output`), cells };
+  });
+  /** The conveyor of each belt unit (by unit index). */
+  const beltOfUnit = new Map<number, number>();
+  conveyors.forEach((belt, i) => {
+    const name = `conveyors[${i}]`;
+    if (conveyors.some((other, j) => j < i && other.id === belt.id)) fail(`duplicate conveyor id "${belt.id}"`);
+    if (belt.cells.length === 0) fail(`${name} needs at least one belt cell between its input and its end exit`);
+    belt.cells.forEach((cell, j) => {
+      if (cell.piece !== 'suelo') fail(`${name}.cells[${j}] is a ${cell.piece} piece: only floor belts («suelo») are built so far`);
+      if (cell.height !== 0) fail(`${name}.cells[${j}] has height ${cell.height}: a floor belt («suelo») lies on the floor (height 0)`);
+    });
+    const unitOf = (id: string, skin: StorageSkin, role: string): number => {
+      const u = units.findIndex((unit) => unit.id === id);
+      if (u < 0 || units[u].skin !== skin) fail(`${name}.${role} "${id}" is not a ${wordsOf(skin).one} (a storage unit of skin ${skin})`);
+      const other = beltOfUnit.get(u);
+      if (other !== undefined) fail(`${names[u]} belongs to conveyors[${other}] and to ${name}: every belt has its own input and end exit`);
+      beltOfUnit.set(u, i);
+      return u;
+    };
+    const input = unitOf(belt.input, 'beltIn', 'input');
+    const output = unitOf(belt.output, 'beltOut', 'output');
+    // One straight line: the input, its belt cells, the end exit, one cell apart, always the same way.
+    const path = [units[input], ...belt.cells, units[output]];
+    const dx = path[1].x - path[0].x;
+    const dz = path[1].z - path[0].z;
+    for (let k = 1; k < path.length; k++) {
+      if (Math.abs(dx) + Math.abs(dz) !== 1 || path[k].x - path[k - 1].x !== dx || path[k].z - path[k - 1].z !== dz)
+        fail(`${name} is not a straight run from its input to its end exit at ${path[k].x},${path[k].z}`);
+    }
+    // The input is loaded from the side away from its belt; the end exit takes its box from the belt's last cell.
+    const away = FACINGS.find((f) => FACING_X[f] === -dx && FACING_Z[f] === -dz)!;
+    if (units[input].access.kind !== 'front' || units[input].access.facing !== away)
+      fail(`${names[input]} must face ${away}: a belt input is loaded from the side away from its belt`);
+    if (units[output].access.kind !== 'belt' || units[output].access.facing !== away)
+      fail(`${names[output]} must face ${away}: a belt's end exit takes its box from the belt's last cell`);
+    for (const cell of belt.cells) {
+      const k = cellKey(cell);
+      if (!inBounds(cell.x, cell.z)) fail(`${name} leaves the warehouse at ${k}`);
+      if (blocked.has(k) || doorCells.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
+      blocked.add(k);
+    }
+  });
+  units.forEach((unit, u) => {
+    if ((unit.skin === 'beltIn' || unit.skin === 'beltOut') && !beltOfUnit.has(u))
+      fail(`${names[u]} belongs to no conveyor: a belt's input and end exit come with their belt`);
+  });
   // Access `front`: every column is loaded from its front cell, floor whatever else stands around (a dock's door cell
   // too).
   units.forEach((unit, u) => {
@@ -378,6 +454,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (stored) {
       // A box stored at the start (docs/STORAGE.md): on a level of its column (checked below), one box per level.
       const [u, column] = stored;
+      if (beltOfUnit.has(u)) fail(`box "${box.id}" starts on ${names[u]}: a conveyor belt starts empty (a box rides it once set down on its input)`);
       const words = wordsOf(units[u].skin);
       if (box.level === undefined) fail(`box "${box.id}" is ${words.at} ${words.cell}: give it ${words.itsLevel}`);
       const slotKey = `${k}@${box.level}`;
@@ -452,11 +529,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     const targets = targetsOf(withStorage);
     if (targets.length === 0) fail('a level needs at least one zone or rack slot with a cue');
     const truckLevels = targets.filter((t) => t.skin === 'truck').length;
+    const beltExits = targets.filter((t) => t.skin === 'beltOut').length;
     if (boxes.length !== targets.length)
       fail(
-        withTrucks
-          ? `a level with storage racks or trucks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length - truckLevels} slots with a cue, ${truckLevels} truck levels)`
-          : `a level with storage racks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length} slots with a cue)`,
+        conveyors.length > 0
+          ? `a level with storage needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length - truckLevels - beltExits} slots with a cue, ${truckLevels} truck levels, ${beltExits} belt exits with a cue)`
+          : withTrucks
+            ? `a level with storage racks or trucks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length - truckLevels} slots with a cue, ${truckLevels} truck levels)`
+            : `a level with storage racks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length} slots with a cue)`,
       );
     const kinds = boxes.map(sortableOf);
     const criteria = targets.map((t) => t.criteria);
@@ -529,6 +609,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     zones,
     shelves,
     ...(targetRules ? { storage: units } : {}),
+    ...(conveyors.length > 0 ? { conveyors } : {}),
     decor: { plants, windows },
     stackLimit,
     theme: typeof r.theme === 'string' && r.theme ? r.theme : 'default',

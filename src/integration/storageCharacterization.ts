@@ -20,14 +20,20 @@
  * - autopilot60 / autopilot20: the autopilot's game at 60 and 20 fps (moves, frames, controls: F / V presses in all
  *   and at each skin's units, frames in reverse; every box move).
  *
+ * A level with conveyor belts (docs/CONVEYOR.md: the Benchmark since H1) also writes them: `storage.conveyors` (each
+ * belt: its units and cells), `targets.counts.beltExits`, `metrics.belts`, `start.belts` (their live state) and, in
+ * the autopilot logs, every delivery (`box input → end exit`, flagged ` (cinta)`). A level without belts writes none of
+ * these keys, so its sections stay as they were.
+ *
  * Regenerate (only for a deliberate rule change, as phase 6 did; never by hand):
  *   TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u
  *   (PowerShell: $env:TORO_CARACTERIZAR = '1'; npx vitest run src/integration/storageCharacterization.test.ts -u;
  *   Remove-Item Env:TORO_CARACTERIZAR)
  * With the variable set the test only rewrites the file; `-u` alone never touches it.
  */
-import type { BoxState, Facing, LevelData, WallSide, ZoneCriteria } from '../core/types';
+import type { BoxState, LevelData, StorageAccess, StorageSkin, ZoneCriteria } from '../core/types';
 import { STORAGE_SKINS, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
+import { conveyorsOf, hasConveyors } from '../core/conveyors';
 import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
@@ -53,11 +59,11 @@ const COMMENT =
 /** A storage unit as the planned LevelStorage (docs/STORAGE.md «Modelo»). */
 export interface StorageUnitView {
   id: string;
-  skin: 'rack' | 'truck';
+  skin: StorageSkin;
   x: number;
   z: number;
   w: number;
-  access: { kind: 'front'; facing: Facing } | { kind: 'door'; wall: WallSide };
+  access: StorageAccess;
   /** Per column, its cues bottom → top; null = «libre». */
   columns: (ZoneCriteria | null)[][];
 }
@@ -78,10 +84,12 @@ export interface AutopilotView {
 }
 
 export interface LevelCharacterization {
-  storage: { units: StorageUnitView[]; boxes: string[]; slots: string[] };
+  /** `conveyors`: per belt, `id input (x,z) → cells → output (x,z) · pieces` (levels with belts only). */
+  storage: { units: StorageUnitView[]; boxes: string[]; slots: string[]; conveyors?: string[] };
   targets: {
     rules: { targetRules: boolean; symbols: boolean; forkRow: boolean };
-    counts: { zones: number; slots: number; truckLevels: number; assignments: number };
+    /** `beltExits`: the belts' end exits with a cue (levels with belts only). */
+    counts: { zones: number; slots: number; truckLevels: number; beltExits?: number; assignments: number };
     /** `id cue → destined kind (chime timbre)`, in targetsOf order: zones, cued rack slots, truck levels. */
     destinies: string[];
   };
@@ -98,9 +106,12 @@ export interface LevelCharacterization {
     sortings: number | null;
     slots: { total: number; cued: number; free: number };
     trucks: { trucks: number; columns: number; levels: number; loaded: number };
+    /** Levels with belts only. */
+    belts?: { belts: number; cells: number; floor: number; exits: number; cued: number };
   };
   solver: { lower: number; upper: number | null; exact: boolean; unsolvable: boolean; states: number; plan: string[] };
-  start: { progress: string; slots: string[]; boxes: string[] };
+  /** `belts`: every belt's live state after load, `id phase box` (levels with belts only). */
+  start: { progress: string; slots: string[]; boxes: string[]; belts?: string[] };
   autopilot60: AutopilotView;
   autopilot20: AutopilotView;
 }
@@ -162,7 +173,17 @@ export function storageSection(level: LevelData): LevelCharacterization['storage
     return `${b.id} ${kind} ${cellText(b)}@${h}${zone === undefined ? '' : `[${zone}]`}`;
   });
   const slots = storageSlots.map((s) => `${s.id} cell ${cellText(s.cell)} front ${cellText(s.front)} ${s.facing} · ${cueText(s.cue)}`);
-  return { units, boxes, slots };
+  if (!hasConveyors(level)) return { units, boxes, slots };
+  // Each belt: its input, its cells in order, its end exit, and the piece and height of every cell.
+  const unitCell = (id: string) => {
+    const unit = storageOf(level).find((u) => u.id === id);
+    return unit ? `(${cellText(unit)})` : '(?)';
+  };
+  const conveyors = conveyorsOf(level).map(
+    (belt) =>
+      `${belt.id} ${belt.input} ${unitCell(belt.input)} → ${belt.cells.map(cellText).join(' ')} → ${belt.output} ${unitCell(belt.output)} · ${belt.cells.map((c) => `${c.piece}@${c.height}`).join(' ')}`,
+  );
+  return { units, boxes, slots, conveyors };
 }
 
 /** Target rules, every target with its destined kind and chime timbre, and the count of complete assignments. */
@@ -178,6 +199,7 @@ export function targetsSection(level: LevelData): LevelCharacterization['targets
       zones: targets.filter((t) => t.kind === 'zone').length,
       slots: targets.filter((t) => t.skin === 'rack').length,
       truckLevels: targets.filter((t) => t.skin === 'truck').length,
+      ...(hasConveyors(level) ? { beltExits: targets.filter((t) => t.skin === 'beltOut').length } : {}),
       assignments: assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria), 2).count,
     },
     destinies: targets.map((t) => {
@@ -203,6 +225,7 @@ export function metricsSection(level: LevelData): LevelCharacterization['metrics
     sortings: m.sortings,
     slots: { ...m.slots },
     trucks: { ...m.trucks },
+    ...(hasConveyors(level) ? { belts: { ...m.belts } } : {}),
   };
 }
 
@@ -250,6 +273,7 @@ export function startSection(level: LevelData): LevelCharacterization['start'] {
         (STORAGE_SKINS[s.skin].support === 'stack' ? ` loadable ${s.loadable}` : ''),
     ),
     boxes: snap.boxes.map((b) => `${b.id} ${kindText(b)} ${boxAt(b)} correct ${b.correct} locked ${b.locked}`),
+    ...(hasConveyors(level) ? { belts: snap.conveyors.map((c) => `${c.id} ${c.phase} ${c.boxId ?? '-'}`) } : {}),
   };
 }
 
@@ -259,6 +283,13 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
   const out = autopilot(level, dt);
   const log: string[] = [];
   for (const e of out.events) {
+    // A conveyor belt's delivery (docs/CONVEYOR.md): no move, the belt brings the box from its input to its end exit.
+    if (e.type === 'beltDelivered') {
+      const flags = `${e.correct ? ` ok ${e.satisfiedCount}/${e.total}` : ''}${e.wrongTarget ? ' wrong' : ''}`;
+      log.push(`${e.boxId} ${where.get(e.boxId) ?? '?'} → ${e.slotId}${flags} (cinta)`);
+      where.set(e.boxId, e.slotId);
+      continue;
+    }
     if (e.type !== 'boxDropped') continue;
     const floor = `${cellText(e.cell)}@${e.level}${e.zoneId === null ? '' : `[${e.zoneId}]`}`;
     const to = e.slotId ?? floor;

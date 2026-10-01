@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `storage.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`, from `storageSlotsOf`); `storage.ts` = the shared storage model (docs/STORAGE.md: `STORAGE_SKINS` and `STORAGE_WORDS`, one row per skin; `storageOf`, `hasStorage` = the gate of every «target rule»; one geometry for every unit: `slotIdOf`, `cellOf`, `frontOf`, `facingOf`, `storageColumnsOf`, `storageSlotsOf`), on the geometry of each access: `racks.ts` = `front` (a rack's cells and front cells, `inwardHeading`, `columnFrame`), `docks.ts` = `door` (the cells beyond the wall, the door cells, the doors' guard rails `dockRailsOf`) |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `storage.ts`, `racks.ts`, `docks.ts`, `conveyors.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`, from `storageSlotsOf`); `storage.ts` = the shared storage model (docs/STORAGE.md: `STORAGE_SKINS` and `STORAGE_WORDS`, one row per skin; `storageOf`, `hasStorage` = the gate of every «target rule»; one geometry for every unit: `slotIdOf`, `cellOf`, `frontOf`, `facingOf`, `storageColumnsOf`, `storageSlotsOf`), on the geometry of each access: `racks.ts` = `front` (a rack's cells and front cells, `inwardHeading`, `columnFrame`), `docks.ts` = `door` (the cells beyond the wall, the door cells, the doors' guard rails `dockRailsOf`); `conveyors.ts` = the conveyor belts of `level.conveyors` (docs/CONVEYOR.md: `conveyorsOf`, `beltPathOf`, `conveyorOfUnit`) |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -25,7 +25,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/data/levels/*.level`, `src/data/levels/especiales/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md); `especiales/` = special levels outside the game's order (today the «Benchmark» of test mode) |
 | `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/data/levels/minimums.ts`, `minimumsBuild.ts`, `src/data/levelMinimums.json` | **levels** | The move counter's minimums: `levelMinimum(id)` → `{ moves, exact }` or null, read from the precomputed JSON (never solved at runtime); `minimumsBuild.ts` computes / formats / diffs it for `npm run levels -- --minimos` and `minimums.test.ts` (docs/LEVELS.md, «Mínimos del contador de movimientos») |
-| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), the objectives counter (`objectives.ts`: `objectivesLeft`), tests |
+| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), conveyor belts (`conveyor.ts`: `ConveyorSystem`, `CONVEYOR`), the objectives counter (`objectives.ts`: `objectivesLeft`), tests |
 | `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation; storage units through the skins registry `render/storage/` (`STORAGE_RENDER`, one entry per skin, one interface per unit, heights by support: docs/STORAGE.md) |
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
@@ -198,6 +198,17 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°, past
   the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design decision;
   `GameState.docksDriving.test.ts` measures it).
+- **Conveyor belts** (spec: `docs/CONVEYOR.md`, H1 done: a straight floor belt; only the «Benchmark» has one):
+  `LevelData.conveyors?: LevelConveyor[]` (`{ id, input, output, cells }`, each cell `{ x, z, piece, height }` with
+  pieces `suelo` / `rampa` / `techo`, only `suelo` built so far) links two storage units: its input (skin `beltIn`,
+  access `front`: a «libre» level-0 slot loaded from the side away from the belt, like a rack slot) and its end exit
+  (skin `beltOut`, access `belt`: never engaged, `STORAGE_ACCESS.belt.engages` false, its slot sealed for good). Belt
+  cells and both ends are statics. `logic/conveyor.ts` `ConveyorSystem` (run from `GameState.update`): a box set down
+  on an input whose end exit is free settles (`CONVEYOR.settleSec`), rides along a closed-form eased curve
+  (deterministic at any frame rate) and lands in the end exit (`beltStarted`, `beltDelivered` with `correct` /
+  `wrongTarget`); one box at a time (the input's slot sealed meanwhile, `LevelGrid.seal`); with the end exit full the
+  box stays on the input, pickable (`beltBlocked`). State: `GameSnapshot.conveyors` (`ConveyorState { id, phase, boxId,
+  progress, running, travel }`). The drop counts as the move; the ride counts none.
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every target is satisfied (every zone; also every cued rack slot and truck level) and
   nothing is carried → `levelComplete` exactly once, after which
@@ -420,6 +431,14 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `loadable` level whose cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there
   (hints or not); the chosen-level marker frames the level's sign cell (`SIGN_MARKER`). A level with trucks and no
   racks switches on the same target feedback (`hasStorage`); without storage nothing changes.
+- Conveyor belts (docs/CONVEYOR.md, «Dibujo»): one adapter for both skins (`render/storage/conveyor.ts` over
+  `builders/conveyor.ts` and `views/ConveyorView.ts`, `Theme.conveyor`), low furniture that never ghosts or moves the
+  frame: a flat graphite rubber band between fine light rails at a level-0 slot's floor (`BELT.top` = `RACK.base`), its
+  faint stripes sliding only while it runs (`BeltStripes.sync(ConveyorState.travel)` through the optional
+  `StorageUnitView.animate`); the input a low pad in the belt's identity colour (`Theme.conveyor.identity`, never a box,
+  rail or beacon tone, never red); the end exit a tray rimmed in that colour with its cue sticker on a small board
+  (`buildCueFace`, both faces, unmirrored), which lights as the box slides in (`landDelay` 0). Sounds: `beltDrop`,
+  `beltHum` (the whole run), `beltLand`.
 - Target hints (`Settings.targetHints`, persisted, additive, default off; P on the title and while playing,
   `Game.toggleHints` → `GameRenderer.setTargetHints` → `LevelView.setTargetHints`, set at mount and on every toggle,
   handed to each level built afterwards): the one switch for the light that answers a carried box. On, the zones that

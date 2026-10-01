@@ -18,13 +18,13 @@ de `LEVELS` no entra en subcarpetas, así que nunca llegan a `LEVELS`, a los tie
 «Continuar». El registro los carga aparte (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`), los valida
 igual y rechaza un id o un número que choque con un nivel del juego (`loadSpecialSources`), para que las herramientas
 puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark** (`BENCHMARK_ID = 'benchmark'`, número
-100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`) y del
-muelle de carga (`docs/DOCKS.md`).
+100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`), del
+muelle de carga (`docs/DOCKS.md`) y de la cinta transportadora (`docs/CONVEYOR.md`).
 
 - Parser y renderer: `src/data/asciiLevel.ts` (texto → `validateLevel` → `LevelData`, y `LevelData` → texto canónico).
-  Las estanterías almacenables y los camiones van juntos en `LevelData.storage` (docs/STORAGE.md: estanterías primero,
-  luego camiones, cada grupo en el orden de la leyenda); un `*.json` lo trae en `storage` o, como antes, en `racks` /
-  `trucks`.
+  Las estanterías almacenables, los camiones y las puntas de las cintas van juntos en `LevelData.storage`
+  (docs/STORAGE.md: estanterías, camiones, entradas y salidas de cinta, cada grupo en el orden de la leyenda); un
+  `*.json` lo trae en `storage` o, como antes, en `racks` / `trucks` (sin cintas). Las cintas, en `LevelData.conveyors`.
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
 - Métricas: `src/data/levels/metrics.ts` · Informe: `src/data/levels/report.ts` · Objetivos: `src/data/difficulty.ts`.
 
@@ -91,6 +91,7 @@ Cualquier otro carácter imprimible (letras, números, signos; nunca `=` ni `:`)
 descripción = elemento { "+" elemento }     (como mucho una zona y una caja o pila por carácter)
             | almacén                       (una estantería almacenable va sola)
             | camión                        (un camión de muelle va solo)
+            | cinta                         (cada pieza de una cinta va sola)
 elemento    = caja | pila | zona | estantería | planta
 caja        = "caja" color [símbolo] ["tipo" tipo] [id]
 pila        = "pila" color [símbolo] [id] { "," color [símbolo] [id] }      (de abajo arriba)
@@ -103,6 +104,9 @@ hueco       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]
 camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }   (1 a 3 columnas)
 niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1 o 2 niveles)
 nivel       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]          («libre», solo encima de las pistas)
+cinta       = "cinta" ["suelo" | "rampa" | "techo"]                       (una casilla de cinta; hoy solo la de suelo)
+            | "cinta entrada" [id]                                        (su entrada A: «libre»)
+            | "cinta final" [id] ":" ("libre" | color [símbolo] | símbolo) (su salida final B)
 planta      = "planta" ["variante"] [número]
 id          = "(" texto sin espacios ")"
 ```
@@ -132,6 +136,7 @@ id          = "(" texto sin espacios ")"
 | `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** aparcado fuera de una puerta del muro oeste (el carácter marca la casilla de la puerta, en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
 | `T = camión muelle norte: azul \| coral ◆ / libre` | camión de 2 columnas; con `limit: 2` cada columna llega sola a 2 niveles (`min(2, limit)`), así que las dos llevan un «libre» arriba, escrito o no (el formateador no escribe los «libre» de arriba sin caja) |
 | `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
+| `A = cinta entrada` · `~ = cinta` · `B = cinta final: coral ✚` | una **cinta transportadora**: en el mapa, `A~~B` en línea recta (de A a B; una fila o una columna); lo que se deja en A viaja solo hasta B, que pide «coral ✚» |
 
 Estanterías almacenables y camiones son dos aspectos del mismo almacenaje (docs/STORAGE.md: sus reglas comunes, entre
 ellas la horquilla con F / V y los niveles «libre»). Cada zona y cada nivel con pista de una unidad es un **objetivo**:
@@ -165,6 +170,14 @@ barandilla y tiene que ser un **obstáculo fijo**: una planta `p` (o una estante
 almacenable que no dé a la puerta). Si la tirada llega a un rincón del almacén, ese lado no tiene casilla lateral. Dos
 puertas pegadas no valen: entre ellas va al menos una casilla con un obstáculo. Así al camión solo se llega de frente,
 desde la fila (o columna) de detrás de la puerta. Ejemplo: `0 .pTTp...` (la puerta en 2–3, plantas en 1 y 4).
+
+Las **cintas transportadoras** (`docs/CONVEYOR.md`, gramática completa allí; hoy la cinta recta del suelo) son una
+tirada recta: su entrada (`cinta entrada`), al menos una casilla de cinta (`cinta`, `~` en la forma canónica) y su
+salida final (`cinta final: pista`), seguidas en una fila o una columna. La entrada es «libre» y se carga de frente
+desde el lado contrario a la cinta, como un hueco a ras del suelo; la carretilla nunca trabaja en la salida final: una
+caja dejada en la entrada viaja sola hasta ella (si está libre; si no, se queda en la entrada). La salida final con
+pista es un objetivo más del reparto único. Cinta, entrada y salida son obstáculos, y la cinta empieza vacía. Ids:
+cintas `c1, c2…` (o `(id)` en una de sus puntas), entradas `e1…`, salidas `s1…`.
 
 ## Reglas que conviene saber
 
@@ -231,6 +244,7 @@ frente (o de su puerta) y una caja sacada de ellas sale marcha atrás.
 | `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
 | `camion` | Niveles de camión, con pista y «libre» (alias `camiones`; en el informe: con pista y libres, columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
+| `cinta` | Cintas transportadoras (alias `cintas`; en el informe: sus casillas por pieza y sus salidas finales con pista; columna «cinta» = cintas / casillas; `docs/CONVEYOR.md`). Dejar en la entrada es un movimiento que pone la caja en su salida final; el viaje no cuenta. |
 | `cajas`, `zonas` | Cuántas hay. |
 
 Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de
@@ -254,7 +268,7 @@ archivo vive en `src/data` y no junto a los niveles porque todo `*.json` de `src
   juego real es algo más permisivo, así que terminar en menos es posible y también cuenta como «mínimo»). Si el
   presupuesto se agota, `"exact": false` y `moves` es solo una cota inferior demostrada: el HUD y la tarjeta la
   enseñan como "mín. ≥ 10", u omiten el mínimo si `moves.showLowerBound` es `false` en `gameConfig.json`. Para
-  convertirla en exacta, sube `--estados`. Hoy los 3 niveles y el Benchmark son exactos (1, 2, 3 y 14).
+  convertirla en exacta, sube `--estados`. Hoy los 3 niveles y el Benchmark son exactos (1, 2, 3 y 15).
 - **Comprobarlo:** `npm run levels -- --minimos --check` solo dice si el archivo está al día (código de salida 1 si
   no); `npm test` lo recalcula (`src/data/levels/minimums.test.ts`) y falla con «run `npm run levels -- --minimos`»
   cuando un nivel (o el solver) cambió y el archivo se quedó atrás. No se edita a mano.
@@ -292,8 +306,8 @@ Métricas de la tabla, comparaciones `>= <= = > <` (también `≥ ≤`), número
 (`levels.test.ts`) miden cada nivel que declara objetivos y fallan si alguno no está **demostrado**: una cota «≥ n»
 demuestra `>=`/`>` pero no `<=`, `<` ni `=` (sube `--estados` o simplifica el nivel). Solo buscan movimientos si algún
 objetivo habla de `movimientos` o `extra`, y paran en cuanto cada objetivo queda demostrado o descartado. Una métrica
-que no aplica (`repartos` sin símbolos, estanterías ni camiones) nunca se cumple (`huecos` y `camion` valen 0 sin
-estanterías o sin camiones). `callejones` también se puede pedir
+que no aplica (`repartos` sin símbolos, estanterías ni camiones) nunca se cumple (`huecos`, `camion` y `cinta` valen 0
+sin estanterías, camiones o cintas). `callejones` también se puede pedir
 (`callejones=0`), pero en un nivel grande la búsqueda no llega a todos los estados, así que solo demuestra `>=`: el
 «ninguno» de todos los niveles lo garantiza el test de arriba.
 

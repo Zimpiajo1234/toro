@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hasConveyors } from '../core/conveyors';
 import { storageOf } from '../core/storage';
 import { isDoorUnit, isFrontUnit, type LevelData, type LevelStorage } from '../core/types';
 import { formatLevel, parseLevel } from './asciiLevel';
@@ -6,7 +7,10 @@ import { BENCHMARK_ID, getSpecialLevel } from './levels';
 import { validateLevel } from './validateLevel';
 import threeTrucksText from './levels/pruebas/tres-camiones.level?raw';
 
-/** The Benchmark and the three-truck fixture (docs/STORAGE.md «Nivel de prueba»): racks and trucks of every kind. */
+/**
+ * The Benchmark and the three-truck fixture (docs/STORAGE.md «Nivel de prueba»): racks and trucks of every kind, and
+ * the Benchmark's conveyor belt (docs/CONVEYOR.md).
+ */
 const STORED = [getSpecialLevel(BENCHMARK_ID)!, parseLevel(threeTrucksText).level];
 
 /*
@@ -49,7 +53,10 @@ function legacyListsOf(level: LevelData): { racks: Raw[]; trucks: Raw[] } {
   const columns = (unit: LevelStorage) => unit.columns.map((levels) => levels.map((cue) => ({ ...cue })));
   const units = storageOf(level);
   return {
-    racks: units.filter(isFrontUnit).map((u) => ({ id: u.id, x: u.x, z: u.z, w: u.w, facing: u.access.facing, columns: columns(u) })),
+    racks: units
+      .filter(isFrontUnit)
+      .filter((u) => u.skin === 'rack')
+      .map((u) => ({ id: u.id, x: u.x, z: u.z, w: u.w, facing: u.access.facing, columns: columns(u) })),
     trucks: units.filter(isDoorUnit).map((u) => ({ id: u.id, wall: u.access.wall, x: u.x, z: u.z, w: u.w, columns: columns(u) })),
   };
 }
@@ -100,11 +107,17 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
   });
 
   it('a legacy JSON level (`racks`, `trucks`) gives the same level as its `storage`', () => {
-    for (const level of STORED) {
+    // A legacy level never had conveyor belts (docs/CONVEYOR.md): a belt's units only ever go in `storage`.
+    for (const level of STORED.filter((l) => !hasConveyors(l))) {
       const legacy: Raw = { ...structuredClone(level), ...legacyListsOf(level) };
       delete legacy.storage;
       expect(validateLevel(legacy, level.id)).toStrictEqual(level);
     }
+    const benchmark = STORED[0];
+    expect(hasConveyors(benchmark)).toBe(true);
+    const legacyBelts: Raw = { ...structuredClone(benchmark), ...legacyListsOf(benchmark) };
+    delete legacyBelts.storage;
+    expect(fails(legacyBelts)).toBe('conveyors[0].input "e1" is not a belt input (a storage unit of skin beltIn)');
     const legacy = base({ racks: [{ x: 5, z: 0, facing: 'south', columns: [[{ color: 'blue' }]] }], trucks: [{ wall: 'north', x: 2, z: 0, columns: [[{ color: 'mint' }]] }] });
     expect(validateLevel(legacy, 'x')).toStrictEqual(validateLevel(base({ storage: [RACK, TRUCK] }), 'x'));
   });
@@ -112,7 +125,7 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
   it('refuses a malformed `storage`: mixed with the legacy lists, an unknown skin, an access of another kind', () => {
     expect(fails({ ...base({ storage: [RACK] }), trucks: [] })).toBe('storage and the legacy racks / trucks lists do not mix: give every storage unit in storage');
     expect(fails(base({ storage: [RACK, 'truck'] }))).toBe('storage[1] must be an object');
-    expect(fails(base({ storage: [RACK, { ...TRUCK, skin: 'crate' }] }))).toBe('storage[1].skin must be rack or truck');
+    expect(fails(base({ storage: [RACK, { ...TRUCK, skin: 'crate' }] }))).toBe('storage[1].skin must be rack or truck or beltIn or beltOut');
     expect(fails(base({ storage: [RACK, { ...TRUCK, access: { kind: 'front', facing: 'south' } }] }))).toBe('trucks[0].access.kind must be "door": the access of a truck');
     expect(fails(base({ storage: [{ ...RACK, access: undefined }, TRUCK] }))).toBe('racks[0].access must be an object');
     // Named the same way: ids unique across skins. A «libre» truck level is fine (a truck of «libre» levels only counts

@@ -28,12 +28,12 @@ describe('precomputed level minimums', () => {
 
   it('cover levels 1–3 and the Benchmark, all exact today', () => {
     expect(Object.keys(MINIMUMS_FILE.levels)).toEqual(ALL.map((l) => l.id));
-    expect(levelMinimum(BENCHMARK_ID)).toEqual({ moves: 14, exact: true });
+    expect(levelMinimum(BENCHMARK_ID)).toEqual({ moves: 15, exact: true });
     for (const level of ALL) {
       const m = levelMinimum(level.id)!;
       expect(m.exact, level.id).toBe(true);
-      // Every box that does not start on its destiny moves at least once.
-      expect(m.moves, level.id).toBeGreaterThanOrEqual(level.id === BENCHMARK_ID ? 12 : level.boxes.length);
+      // Every box that does not start on its destiny moves at least once (none does, in any of them).
+      expect(m.moves, level.id).toBeGreaterThanOrEqual(level.boxes.length);
     }
   });
 

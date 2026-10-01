@@ -1,6 +1,7 @@
 import type { BoxState, Facing, LevelData, Vec2, WallSide } from '../core/types';
 import { FACING_X, FACING_Z } from '../core/racks';
 import { DOOR_JAMB, dockRailsOf, type DockRail } from '../core/docks';
+import { conveyorsOf } from '../core/conveyors';
 import { STORAGE_SKINS, storageColumnsOf, storageOf, storageSlotsOf } from '../core/storage';
 
 export { DOOR_JAMB };
@@ -133,8 +134,10 @@ export function railRect(rail: DockRail, hw: number, hd: number): Rect {
  * - `door` (a truck): its span of a dock door (doorCells), beyond the wall: wall for the load while shut; open, the load
  *   passes onto the bed (still meeting the jambs, the back of the pocket and any shut span beside it). The body never
  *   meets it (it meets the whole wall) and the fork point never does (empty tines pass any door).
+ * - `belt` (a belt's end exit, docs/CONVEYOR.md): its cell, never opened (the forklift never works at it); the world
+ *   keeps it among its static obstacles, like the belt's cells, so the body, the load and the fork point all meet it.
  */
-export type StorageOpening = { access: 'front'; cell: Rect; facing: Facing } | { access: 'door'; span: Rect };
+export type StorageOpening = { access: 'front'; cell: Rect; facing: Facing } | { access: 'door'; span: Rect } | { access: 'belt'; cell: Rect };
 
 /** The storage a collision world is built with (all optional: none by default). */
 export interface StorageColliders {
@@ -320,7 +323,8 @@ export class CollisionWorld {
     this.bounds = bounds;
     this.statics = statics;
     this.loadWalls = doors.length > 0 ? doorWalls(bounds, doors) : null;
-    this.openings = openings.map((o) => (o.access === 'front' ? slotOpening(o.cell, o.facing) : { rect: o.span, walls: [] }));
+    // A belt's end exit is in neither list below: its cell is a static obstacle (fromLevel), never opened.
+    this.openings = openings.map((o) => (o.access === 'front' ? slotOpening(o.cell, o.facing) : { rect: o.access === 'door' ? o.span : o.cell, walls: [] }));
     this.frontColumns = openings.flatMap((o, i) => (o.access === 'front' ? [i] : []));
     this.doorColumns = openings.flatMap((o, i) => (o.access === 'door' ? [i] : []));
     this.open = new Uint8Array(openings.length);
@@ -345,6 +349,12 @@ export class CollisionWorld {
     // The guard rails beside each dock door (none without trucks): thin and static, for the body, the load and the fork
     // point alike, on the door's jamb line from the wall's inner face to one cell in, as thick as DOCK_RAIL outward.
     for (const r of dockRailsOf(level)) statics.push(railRect(r, hw, hd));
+    // Conveyor belts (docs/CONVEYOR.md; none without them): every belt cell and every end exit's cell is a whole-cell
+    // static obstacle (low furniture the forklift never drives onto); a belt's input is a storage column of the `front`
+    // access below, entered only by the load through its front, like a rack slot at the floor.
+    const cellRect = (x: number, z: number): Rect => ({ minX: x - hw, minZ: z - hd, maxX: x + 1 - hw, maxZ: z + 1 - hd });
+    for (const belt of conveyorsOf(level)) for (const c of belt.cells) statics.push(cellRect(c.x, c.z));
+    for (const unit of storageOf(level)) if (unit.access.kind === 'belt') statics.push(cellRect(unit.x, unit.z));
     // A dock door spans its unit's run of door cells along its wall; each of its columns opens its own span of it.
     const doors: DoorSpan[] = [];
     for (const unit of storageOf(level)) {
@@ -358,7 +368,8 @@ export class CollisionWorld {
       const a = col.unit.access;
       if (a.kind === 'door') return { access: 'door', span: spans[door++] };
       const c = col.cell;
-      return { access: 'front', cell: { minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }, facing: a.facing };
+      if (a.kind === 'belt') return { access: 'belt', cell: cellRect(c.x, c.z) };
+      return { access: 'front', cell: cellRect(c.x, c.z), facing: a.facing };
     });
     const shelfSlots = new Set(storageSlotsOf(level).filter((s) => STORAGE_SKINS[s.unit.skin].support === 'shelves').map((s) => s.id));
     return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, { openings, doors, shelfSlots });

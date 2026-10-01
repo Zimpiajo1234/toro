@@ -159,8 +159,10 @@ export const TRUCK_FACING: Readonly<Record<WallSide, Facing>> = { north: 'south'
 /**
  * The skin of a storage unit (docs/STORAGE.md «Modelo»): its drawing plus the few properties its row of core/storage
  * `STORAGE_SKINS` declares (support, heights, columns, access, id prefix, map letters, fill, sound). The logic is one.
+ * A conveyor belt (docs/CONVEYOR.md) brings two: `beltIn`, its input (loaded from its front like a rack slot), and
+ * `beltOut`, its end exit (filled by the belt only); they share one drawing (render/storage/conveyor).
  */
-export type StorageSkin = 'rack' | 'truck';
+export type StorageSkin = 'rack' | 'truck' | 'beltIn' | 'beltOut';
 
 /**
  * How the levels of a unit's column hold boxes (`STORAGE_SKINS[skin].support`): `shelves` = every level is a slot of
@@ -171,10 +173,12 @@ export type StorageSupport = 'shelves' | 'stack';
 
 /**
  * Where a unit is loaded from (docs/STORAGE.md «Acceso»). `front`: from the floor cell next to each column on the
- * `facing` side; the unit's cells are map cells, solid (a rack). `door`: from the door cell of each column, a map cell of
- * row 0 / column 0 against `wall`; the column's cell lies one step beyond the wall, outside the map (a truck).
+ * `facing` side; the unit's cells are map cells, solid (a rack, a belt's input). `door`: from the door cell of each
+ * column, a map cell of row 0 / column 0 against `wall`; the column's cell lies one step beyond the wall, outside the map
+ * (a truck). `belt`: by a conveyor belt only, from its `facing` side (its front cell is the belt's last cell); the
+ * forklift never engages it (a belt's end exit, docs/CONVEYOR.md); its cell is a map cell, solid.
  */
-export type StorageAccess = { kind: 'front'; facing: Facing } | { kind: 'door'; wall: WallSide };
+export type StorageAccess = { kind: 'front'; facing: Facing } | { kind: 'door'; wall: WallSide } | { kind: 'belt'; facing: Facing };
 
 /**
  * A storage unit of a level (docs/STORAGE.md «Modelo», rules 1–3): a straight run of 1‥maxColumns columns, one per
@@ -205,12 +209,50 @@ export interface LevelStorage {
 }
 
 /**
- * A storage unit of the `front` access (a rack: its own map cells, loaded from the floor cell in front of each column)
- * or of the `door` access (a truck: its door cells, each column's cell beyond the wall), as the geometry and the
- * builders of that access read it (isFrontUnit / isDoorUnit).
+ * A storage unit of the `front` access (a rack, a belt's input: its own map cells, loaded from the floor cell in front of
+ * each column), of the `door` access (a truck: its door cells, each column's cell beyond the wall) or of the `belt`
+ * access (a belt's end exit: its own map cell, fed by its belt), as the geometry and the builders of that access read it
+ * (isFrontUnit / isDoorUnit / isBeltUnit).
  */
 export type FrontUnit = LevelStorage & { readonly access: Extract<StorageAccess, { kind: 'front' }> };
 export type DoorUnit = LevelStorage & { readonly access: Extract<StorageAccess, { kind: 'door' }> };
+export type BeltUnit = LevelStorage & { readonly access: Extract<StorageAccess, { kind: 'belt' }> };
+
+/* ------------------------------------------------------------------ */
+/* Conveyor belts (docs/CONVEYOR.md)                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The pieces a belt is built from (docs/CONVEYOR.md «Las tres piezas»): `suelo` = a flat band on the floor, `rampa` =
+ * a ramp that climbs to the ceiling, `techo` = a band hung under the ceiling. The data carries them all from the first
+ * milestone; only `suelo` is built so far (validateLevel refuses the others for now).
+ */
+export const CONVEYOR_PIECES = ['suelo', 'rampa', 'techo'] as const;
+export type ConveyorPiece = (typeof CONVEYOR_PIECES)[number];
+
+/** One cell of a belt: its map cell, its piece and the height of its surface there (levels: 0 = on the floor). */
+export interface ConveyorCell {
+  x: number;
+  z: number;
+  piece: ConveyorPiece;
+  height: number;
+}
+
+/**
+ * A conveyor belt (docs/CONVEYOR.md): a straight run of belt cells from its input, a storage unit of skin `beltIn`
+ * (a 1×1 «libre» unit loaded from its front, the side away from the belt), to its end exit, a unit of skin `beltOut`
+ * (a 1×1 unit with a cue or «libre», access `belt`: only the belt fills it). A box set down on the input rides the
+ * belt into the end exit.
+ */
+export interface LevelConveyor {
+  /** c1, c2… in the order of the inputs (generated), or the belt's own. */
+  id: string;
+  /** Its input and its end exit, by unit id (level.storage). */
+  input: string;
+  output: string;
+  /** Its belt cells in order, from the one next to the input to the one next to the end exit (at least one). */
+  cells: ConveyorCell[];
+}
 
 export interface LevelData {
   id: string;
@@ -231,6 +273,11 @@ export interface LevelData {
    * `hasStorage`).
    */
   storage?: LevelStorage[];
+  /**
+   * Conveyor belts (docs/CONVEYOR.md), in the order of their inputs (storage order). Omitted when the level has none
+   * (validateLevel never adds an empty list). Their inputs and end exits are units of `storage`.
+   */
+  conveyors?: LevelConveyor[];
   decor: {
     plants: LevelPlant[];
     windows: LevelWindow[];
@@ -439,6 +486,27 @@ export interface StorageHint {
   ready: boolean;
 }
 
+/**
+ * What a conveyor belt is doing (docs/CONVEYOR.md): `idle` (nothing on it, or a box waiting on its input because its
+ * end exit is full), `settling` (a box just set down on its input, about to ride) or `running` (carrying it).
+ */
+export type ConveyorPhase = 'idle' | 'settling' | 'running';
+
+/** One conveyor belt, live (GameSnapshot.conveyors, in level.conveyors order): what the render and the tests read. */
+export interface ConveyorState {
+  /** Its LevelConveyor id. */
+  id: string;
+  phase: ConveyorPhase;
+  /** The box settling on its input or riding it, else null (a box merely waiting on the input is not on its way). */
+  boxId: string | null;
+  /** 0‥1 along its path while running (0 = the input's centre, 1 = the end exit's); 0 otherwise. */
+  progress: number;
+  /** Its surface is moving (phase `running`): its stripes slide. */
+  running: boolean;
+  /** Distance (cells) its surface has moved since the level started, never going back: the stripes slide by it. */
+  travel: number;
+}
+
 /** Guidance the render layer uses to teach through design (no text). */
 export interface InteractionHint {
   /** Box that would be picked up if the action were pressed now. */
@@ -463,6 +531,8 @@ export interface GameSnapshot {
   zones: ZoneState[];
   /** Every storage slot (docs/STORAGE.md), in core/storage `storageSlotsOf` order; empty in levels without storage. */
   storageSlots: StorageSlotState[];
+  /** Every conveyor belt (docs/CONVEYOR.md), in level.conveyors order; empty in levels without belts. */
+  conveyors: ConveyorState[];
   hint: InteractionHint;
   completed: boolean;
   /** Targets currently satisfied / total: the zones, plus the storage slots with a cue in levels with storage. */
@@ -572,6 +642,35 @@ export type GameEvent =
       satisfiedCount: number;
       total: number;
     }
+  /**
+   * Conveyor belts (docs/CONVEYOR.md): belt `conveyorId` starts carrying `boxId` from its input (the box has settled
+   * there). The run lasts `runSec`, easing in and out over `rampSec` at each end: the audio's hum follows it.
+   */
+  | { type: 'beltStarted'; conveyorId: string; boxId: string; runSec: number; rampSec: number }
+  /**
+   * The box reached the belt's end exit and rests in its slot (`slotId`, of a unit of skin `skin`): no box move (the
+   * move counter counted the drop on the input). `correct` = that slot is now satisfied (its destined box, which locks
+   * there); `wrongTarget` = a slot with a cue it does not satisfy (the soft buzz; absent otherwise, e.g. a «libre» end
+   * exit). The counts are as in boxDropped.
+   */
+  | {
+      type: 'beltDelivered';
+      conveyorId: string;
+      boxId: string;
+      slotId: string;
+      skin: StorageSkin;
+      correct: boolean;
+      /** 1 for an end exit with a cue, 0 for a «libre» one. */
+      recipeLength: number;
+      satisfiedCount: number;
+      total: number;
+      wrongTarget?: boolean;
+    }
+  /**
+   * A box was set down on the input of belt `conveyorId` while its end exit is full: it stays there (pickable again) and
+   * the soft wrong-target buzz says so (after its boxDropped, in the same frame). Nothing visual.
+   */
+  | { type: 'beltBlocked'; conveyorId: string; boxId: string }
   | { type: 'levelComplete' };
 
 export type GameEventType = GameEvent['type'];
@@ -603,4 +702,8 @@ export function isFrontUnit(unit: LevelStorage): unit is FrontUnit {
 
 export function isDoorUnit(unit: LevelStorage): unit is DoorUnit {
   return unit.access.kind === 'door';
+}
+
+export function isBeltUnit(unit: LevelStorage): unit is BeltUnit {
+  return unit.access.kind === 'belt';
 }

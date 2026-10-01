@@ -10,6 +10,11 @@ import type { StorageAccess } from '../core/types';
  */
 export interface StorageAccessRow {
   /**
+   * The forklift engages the columns of this access at all (false: a belt's end exit, which only its belt fills: never
+   * faced, held, picked or dropped into; the margins below are then unused).
+   */
+  readonly engages: boolean;
+  /**
    * Facing a column engages it: the heading within `faceAngle` (rad) of straight in, the fork point within
    * `faceLateral` of its centre line and between `faceNear` in front of its face and `faceFar` past it.
    */
@@ -50,8 +55,12 @@ export interface StorageAccessRow {
  * of the first access that engages a column wins, as a rack always did over a truck).
  */
 export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAccessRow } = {
-  /** A storage rack: loaded from the floor cell in front of each column; the column's cell is solid. */
+  /**
+   * A storage rack (and a belt's input: one slot at the floor, docs/CONVEYOR.md): loaded from the floor cell in front of
+   * each column; the column's cell is solid.
+   */
   front: {
+    engages: true,
     faceAngle: degToRad(30),
     faceLateral: 0.35,
     faceNear: 0.8,
@@ -74,6 +83,7 @@ export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAcc
    * 0.42). Short of that the load is in the doorway at most; further back the floor rules apply.
    */
   door: {
+    engages: true,
     faceAngle: degToRad(30),
     faceLateral: 0.5,
     faceNear: 0.8,
@@ -86,6 +96,25 @@ export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAcc
     pickReach: 0.3,
     dropReach: 0.3,
     doorway: true,
+  },
+  /**
+   * A belt's end exit (docs/CONVEYOR.md): its belt fills it, the forklift never works at it (its cell is solid, like
+   * any furniture). Nothing below is ever read.
+   */
+  belt: {
+    engages: false,
+    faceAngle: 0,
+    faceLateral: 0,
+    faceNear: 0,
+    faceFar: 0,
+    holdAngle: 0,
+    holdLateral: 0,
+    holdNear: 0,
+    bodyInLine: false,
+    actsHeld: false,
+    pickReach: 0,
+    dropReach: 0,
+    doorway: false,
   },
 };
 

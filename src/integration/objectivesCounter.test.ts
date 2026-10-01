@@ -1,9 +1,10 @@
 /**
  * Integration check (objectives counter × logic × autopilot): the autopilot (./autopilot.ts) plays level 3, the
  * Benchmark and the three-truck fixture to the end with the real GameState, read after every frame. The HUD's «Quedan
- * N» (logic/objectives) starts at every box still to place, moves by one only on a frame with a pick or a drop, never
- * goes back up where a placed box locks (levels with storage: there it is always the targets left), and reaches 0 on the
- * very frame the level completes, never before.
+ * N» (logic/objectives) starts at every box still to place, moves by one only on a frame with a pick, a drop or a
+ * conveyor belt's delivery (docs/CONVEYOR.md: a box on its way still counts), never goes back up where a placed box
+ * locks (levels with storage: there it is always the targets left), and reaches 0 on the very frame the level
+ * completes, never before.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { hasStorage } from '../core/storage';
@@ -29,7 +30,7 @@ vi.mock('../logic/GameState', async (importOriginal) => {
       frames.push({
         left: count(snap),
         targetsLeft: snap.progress.total - snap.progress.satisfied,
-        acted: events.some((e) => e.type === 'boxPicked' || e.type === 'boxDropped'),
+        acted: events.some((e) => e.type === 'boxPicked' || e.type === 'boxDropped' || e.type === 'beltDelivered'),
         completed: snap.completed,
       });
       return events;
@@ -43,7 +44,7 @@ const threeTrucks = parseLevel(threeTrucksText, 'src/data/levels/pruebas/tres-ca
 describe('the objectives counter over whole levels played with the real controls', () => {
   it.each([
     ['level 3', LEVELS.find((l) => l.order === 3)!, 3],
-    ['the Benchmark', getSpecialLevel(BENCHMARK_ID)!, 12],
+    ['the Benchmark', getSpecialLevel(BENCHMARK_ID)!, 13],
     ['the three-truck fixture', threeTrucks, null],
   ] as [string, LevelData, number | null][])('%s: from every box still to place down to 0 as it completes', (_, level, boxes) => {
     const fresh = new GameState(level).getSnapshot();

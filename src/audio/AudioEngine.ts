@@ -82,6 +82,11 @@ export class AudioEngine {
   private droppedBoxId: string | null = null;
   /** How much later than a plain chime that drop's chime rings (a completed stack climbs into it first). */
   private completeTail = 0;
+  /**
+   * When the last box handled lands after its event: a drop glides first (DROP_LAND_SEC); a box a conveyor belt brings
+   * to its end exit has already arrived (0). The level-complete arpeggio follows that landing.
+   */
+  private landSec = DROP_LAND_SEC;
 
   constructor(private readonly config: GameConfig['audio'] = GAME_CONFIG.audio) {
     this.composer = new Composer({ rng: this.rng });
@@ -128,6 +133,9 @@ export class AudioEngine {
             // Onto a truck bed (loading docks): the hollow wooden trailer-floor thunk; the chime only when its truck
             // level is now satisfied (`correct`), like a rack slot.
             rt.sfx.truckDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
+          } else if (sound === 'belt') {
+            // Onto a conveyor belt's input pad (docs/CONVEYOR.md): the soft rubbery tup (a «libre» input never chimes).
+            rt.sfx.beltDrop(now + DROP_LAND_SEC, chime, final, match);
           } else {
             const stack =
               event.correct && event.recipeLength > 1
@@ -155,6 +163,23 @@ export class AudioEngine {
         case 'zoneReleased':
           // Un-completed by the box just stacked on top: the tick follows that box's landing, never precedes it.
           rt.sfx.tick(event.boxId === this.droppedBoxId ? now + DROP_LAND_SEC + RELEASE_AFTER_LAND_SEC : now, 'release');
+          break;
+        case 'beltStarted':
+          // Conveyor belts (docs/CONVEYOR.md): the belt's soft electric hum for its whole run, easing in and out with it.
+          rt.sfx.beltHum(now, event.runSec, event.rampSec);
+          break;
+        case 'beltDelivered': {
+          // The box comes to rest in the end exit (sliding in: no drop glide to wait for): the soft knock now, the chime
+          // only with its destined box, the soft "no" on a cued end exit it does not satisfy.
+          const chord = this.composer.currentChord() ?? undefined;
+          const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
+          rt.sfx.beltLand(now, chime, event.correct && event.satisfiedCount >= event.total, match);
+          if (event.wrongTarget === true && !event.correct) rt.sfx.wrongBuzz(now + WRONG_AFTER_LAND_SEC);
+          break;
+        }
+        case 'beltBlocked':
+          // Set down on a belt's input whose end exit is full: it stays there; the soft "no" after its tup.
+          rt.sfx.wrongBuzz(now + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC);
           break;
         case 'actionIdle':
           rt.sfx.tick(now, 'idle');
@@ -357,7 +382,7 @@ export class AudioEngine {
     // stack's climb into it, with the zones' glow wave), on the music's 8th-note grid so it feels part of the
     // song, fitted to the chord still sounding. The tonic swell waits for the downbeat where the music resolves (the bar requestResolve()
     // lands on) and carries that bar's sub-bass: one bass, never two roots at once.
-    const at = rt.music.nextEighth(now + DROP_LAND_SEC + COMPLETE_AFTER_LAND_SEC + this.completeTail);
+    const at = rt.music.nextEighth(now + this.landSec + COMPLETE_AFTER_LAND_SEC + this.completeTail);
     const downbeat = rt.music.nextUnplannedDownbeat(at);
     rt.music.yieldResolveBass();
     const arpeggio = completionArpeggio(key, this.composer.currentChord() ?? undefined);
@@ -375,9 +400,16 @@ export class AudioEngine {
     if (event.type === 'boxDropped') {
       this.droppedBoxId = event.boxId;
       this.completeTail = event.correct && event.recipeLength > 1 ? (Math.round(event.recipeLength) - 1) * STACK_NOTE_GAP : 0;
+      this.landSec = DROP_LAND_SEC;
+    } else if (event.type === 'beltDelivered') {
+      // A conveyor belt's box: it slid into its end exit and is already there.
+      this.droppedBoxId = event.boxId;
+      this.completeTail = 0;
+      this.landSec = 0;
     } else if (event.type === 'boxPicked' || event.type === 'levelComplete') {
       this.droppedBoxId = null;
       this.completeTail = 0;
+      this.landSec = DROP_LAND_SEC;
     }
   }
 
@@ -487,9 +519,9 @@ export function isWrongTarget(event: GameEvent): boolean {
 /**
  * How a pick or a drop in storage sounds (docs/STORAGE.md «Contratos por capa», audio): the event's slot names its unit's skin,
  * whose row says the sound (core/storage STORAGE_SKINS: `metal` = a rack's slotLift / slotDrop, `wood` = pickup /
- * truckDrop); null off storage (the floor's own sounds).
+ * truckDrop, `belt` = pickup / beltDrop); null off storage (the floor's own sounds).
  */
-function soundOf(slotId: string | undefined, skin: StorageSkin | undefined): 'metal' | 'wood' | null {
+function soundOf(slotId: string | undefined, skin: StorageSkin | undefined): 'metal' | 'wood' | 'belt' | null {
   return slotId !== undefined && skin !== undefined ? STORAGE_SKINS[skin].sound : null;
 }
 

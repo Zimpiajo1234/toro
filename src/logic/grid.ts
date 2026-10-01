@@ -1,4 +1,5 @@
 import { STORAGE_SKINS, storageColumnsOf } from '../core/storage';
+import { conveyorsOf } from '../core/conveyors';
 import type { CellPos, Facing, LevelData, StorageAccess, StorageSkin, StorageSupport } from '../core/types';
 
 const EMPTY: readonly number[] = Object.freeze([]);
@@ -32,14 +33,15 @@ export interface StorageColumn {
 }
 
 /**
- * Cell-indexed lookups for one level: static obstacles (shelves, plants, storage columns inside the map), resting boxes
- * (per-cell stacks and the boxes of every storage column) and zones. O(1) queries with no allocation (a cell outside
- * the map is looked up among the few columns beyond a wall). Out-of-bounds queries are safe.
+ * Cell-indexed lookups for one level: static obstacles (shelves, plants, storage columns inside the map, conveyor belt
+ * cells), resting boxes (per-cell stacks and the boxes of every storage column) and zones. O(1) queries with no
+ * allocation (a cell outside the map is looked up among the few columns beyond a wall). Out-of-bounds queries are safe.
  *
  * A storage column keeps its boxes by its support (docs/STORAGE.md «Soporte»): on shelves one box per level (`slotBox`),
  * outside every stack; in a stack a stack of its own, bottom → top, which the stack queries (height, boxAt, baseAt,
  * stackAt, pushBox, popBox, capacity) answer on its cell like a floor stack, with its levels as capacity — also beyond a
- * wall, where nothing else answers.
+ * wall, where nothing else answers. A sealed slot (`seal`) holds its box out of reach: a belt's end exit always, a belt's
+ * input while its box settles or rides (docs/CONVEYOR.md).
  */
 export class LevelGrid {
   readonly width: number;
@@ -50,7 +52,7 @@ export class LevelGrid {
   readonly columns: readonly StorageColumn[];
   /** Total storage slots (levels of every column). */
   readonly slotCount: number;
-  /** 1 = shelf, plant or storage column inside the map (a dock's door cells are plain floor). */
+  /** 1 = shelf, plant, storage column inside the map or belt cell (a dock's door cells are plain floor). */
   private readonly blocked: Uint8Array;
   /** Per cell: indices (into the level's box list) of the boxes resting there, bottom → top. */
   private readonly stacks: number[][];
@@ -66,6 +68,8 @@ export class LevelGrid {
   private readonly slotBoxes: Int32Array;
   /** Per storage slot: its column. */
   private readonly slotColumn: Int32Array;
+  /** Per storage slot: 1 while its box is out of reach (never lifted): see seal. */
+  private readonly sealed: Uint8Array;
 
   constructor(level: LevelData) {
     const { width, depth } = level.size;
@@ -111,6 +115,10 @@ export class LevelGrid {
     this.slotBoxes = new Int32Array(this.slotCount).fill(-1);
     this.slotColumn = new Int32Array(this.slotCount);
     columns.forEach((c, i) => this.slotColumn.fill(i, c.firstSlot, c.firstSlot + c.levels));
+    // A belt's end exit is filled by its belt only: its box is never lifted (docs/CONVEYOR.md). Its belt cells are solid.
+    this.sealed = new Uint8Array(this.slotCount);
+    for (const c of columns) if (c.access === 'belt') this.sealed.fill(1, c.firstSlot, c.firstSlot + c.levels);
+    for (const belt of conveyorsOf(level)) for (const cell of belt.cells) if (this.inBounds(cell.x, cell.z)) this.blocked[this.index(cell.x, cell.z)] = 1;
     this.columnStacks = columns.map(() => []);
     level.zones.forEach((zone, i) => (this.zones[this.index(zone.x, zone.z)] = i));
     // Boxes sharing a floor cell are listed bottom → top; a box stored in a column (a rack cell, a truck's bed cell
@@ -243,11 +251,11 @@ export class LevelGrid {
 
   /**
    * The box a pick at `level` of `column` would lift, or -1: on shelves the box on that shelf; in a stack only its top
-   * box, at its own level (docs/STORAGE.md rule 9: never one from under another).
+   * box, at its own level (docs/STORAGE.md rule 9: never one from under another); never a sealed slot's.
    */
   liftableAt(column: number, level: number): number {
     const slot = this.slotOf(column, level);
-    if (slot < 0) return -1;
+    if (slot < 0 || this.sealed[slot] === 1) return -1;
     if (this.columns[column].support === 'shelves') return this.slotBoxes[slot];
     const stack = this.columnStacks[column];
     return level === stack.length - 1 ? stack[level] : -1;
@@ -270,6 +278,18 @@ export class LevelGrid {
     const c = this.columns[column];
     if (c.support === 'shelves') this.slotBoxes[c.firstSlot + level] = -1;
     else this.columnStacks[column].pop();
+  }
+
+  /**
+   * Seal (or unseal) storage slot `slot`: its box stays out of reach, never a pick target (liftableAt). A belt's input
+   * while its box settles there or rides on (docs/CONVEYOR.md); a belt's end exit is sealed for good.
+   */
+  seal(slot: number, sealed: boolean): void {
+    if (slot >= 0 && slot < this.slotCount) this.sealed[slot] = sealed ? 1 : 0;
+  }
+
+  isSealed(slot: number): boolean {
+    return slot >= 0 && slot < this.slotCount && this.sealed[slot] === 1;
   }
 
   private index(x: number, z: number): number {

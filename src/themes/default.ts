@@ -58,6 +58,20 @@ export const defaultTheme: Theme = {
     rail: '#eca060',
     railCap: '#f7f0e4',
   },
+  /**
+   * A soft graphite rubber band (darker than the racks' slate, cooler than the wood) between fine warm-white rails, faint
+   * stripes a touch lighter. Identity colours, deeper than the pastel boxes so they never read as one: teal (hue ≈ 184°,
+   * between mint and blue and far from both), plum (≈ 320°, far from red), moss and indigo. ΔE2000 ≥ 18 from every box
+   * face and zone tone (≥ 11.8 from the deep lid inks), ≥ 26 from the rails and the beacon, ≥ 15.9 from the leaves, ≥ 25
+   * from each other (themes.test.ts).
+   */
+  conveyor: {
+    belt: '#5f676e',
+    stripe: '#6e777f',
+    edge: '#ebe6dc',
+    board: '#f1ece3',
+    identity: ['#369aa1', '#a8508a', '#8f9a2c', '#4f62c4'],
+  },
   plant: { pot: '#e4d8c6', soil: '#b9a488', leaves: ['#9db592', '#8aa981', '#a9c09c'] },
   forklift: {
     body: '#f7f2e9',
