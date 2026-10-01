@@ -15,8 +15,9 @@
  * controls (S = drive throttle < 0), as a player would. Storage racks (docs/RACKS.md): in front of a rack column it
  * picks the slot level with the fork keys (InputFrame.forkStep, one press per slot, like F / V), waits for the forks,
  * then drives the load in (or lifts the slot's box) and backs straight out. Loading docks (docs/DOCKS.md): a truck bed
- * is a stack position of the same model, so the plan drives straight up to its front cell and drops (the fork height
- * is automatic, no fork keys), and backs straight out with a box lifted off it.
+ * is a stack position of the same model (outside the map, beyond its door), so the plan drives straight up to its door
+ * cell, the load going through the door, and drops (the fork height is automatic, no fork keys); with a box lifted off
+ * it, it backs straight out through the door.
  */
 import { angleDelta } from '../core/math';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type Vec2 } from '../core/types';
@@ -41,7 +42,10 @@ import { slotsOf } from '../core/racks';
 
 const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 
-/** Live stacks from the snapshot (resting boxes by position — floor cell or rack slot — ordered by level). */
+/**
+ * Live stacks from the snapshot (resting boxes by position — floor cell, rack slot or truck bed column, whose cell lies
+ * outside the map — ordered by level).
+ */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
@@ -277,7 +281,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     const region = reachableFrom(grid, occ, fcell);
     const starts = pickupStarts(grid, region, plan.from);
     const lifted = lift(stacks, plan.from);
-    const floorFrom = !grid.isSlot(plan.from);
+    const floorFrom = plan.from < grid.cellCount;
     if (floorFrom) occ[plan.from] = lifted[plan.from].length > 0 ? 0 : -1;
     // The approach whose carry chain reaches the drop, leaving the forklift where the plan continues from if it can.
     let best: { chain: number[]; path: number[]; after: boolean; cost: number } | null = null;
@@ -320,7 +324,8 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     expected = lifted.slice();
     expected[plan.drop] += stacks[from][stacks[from].length - 1];
     const fromSlot = grid.isSlot(from) ? slots[from - grid.cellCount] : null;
-    const fromCell = { x: from % grid.width, z: Math.floor(from / grid.width) };
+    // A floor cell, or a truck bed's cell outside the map (its boxes carry it).
+    const fromCell = grid.cellOfPos(from);
     const box = fromSlot
       ? snap.boxes.find((b) => b.slotId === fromSlot.id)!
       : snap.boxes.filter((b) => b.cell && b.cell.x === fromCell.x && b.cell.z === fromCell.z).sort((a, b) => b.level - a.level)[0];
@@ -329,7 +334,11 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     const bestChain = found.chain;
     const bestEmpty = found.path;
     const toSlot = grid.isSlot(plan.drop) ? slots[plan.drop - grid.cellCount] : null;
-    const cellText = (c: number) => (grid.isSlot(c) ? `slot ${slots[c - grid.cellCount].id}` : `${c % grid.width},${Math.floor(c / grid.width)}`);
+    const cellText = (c: number) => {
+      if (grid.isSlot(c)) return `slot ${slots[c - grid.cellCount].id}`;
+      const cell = grid.cellOfPos(c);
+      return `${grid.isBed(c) ? 'bed ' : ''}${cell.x},${cell.z}`;
+    };
     log?.(
       `move ${moves + 1}: ${box.id} ${cellText(from)} → ${cellText(plan.drop)}${plan.after === undefined ? '' : ` (then ${cellText(plan.after)}${found.after ? '' : ', elsewhere'})`}` +
         ` · chain ${bestChain.map((p) => `${cellText(p >> 2)}${'ESWN'[p & 3]}`).join(' ')}`,

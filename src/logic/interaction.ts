@@ -53,15 +53,21 @@ export interface RackAim {
    */
   travel: boolean;
   /**
-   * Levels with trucks (docs/DOCKS.md): the truck bed column (LevelGrid.truckColumns) the rig faces from its front,
-   * with the fork point close enough to its face to load it or lift its top box, or -1. Only that column's bed cell is
-   * ever a pick or drop candidate: a truck is loaded and unloaded from the front only.
+   * Levels with trucks (docs/DOCKS.md): the truck bed column (LevelGrid.truckColumns) the rig faces from its door cell,
+   * with the forks through the door (far enough past the wall line to load it or lift its top box), or -1. Only that
+   * column's bed cell, outside the map, is ever a pick or drop candidate: a truck is loaded and unloaded through its
+   * door only.
    */
   truck: number;
+  /**
+   * Levels with trucks, carrying: the load is in a dock door but the forks are not yet through it (`truck` -1): nothing
+   * can be dropped, not even on the floor beside the door.
+   */
+  doorway: boolean;
 }
 
 export function createRackAim(): RackAim {
-  return { column: -1, level: 0, reach: false, travel: false, truck: -1 };
+  return { column: -1, level: 0, reach: false, travel: false, truck: -1, doorway: false };
 }
 
 /**
@@ -116,10 +122,11 @@ export class Interaction {
   /**
    * Box the action would lift now, or -1: resting on top of its stack, center within pickupRadius of the fork point and within
    * pickupAngleDeg of forward (seen from the body). Nearest to the fork point wins. The fork point must not be
-   * inside another obstacle, so the load collider can always settle smoothly. A box in a rack slot is only a
-   * candidate in the slot the forks work on (RackAim: facing its column, forks at its level), and a box on a truck bed
-   * only as the top of the bed column the rig faces (RackAim.truck). A locked box (levels with racks or trucks: resting
-   * on its destined zone, slot or truck slot) never is.
+   * inside another obstacle, so the load collider can always settle smoothly (a dock door is open for it: its fork
+   * point may stand on the bed beyond). A box in a rack slot is only a candidate in the slot the forks work on
+   * (RackAim: facing its column, forks at its level), and a box on a truck bed only as the top of the bed column the
+   * rig faces with the forks through its door (RackAim.truck). A locked box (levels with racks or trucks: resting on
+   * its destined zone, slot or truck slot) never is.
    */
   findPickTarget(): number {
     const f = this.forklift;
@@ -183,9 +190,10 @@ export class Interaction {
    * over a single criterion), then the nearest;
    * otherwise the nearest candidate (which may be a zone that does not accept it when the forks are over it). If no
    * cell passes, the nearest one within DROP_BODY_TOLERANCE_TIGHT_SPOT whose overlap the body can ease out of freely
-   * is used, so a drop in a snug corner still works. Returns false when nothing fits. Facing a truck bed column close
-   * up (RackAim.truck): on top of its stack while it has room (also on a locked box: the next level loads on it), else
-   * nothing (never the floor beside it).
+   * is used, so a drop in a snug corner still works. Returns false when nothing fits. Facing a truck bed column with
+   * the forks through its door (RackAim.truck): on top of its stack while it has room (also on a locked box: the next
+   * level loads on it), else nothing (never the floor beside it); with the load in the doorway short of that
+   * (RackAim.doorway), nothing. A dock's door cells are plain floor otherwise.
    */
   findDrop(box: Sortable, out: DropChoice): boolean {
     const f = this.forklift;
@@ -198,7 +206,7 @@ export class Interaction {
     // Facing a rack column with the load at its face: the selected slot once the forks stand at it, or nothing (also
     // while they travel there: never the floor in front).
     const aim = this.aim;
-    if (aim.travel) return false;
+    if (aim.travel || aim.doorway) return false;
     if (aim.column >= 0 && aim.reach) {
       const slot = this.grid.slotOf(aim.column, aim.level);
       if (slot < 0 || this.grid.slotBox(slot) >= 0) return false;

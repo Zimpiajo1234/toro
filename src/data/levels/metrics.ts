@@ -94,7 +94,8 @@ function slotCounts(level: LevelData): LevelMetrics['slots'] {
 }
 
 function truckCounts(level: LevelData, grid: LevelGrid): LevelMetrics['trucks'] {
-  const loaded = level.boxes.filter((b) => grid.isBed(grid.index(b.x, b.z))).length;
+  // A box loaded at the start rests on its bed cell, outside the map (a truck bed position of the model).
+  const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level))).length;
   return { trucks: trucksOf(level).length, columns: truckColumnsOf(level).length, levels: truckSlotsOf(level).length, loaded };
 }
 
@@ -235,7 +236,7 @@ function blockersOf(level: LevelData, grid: LevelGrid): { covering: string[]; ga
 
   const occupancy = occupancyOf(grid, stacks);
   const start = grid.index(level.forklift.x, level.forklift.z);
-  // A rack slot or a truck bed is reached from its front cell.
+  // A rack slot is reached from its front cell, a truck bed from its door cell.
   const touches = (region: Uint8Array, pos: number) =>
     grid.isSlot(pos) || grid.isBed(pos)
       ? region[grid.accessOf(pos)] === 1

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { runsAlongX, frontCellOf, rackCellOf, slotsOf, FACING_X, FACING_Z } from '../../core/racks';
 import { truckColumnsOf, truckSlotsOf } from '../../core/docks';
 import { assignmentsOf, criteriaOf, cueOf, levelDestinies, matchKind, meets, sameKind, sortableOf, targetsOf, type Sortable } from '../../core/sorting';
-import type { LevelData } from '../../core/types';
+import { MAX_TRUCK_COLUMNS, MAX_TRUCK_LEVELS, type LevelData } from '../../core/types';
 import { parseLevel, renderLevel } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import { validateLevel } from '../validateLevel';
@@ -84,22 +84,24 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(new Set(truckSlotsOf(level).map((s) => matchKind(s.cue)))).toEqual(new Set(['color', 'symbol', 'exact']));
   });
 
-  it('has one loading dock: a truck of 2+ bed columns against its wall, one column 2 levels high, clear of the windows', () => {
+  it('has one loading dock: a truck of 2 bed columns at its door, one column 2 levels high, clear of the windows', () => {
     const trucks = level.trucks!;
     expect(trucks).toHaveLength(1);
     const [truck] = trucks;
-    expect(truck.columns.length).toBeGreaterThanOrEqual(2);
-    expect(Math.max(...truck.columns.map((c) => c.length))).toBeGreaterThanOrEqual(2);
+    expect(truck.columns).toHaveLength(2);
+    expect(truck.columns.length).toBeLessThanOrEqual(MAX_TRUCK_COLUMNS);
+    expect(Math.max(...truck.columns.map((c) => c.length))).toBe(MAX_TRUCK_LEVELS);
     expect(Math.max(...truck.columns.map((c) => c.length))).toBeLessThanOrEqual(level.stackLimit!);
     const along = (x: number, z: number) => (truck.wall === 'north' ? x : z);
     for (const win of level.decor.windows) {
       if (win.wall !== truck.wall) continue;
-      for (const bed of beds) expect(along(bed.cell.x, bed.cell.z) < win.at || along(bed.cell.x, bed.cell.z) >= win.at + win.width).toBe(true);
+      for (const bed of beds) expect(along(bed.front.x, bed.front.z) < win.at || along(bed.front.x, bed.front.z) >= win.at + win.width).toBe(true);
     }
-    // Its bed is solid in the model and each column asks for its destined kinds, bottom → top.
+    // Each bed column is a position of the model off the map, asking for its destined kinds, bottom → top.
     for (const bed of beds) {
-      expect(grid.solid[cell(bed.cell)]).toBe(1);
-      expect(grid.steps[cell(bed.cell)]).toHaveLength(bed.cues.length);
+      const pos = grid.posOf(bed.cell.x, bed.cell.z);
+      expect(grid.isBed(pos)).toBe(true);
+      expect(grid.steps[pos]).toHaveLength(bed.cues.length);
     }
   });
 
@@ -121,7 +123,26 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     }
   });
 
-  it('every column can be loaded: its front cell and the cell behind it are floor, and no zone stands there', () => {
+  it('the truck waits outside: its bed columns lie beyond the north wall, its door cells (row 0) are floor and start empty', () => {
+    const [truck] = level.trucks!;
+    expect(truck).toMatchObject({ wall: 'north', x: 1, z: 0, w: 2 });
+    for (const bed of beds) {
+      const door = bed.front;
+      const at = `${door.x},${door.z}`;
+      expect(bed.cell, at).toEqual({ x: door.x, z: -1 });
+      expect(door.z, at).toBe(0);
+      expect(grid.solid[cell(door)], at).toBe(0);
+      // Nothing starts there: no zone (its locked box would close the column for good), no box, no forklift.
+      expect(level.zones.some((z) => z.x === door.x && z.z === door.z), at).toBe(false);
+      expect(level.boxes.some((b) => b.x === door.x && b.z === door.z), at).toBe(false);
+      expect(level.forklift.x === door.x && level.forklift.z === door.z, at).toBe(false);
+    }
+    // The box loaded at the start rests on its bed cell, outside the map.
+    const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
+    expect(loaded.map((b) => [b.x, b.z, b.level])).toEqual([[1, -1, 0]]);
+  });
+
+  it('every column can be loaded: its front (door) cell and the cell behind it are floor, and no zone stands there', () => {
     const columns = [
       ...level.racks!.flatMap((rack) => rack.columns.map((_, column) => ({ id: `${rack.id}:${column}`, front: frontCellOf(rack, column), facing: rack.facing }))),
       ...beds.map((bed) => ({ id: `${bed.truck.id}:${bed.column}`, front: bed.front, facing: bed.facing })),
@@ -196,7 +217,7 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(deep).toBeDefined();
     // Loaded on the truck at the start, on a level that is not its destiny: its destiny is the level above it, in the
     // same column (it has to come off, and back on top of the locked box that goes under it).
-    const loaded = level.boxes.filter((b) => grid.isBed(cell(b)));
+    const loaded = level.boxes.filter((b) => grid.isBed(grid.posOf(b.x, b.z, b.level)));
     expect(loaded).toHaveLength(1);
     const [box] = loaded;
     const ref = truckSlotsOf(level).findIndex((s) => s.cell.x === box.x && s.cell.z === box.z && s.level === box.level);
@@ -258,16 +279,17 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(solve(level, { allowParking: false, maxExpansions: 2000 }).solved).toBe(false);
   });
 
-  it('no dead ends («callejones» = 0): every slip along a shortest plan can be undone, or still finishes', () => {
+  // The heaviest check of the suite (≈ 15 s alone, more while the other files run): its own timeout.
+  it('no dead ends («callejones» = 0): every slip along a shortest plan can be undone, or still finishes', { timeout: 90_000 }, () => {
     const plan = shortestPlan().plan!;
-    const result = deadEnds(level, { plan, maxStates: plan.length + 1 });
-    expect(result.explored).toBe(plan.length + 1);
+    // As far as the report looks (npm run levels), the states of the plan first: none of them, and no destiny filled
+    // early, walls anything off.
+    const result = deadEnds(level, { plan, maxStates: DEAD_END_STATES });
+    expect(DEAD_END_STATES).toBeGreaterThan(plan.length + 1);
+    expect(result).toMatchObject({ found: 0, unknown: 0, explored: DEAD_END_STATES });
     // A box put on its destiny locks there (docs/RACKS.md): such a move cannot be undone, so it gets the full check.
-    expect(result).toMatchObject({ found: 0, unknown: 0 });
     expect(result.deepChecks).toBeGreaterThan(0);
     expect(result.checked).toBeGreaterThan(result.explored);
-    // As far as the report looks (npm run levels): no destiny filled early walls anything off.
-    expect(deadEnds(level, { plan, maxStates: DEAD_END_STATES })).toMatchObject({ found: 0, unknown: 0, explored: DEAD_END_STATES });
   });
 
   it('with the lock the shortest plan never lifts a box off its destiny: 14 moves, each box placed once and for good', () => {

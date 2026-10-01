@@ -68,6 +68,8 @@ export class AudioEngine {
   private readonly composer: Composer;
   private readonly rng: Rng = Math.random;
   private muted = false;
+  /** The player's «pitido» setting (B): the reverse beeper may sound. Kept here so it applies once audio starts. */
+  private reverseBeep = true;
   private scene: AudioScene = 'title';
   private disposed = false;
   private unavailable = false;
@@ -170,7 +172,8 @@ export class AudioEngine {
    * whine and tyre roll follow |speed|, and moving in reverse (negative) sounds the back-up beeper. `forkMotion` = how
    * fast the forks move, signed −1‥1 (+ raising: the pump whir; − lowering: the soft tone and hiss; a 0‥1 value reads
    * as raising). `forkHeight` = their stack / slot height (0 = floor; the pump sits a little higher per level).
-   * Continuous sounds go through the master gain, so mute (M) silences them too.
+   * Continuous sounds go through the master gain, so mute (M) silences them too (the beeper plays on the SFX bus, and
+   * B turns it alone off: setReverseBeep).
    */
   setMotor(speed: number, forkMotion: number, forkHeight = 0): void {
     const rt = this.rt;
@@ -208,6 +211,27 @@ export class AudioEngine {
 
   isMuted(): boolean {
     return this.muted;
+  }
+
+  /**
+   * The reverse beeper on / off (the persisted «pitido» setting, B). Off, backing up stays silent and a beep sounding
+   * fades out at once (its soft stop); every other sound is unaffected. Independent of mute (M silences everything,
+   * the beep included, whatever this says). Safe before unlock: it applies when audio starts.
+   */
+  setReverseBeep(enabled: boolean): void {
+    if (this.disposed) return;
+    this.reverseBeep = enabled;
+    const rt = this.rt;
+    if (!rt) return;
+    try {
+      rt.motor.setReverseBeep(enabled);
+    } catch (err) {
+      warn('setReverseBeep', err);
+    }
+  }
+
+  isReverseBeepOn(): boolean {
+    return this.reverseBeep;
   }
 
   /** Soft click for UI buttons. */
@@ -270,8 +294,10 @@ export class AudioEngine {
       const graph = createAudioGraph(ctx, this.config, this.rng, this.muted);
       const music = new MusicPlayer(graph, this.composer, this.rng);
       const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, this.rng);
-      // The reverse beep is tuned to the song's tonic (the key is fixed for the session).
-      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc));
+      // The reverse beep is tuned to the song's key (fixed for the session) and plays on the SFX bus: on the quiet motor
+      // bus it would vanish under the music and the drive whine. The player may have turned it off (B).
+      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc), graph.sfxIn);
+      motor.setReverseBeep(this.reverseBeep);
       this.rt = { ctx, graph, music, sfx, motor };
 
       this.composer.setScene(this.scene);

@@ -97,8 +97,8 @@ estantería  = "estantería" ["de"] [alturas ["alturas"]]                   (sin
 almacén     = "estantería" "frente" dirección [id] ":" columna { "|" columna }
 columna     = hueco { "/" hueco }                                         (de abajo arriba, 1–3 huecos)
 hueco       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]
-camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }
-niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1–3 niveles)
+camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }   (1 a 3 columnas)
+niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1 o 2 niveles)
 nivel       = (color [símbolo] | símbolo) [ "+" caja ]                    (nunca «libre»)
 planta      = "planta" ["variante"] [número]
 id          = "(" texto sin espacios ")"
@@ -126,7 +126,7 @@ id          = "(" texto sin espacios ")"
 | `E = estantería` | otra estantería de 2 alturas: sirve para pegarla a una `#` |
 | `P = planta variante 2` | planta con otra forma |
 | `R = estantería frente sur: azul / ▲ + caja coral / libre` | estantería **almacenable** de 1 columna, se carga desde el sur: hueco de abajo «azul», el del medio «▲» con una caja coral dentro, arriba libre |
-| `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** en una puerta del muro oeste (el carácter en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
+| `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** aparcado fuera de una puerta del muro oeste (el carácter marca la casilla de la puerta, en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
 | `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
 
 Las **estanterías almacenables** (reglas, lógica y datos: `docs/RACKS.md`) ocupan una fila recta (frente norte o sur)
@@ -136,12 +136,16 @@ cada hueco con pista es un **objetivo**: tiene que haber una caja por objetivo y
 idénticas no cuentan dos veces), y cada objetivo solo se cumple con su caja destinada. Las cajas de los huecos se
 numeran después de las del suelo; las estanterías, `r1, r2…`.
 
-Los **camiones** (muelles de carga; reglas, lógica y datos: `docs/DOCKS.md`, gramática completa allí) ocupan una
-tirada recta pegada a su muro: casillas de la fila 0 (muelle norte) o de la columna 0 (muelle oeste), una columna de la
-leyenda por casilla (de oeste a este, o de norte a sur); la puerta del muro es esa tirada (`ventanas:` no puede
-pisarla). Se cargan solo de frente, como una pila del suelo, de abajo arriba; cada nivel lleva su pista y es un
-objetivo más del reparto único. Las cajas del camión se numeran después de las de las estanterías; los camiones,
-`t1, t2…` (nunca el id de una estantería).
+Los **camiones** (muelles de carga; reglas, lógica y datos: `docs/DOCKS.md`, gramática completa allí) esperan
+**fuera** del almacén, con la trasera pegada a la cara de fuera del muro, en una puerta del muro norte u oeste. En el
+mapa, su carácter marca las **casillas de la puerta**: una tirada recta pegada a su muro (fila 0 en el muelle norte,
+columna 0 en el oeste), de 1 a 3 casillas, una columna de la leyenda por casilla (de oeste a este, o de norte a sur),
+cada una de 1 o 2 niveles. Esas casillas son **suelo** (la carretilla pasa y aparca ahí) pero empiezan vacías: ni
+muebles, ni zonas, ni cajas, ni la carretilla; `ventanas:` no puede pisar la puerta. La columna de la caja del camión
+queda justo detrás del muro, fuera del mapa (`z = -1` / `x = -1`). Se carga desde la casilla de la puerta, mirando al
+muro, como una pila del suelo, de abajo arriba: la carga y la horquilla cruzan la puerta, la carretilla se para en el
+muro. Cada nivel lleva su pista (en un cartel sobre la puerta) y es un objetivo más del reparto único. Las cajas del
+camión se numeran después de las de las estanterías; los camiones, `t1, t2…` (nunca el id de una estantería).
 
 ## Reglas que conviene saber
 

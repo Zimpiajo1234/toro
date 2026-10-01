@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useStore, type Store } from '../core/store';
 import { BENCHMARK_TIP, TEST_MODE_TIP } from './format';
-import { SoundIcon, ToroMark } from './icons';
+import { BellIcon, SoundIcon, ToroMark } from './icons';
 import { onScreen, useAutoFocus } from './interaction';
 import { Keycap } from './Keycap';
 import { LevelCaption, LevelDots, SpecialCaption } from './LevelDots';
@@ -35,7 +35,18 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
           <span className="title__sep" aria-hidden="true">
             ·
           </span>
+          {/* Zoom works while playing (the title's idle orbit stays unzoomed); pinch and pad LT / RT zoom too. */}
+          <span>
+            <Keycap>+</Keycap> / <Keycap>−</Keycap> zoom
+          </span>
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
           <SoundHint store={store} />
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
+          <BeepHint store={store} />
           <span className="title__sep" aria-hidden="true">
             ·
           </span>
@@ -115,6 +126,21 @@ function SoundHint({ store }: { store: Store<UIState> }) {
     <span key={muted ? 'off' : 'on'} className="ui-swap">
       {muted && <SoundIcon className="title__footer-icon" off />}
       <Keycap>M</Keycap> {muted ? 'activar sonido' : 'silencio'}
+    </span>
+  );
+}
+
+/**
+ * Footer hint for the reverse beeper (B: its "tin… tin…" while backing up). Like the mute hint it tells the truth:
+ * turned off (saved), it shows a quiet crossed bell and how to bring it back. B on the title answers here.
+ */
+function BeepHint({ store }: { store: Store<UIState> }) {
+  const on = useStore(store, (s) => s.reverseBeep);
+  return (
+    // Keyed so the new wording eases in.
+    <span key={on ? 'on' : 'off'} className="ui-swap">
+      {!on && <BellIcon className="title__footer-icon" off />}
+      <Keycap>B</Keycap> {on ? 'pitido' : 'activar pitido'}
     </span>
   );
 }

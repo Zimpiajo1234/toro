@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GamepadReader, type GamepadLike } from './gamepad';
+import { GamepadReader, TRIGGER_DEADZONE, type GamepadLike } from './gamepad';
 
 function pad(opts: { index?: number; axes?: number[]; pressed?: number[]; mapping?: string; connected?: boolean } = {}): GamepadLike {
   const pressed = new Set(opts.pressed ?? []);
@@ -87,6 +87,43 @@ describe('GamepadReader', () => {
       throw new Error('blocked');
     });
     expect(throwing.read().actionPressed).toBe(false);
+  });
+});
+
+/** A standard pad with LT (button 6) / RT (7) pulled this far; `value` left out = a pad that only reports `pressed`. */
+function triggers(lt: number, rt: number, opts: { index?: number; noValue?: boolean } = {}): GamepadLike {
+  return {
+    ...pad({ index: opts.index }),
+    buttons: Array.from({ length: 17 }, (_, i) => {
+      const value = i === 6 ? lt : i === 7 ? rt : 0;
+      return opts.noValue ? { pressed: value > 0.5 } : { pressed: value > 0.5, value };
+    }),
+  };
+}
+
+describe('GamepadReader: camera zoom triggers', () => {
+  it('reads RT as closer and LT as further, analog, past a small dead zone rescaled from 0', () => {
+    const reader = readerWith([
+      [triggers(0, 1)],
+      [triggers(1, 0)],
+      [triggers(0, 0.55)],
+      [triggers(TRIGGER_DEADZONE * 0.5, TRIGGER_DEADZONE)],
+      [triggers(0.4, 0.4)],
+    ]);
+    expect(reader.read().zoom).toBeCloseTo(1);
+    expect(reader.read().zoom).toBeCloseTo(-1);
+    expect(reader.read().zoom).toBeCloseTo((0.55 - TRIGGER_DEADZONE) / (1 - TRIGGER_DEADZONE));
+    expect(reader.read().zoom).toBe(0); // resting triggers do not creep the camera
+    expect(reader.read().zoom).toBeCloseTo(0); // both pulled: they cancel
+  });
+
+  it('combines pads (clamped to ±1), reads a pad without analog values by its pressed state, and fires no edges', () => {
+    const both = readerWith([[triggers(0, 1, { index: 0 }), triggers(0, 1, { index: 1 })]]).read();
+    expect(both.zoom).toBe(1);
+    const digital = readerWith([[triggers(1, 0, { noValue: true })]]).read();
+    expect(digital.zoom).toBe(-1);
+    expect([digital.rotateCamera, digital.forkStep, digital.actionPressed]).toEqual([0, 0, false]);
+    expect(readerWith([[pad()]]).read().zoom).toBe(0);
   });
 });
 

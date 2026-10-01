@@ -14,7 +14,6 @@ import {
   BOX_KINDS,
   MAX_RACK_SLOTS,
   MAX_TRUCK_LEVELS,
-  TRUCK_FACING,
   type BoxKind,
   type ColorId,
   type Facing,
@@ -26,6 +25,7 @@ import {
   type WallSide,
 } from '../core/types';
 import { racksOf, rackCellOf, runsAlongX } from '../core/racks';
+import { truckCellOf, truckFrontOf } from '../core/docks';
 import { DifficultySyntaxError, formatTargets, parseTargets, type DifficultyTarget } from './difficulty';
 import { validateLevel } from './validateLevel';
 
@@ -624,9 +624,10 @@ class LevelParser {
       }
     }
 
-    // Loading docks (docs/DOCKS.md): every connected group of one truck character is one truck, its bed a straight run
-    // 1 cell deep against its wall (row 0 for a north dock, column 0 for a west one) with one legend column per cell;
-    // the dock door is that run. Trucks come in legend order, then reading order.
+    // Loading docks (docs/DOCKS.md): every connected group of one truck character is one truck, its door cells a
+    // straight run against its wall (row 0 for a north dock, column 0 for a west one) with one legend column per cell:
+    // floor in front of the dock door, the bed column of each one outside, beyond the wall. Trucks come in legend
+    // order, then reading order.
     const trucks: Record<string, unknown>[] = [];
     const truckOrigins: RackOrigin[] = [];
     for (const def of legendOrder) {
@@ -648,12 +649,12 @@ class LevelParser {
         if (!(alongX ? zs.every((z) => z === z0) : xs.every((x) => x === x0)))
           this.fail(
             startPos,
-            `el camión «${def.char}» que empieza aquí no es una ${line} recta: en el muelle ${wallName} su caja va a lo largo del muro, 1 casilla de fondo; para dos camiones pegados usa otro carácter`,
+            `el camión «${def.char}» que empieza aquí no es una ${line} recta: en el muelle ${wallName} sus casillas son las de la puerta, a lo largo del muro; para dos camiones pegados usa otro carácter`,
           );
         if (alongX ? z0 !== 0 : x0 !== 0)
           this.fail(
             startPos,
-            `el camión «${def.char}» del muelle ${wallName} va pegado al muro ${wallName}: su caja ocupa la ${line} 0 del mapa (aquí está en la ${line} ${alongX ? z0 : x0})`,
+            `el camión «${def.char}» del muelle ${wallName} espera fuera, pegado al muro ${wallName}: sus casillas son las de la puerta, en la ${line} 0 del mapa (aquí está en la ${line} ${alongX ? z0 : x0})`,
           );
         if (group.length !== spec.columns.length)
           this.fail(
@@ -735,13 +736,13 @@ class LevelParser {
         });
       });
     });
-    // Boxes loaded on a truck at the start: after the rack boxes, truck by truck, column by column, bottom → top. A bed
-    // column is a stack: a box needs one under it.
+    // Boxes loaded on a truck at the start: after the rack boxes, truck by truck, column by column, bottom → top, on
+    // their bed cell (outside the map, beyond the door cell). A bed column is a stack: a box needs one under it.
     trucks.forEach((truck, i) => {
       const origin = truckOrigins[i];
       const spec = origin.def.truck!;
       spec.columns.forEach((levels, column) => {
-        const cell = truckCellOf(truck.x as number, truck.z as number, spec.wall, column);
+        const cell = truckCellOf({ x: truck.x as number, z: truck.z as number, wall: spec.wall }, column);
         levels.forEach((lv, level) => {
           const box = lv.box;
           if (!box) return;
@@ -1385,11 +1386,6 @@ function groupsOf(cells: ReadonlySet<number>, width: number, depth: number): num
   return groups;
 }
 
-/** Bed cell of a truck column: a truck reads like a rack loaded from TRUCK_FACING[wall] (docs/DOCKS.md). */
-function truckCellOf(x: number, z: number, wall: WallSide, column: number): { x: number; z: number } {
-  return rackCellOf({ x, z, facing: TRUCK_FACING[wall] }, column);
-}
-
 /** 4-connected group of `cells` containing `start` (cells indexed z * width + x). */
 function floodFill(cells: ReadonlySet<number>, start: number, width: number, depth: number): number[] {
   const group = [start];
@@ -1526,11 +1522,11 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
     };
   }
   // Loading docks (docs/DOCKS.md «Validación»: the English messages validateLevel gives for trucks).
-  if ((m = /^trucks\[(\d+)\] column (\d+) has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
+  if ((m = /^trucks\[(\d+)\] has (\d+) columns, more than (\d+)/.exec(message))) {
     const truck = ctx.trucks[Number(m[1])];
     return {
-      pos: truck?.columns[Number(m[2])] ?? truck?.cell ?? ctx.title,
-      reason: `el camión «${truck?.def.char ?? '?'}» se carga desde el almacén y delante de esta casilla (la ${m[3]},${m[4]}) hay una estantería, una planta u otro camión: déjale sitio`,
+      pos: truck?.columns[Number(m[3])] ?? truck?.cell ?? ctx.title,
+      reason: `el camión «${truck?.def.char ?? '?'}» tiene ${m[2]} columnas y lleva como mucho ${m[3]}: su puerta mide de 1 a ${m[3]} casillas; quítale columnas o usa dos camiones`,
     };
   }
   if ((m = /^trucks\[(\d+)\]\.columns\[(\d+)\] has (\d+) levels, more than stackLimit (\d+)/.exec(message))) {
@@ -1543,7 +1539,7 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
   if ((m = /^decor\.windows\[(\d+)\] overlaps the dock door of trucks\[(\d+)\]/.exec(message)))
     return {
       pos: ctx.windows,
-      reason: `una ventana choca con la puerta del muelle del camión «${ctx.trucks[Number(m[2])]?.def.char ?? '?'}» (la puerta es lo que ocupa su caja en el muro): mueve la ventana`,
+      reason: `una ventana choca con la puerta del muelle del camión «${ctx.trucks[Number(m[2])]?.def.char ?? '?'}» (la puerta es lo que ocupan sus casillas a lo largo del muro): mueve la ventana`,
     };
   if ((m = /^box "([^"]+)" is on trucks\[(\d+)\] column (\d+) at level (\d+) with no box below it/.exec(message))) {
     const origin = boxOf(m[1]);
@@ -1816,18 +1812,20 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
   });
   // Trucks (docs/DOCKS.md): one character each, after the racks (their entries go after the rack entries).
   const trucks = level.trucks ?? [];
-  const bedCells = new Set<number>();
+  /** Bed cells (outside the map: string keys, never a map index). */
+  const bedCells = new Set<string>();
   const truckChars = trucks.map((truck) => {
     const ch = take(TRUCK_CHARS, used);
     truck.columns.forEach((_, column) => {
-      const cell = truckCellOf(truck.x, truck.z, truck.wall, column);
-      grid[cell.z][cell.x] = ch;
-      bedCells.add(key(cell.x, cell.z));
+      const door = truckFrontOf(truck, column);
+      grid[door.z][door.x] = ch;
+      const bed = truckCellOf(truck, column);
+      bedCells.add(`${bed.x},${bed.z}`);
     });
     return ch;
   });
   /** Boxes that start in a rack slot or loaded on a truck (the rest are floor boxes and stacks). */
-  const inRack = (b: LevelData['boxes'][number]) => b.level !== undefined && (rackColumnAt.has(key(b.x, b.z)) || bedCells.has(key(b.x, b.z)));
+  const inRack = (b: LevelData['boxes'][number]) => b.level !== undefined && (bedCells.has(`${b.x},${b.z}`) || rackColumnAt.has(key(b.x, b.z)));
 
   // Zones and boxes by cell. Legend order = LevelData order: zones first, a box-only cell whenever the next zone
   // carries later boxes (a crossing order, never shipped, cannot be kept and gets normalised by the parser).
@@ -1898,7 +1896,7 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
   // Truck entries, in truck order; their boxes are numbered after the rack boxes (column by column, bottom → top).
   trucks.forEach((truck, t) => {
     const boxAt = (column: number, level: number) => {
-      const cell = truckCellOf(truck.x, truck.z, truck.wall, column);
+      const cell = truckCellOf(truck, column);
       const box = levelBoxes.find((b) => b.x === cell.x && b.z === cell.z && b.level === level);
       if (!box) return null;
       boxCount++;

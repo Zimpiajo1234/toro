@@ -2,7 +2,7 @@
  * Integration check (Benchmark × logic × controls): the autopilot (./autopilot.ts) plays the test-mode «Benchmark»
  * (src/data/levels/especiales/benchmark.level) with the real GameState and the real controls — slot levels with
  * InputFrame.forkStep (one press per slot, like F / V), loads backed out of slots, off the truck and out of the 1-cell
- * corridor with the reverse gear (S), the truck loaded from the front at the automatic fork height — at 60 fps and at
+ * corridor with the reverse gear (S), the truck loaded through its door at the automatic fork height — at 60 fps and at
  * Game's worst dt (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
  * the destined one leaves its slot or truck level dark (a soft `wrongTarget`, never anything negative), and a box put
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
@@ -126,18 +126,18 @@ describe('the Benchmark in the live game state', () => {
   it('a truck level that fits but is not the destiny: blue ▲ loaded on «azul» buzzes softly, stays pickable, then moves on', () => {
     const snap = new GameState(level).getSnapshot();
     const [azul] = snap.truckSlots!;
-    const bed = grid.index(azul.cell.x, azul.cell.z);
+    const bed = grid.posOf(azul.cell.x, azul.cell.z); // its bed column, outside the map
     const pile = snap.boxes.find((b) => b.color === 'blue' && b.symbol === 'triangle')!;
     // Unload the wrong box (parked east, out of the way), then the trap: blue ▲ off the floor stack onto «azul».
     const opening = [
-      { from: bed, drop: grid.index(9, 1) },
+      { from: bed, drop: grid.index(10, 1) },
       { from: grid.index(pile.cell!.x, pile.cell!.z), drop: bed },
     ];
     const out = autopilot(level, 1 / 60, opening);
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     const [unload, trap] = drops(out.events);
-    expect(unload).toMatchObject({ cell: { x: 9, z: 1 }, zoneId: null, correct: false });
+    expect(unload).toMatchObject({ cell: { x: 10, z: 1 }, zoneId: null, correct: false });
     expect(unload).not.toHaveProperty('wrongTarget'); // plain floor is never a target
     expect(trap).toMatchObject({ boxId: pile.id, truckSlotId: azul.id, level: 0, zoneId: null, correct: false, recipeLength: 1, wrongTarget: true });
     // It is taken back off the truck later, and ends on its own destiny (the ▲ zone).

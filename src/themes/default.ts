@@ -31,7 +31,7 @@ export const defaultTheme: Theme = {
   },
   /**
    * A cream cab with a soft slate stripe (the forklift's family, never a box hue), light wooden bed planks, slate trim
-   * and a warm stone driveway a step below the warehouse floor. The cue board's panels are a touch deeper than the
+   * and a warm stone driveway a step below the warehouse floor. The dock sign's cells are a touch deeper than the
    * «any colour» sticker fill, so a symbol-only sticker still reads on them.
    */
   truck: {

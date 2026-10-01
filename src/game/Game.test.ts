@@ -6,6 +6,7 @@ import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
+import { ZOOM_KEY_RATE, ZOOM_TAP_STOPS } from './Input';
 
 /**
  * Flow tests for the orchestrator with the real Input, ProgressStore (memory), levels and flow helpers.
@@ -33,6 +34,15 @@ const fakes = vi.hoisted(() => {
      * within the column, like the real one.
      */
     rack: null as { rackId: string; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
+    /**
+     * Every renderer zoom (zoomBy steps and zoomTrack stops alike), oldest first; the zoomBy steps alone; and how many
+     * times resetZoom ran.
+     */
+    zooms: [] as number[],
+    zoomSteps: [] as number[],
+    zoomResets: 0,
+    /** Every AudioEngine.setReverseBeep call (the «pitido» setting handed to audio), oldest first. */
+    beepCalls: [] as boolean[],
   };
 
   class FakeGameState {
@@ -79,6 +89,16 @@ const fakes = vi.hoisted(() => {
     update() {}
     handleEvent() {}
     rotateCamera() {}
+    zoomBy(stops: number) {
+      sim.zooms.push(stops);
+      sim.zoomSteps.push(stops);
+    }
+    zoomTrack(stops: number) {
+      sim.zooms.push(stops);
+    }
+    resetZoom() {
+      sim.zoomResets++;
+    }
     getCameraYaw() {
       return sim.yaw;
     }
@@ -92,6 +112,9 @@ const fakes = vi.hoisted(() => {
     }
     uiClick() {}
     setMuted() {}
+    setReverseBeep(enabled: boolean) {
+      sim.beepCalls.push(enabled);
+    }
     setScene() {}
     setMotor() {}
     handleEvent() {}
@@ -135,7 +158,8 @@ let game: Game | null;
 
 function setup() {
   const store = createUIStore();
-  game = new Game({} as HTMLElement, store);
+  // The canvas host: Input listens to its touches (two-finger pinch zoom).
+  game = new Game(new EventTarget() as unknown as HTMLElement, store);
   game.mount();
   return { game, store };
 }
@@ -171,6 +195,10 @@ beforeEach(() => {
   sim.yaw = Math.PI / 4;
   sim.rack = null;
   sim.minimums.clear();
+  sim.zooms.length = 0;
+  sim.zoomSteps.length = 0;
+  sim.zoomResets = 0;
+  sim.beepCalls.length = 0;
   win = fakeWindow();
   rafCallback = null;
   now = 1000;
@@ -243,6 +271,73 @@ describe('Game input mapping', () => {
     expect(button.blur).toHaveBeenCalled();
     expect(sim.states).toHaveLength(2); // mount + start: no restart
     expect(store.get().screen).toBe('playing');
+  });
+});
+
+describe('Game camera zoom', () => {
+  const zoomed = () => sim.zooms.reduce((sum, stops) => sum + stops, 0);
+  const wheel = (deltaY: number, ctrlKey: boolean) => {
+    const ev = new Event('wheel', { cancelable: true });
+    Object.assign(ev, { deltaY, deltaX: 0, deltaMode: 0, ctrlKey, metaKey: false });
+    win.dispatchEvent(ev);
+    return ev;
+  };
+
+  it('zooms with + / − while playing (a tap steps, holding goes on), never from the title', () => {
+    const { game } = setup();
+    tap('Equal', '=');
+    advance(0.5);
+    expect(sim.zooms).toEqual([]); // the title's idle orbit stays unzoomed
+    game.start(0);
+    advance(1 / 60);
+    tap('NumpadAdd', '+');
+    expect(zoomed()).toBeCloseTo(ZOOM_TAP_STOPS + ZOOM_KEY_RATE / 60);
+    expect(sim.zoomSteps).toEqual([ZOOM_TAP_STOPS]); // the tap is a step the camera eases in; the held frame is tracked
+    sim.zooms.length = 0;
+    sim.zoomSteps.length = 0;
+    press('Minus', '-');
+    advance(0.5);
+    release('Minus', '-');
+    advance(0.5);
+    expect(zoomed()).toBeCloseTo(-ZOOM_TAP_STOPS - ZOOM_KEY_RATE * 0.5, 1);
+    expect(sim.zoomSteps).toEqual([-ZOOM_TAP_STOPS]); // holding on is followed as it goes, never a step
+  });
+
+  it('Ctrl + wheel while playing (a trackpad pinch) zooms, the plain wheel still steps the forks', () => {
+    const { game } = setup();
+    expect(wheel(-10, true).defaultPrevented).toBe(false); // title: the browser's own zoom
+    game.start(0);
+    advance(1 / 60);
+    expect(wheel(-10, true).defaultPrevented).toBe(true);
+    advance(1 / 60);
+    expect(zoomed()).toBeGreaterThan(0);
+    expect(sim.zoomSteps).toEqual([]); // a pinch follows the fingers
+    expect(current().inputs.at(-1)!.forkStep).toBe(0);
+    sim.zooms.length = 0;
+    wheel(-100, false);
+    advance(1 / 60);
+    expect(current().inputs.at(-1)!.forkStep).toBe(1);
+    expect(sim.zooms).toEqual([]);
+  });
+
+  it('resets the zoom on a level change and on the title, and keeps it across a restart of the same level', () => {
+    const { game, store } = setup();
+    game.start(0);
+    expect(sim.zoomResets).toBe(1);
+    game.restart();
+    tap('KeyR', 'r');
+    expect(sim.states).toHaveLength(4); // mount, start and two restarts
+    expect(sim.zoomResets).toBe(1);
+    tap('Escape', 'Escape');
+    expect(store.get().screen).toBe('title');
+    expect(sim.zoomResets).toBe(2);
+    game.start(); // "Continuar"
+    expect(sim.zoomResets).toBe(3);
+    game.toTitle();
+    game.toggleTestMode();
+    game.startBenchmark();
+    expect(sim.zoomResets).toBe(5);
+    expect(store.get()).toMatchObject({ screen: 'playing', benchmark: true });
   });
 });
 
@@ -548,6 +643,57 @@ describe('Game settings keys and other tabs', () => {
     expect(store.get().showTimer).toBe(!shown);
     tap('KeyT', 't');
     expect(store.get().showTimer).toBe(shown);
+  });
+
+  it('B turns the reverse beeper off / on on the title, while playing and on the card, persisted; audio follows', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    const savedBeep = () => (JSON.parse(items.get('toro.progress.v1') ?? '{}').settings ?? {}).reverseBeep;
+    const first = setup();
+    expect(first.store.get().reverseBeep).toBe(true); // on by default
+    expect(sim.beepCalls).toEqual([true]); // the saved setting reaches audio at mount
+    tap('KeyB', 'b'); // on the title
+    expect(first.store.get().reverseBeep).toBe(false);
+    expect(sim.beepCalls.at(-1)).toBe(false);
+    expect(savedBeep()).toBe(false);
+    first.game.start(0);
+    tap('KeyB', 'b'); // while playing
+    expect(first.store.get()).toMatchObject({ screen: 'playing', reverseBeep: true });
+    expect(sim.beepCalls.at(-1)).toBe(true);
+    expect(savedBeep()).toBe(true);
+    // Its own setting: T and M leave it alone, and it leaves them alone.
+    tap('KeyT', 't');
+    tap('KeyM', 'm');
+    expect(first.store.get()).toMatchObject({ reverseBeep: true, showTimer: false, muted: true, showMoves: true });
+    tap('KeyB', 'b');
+    expect(first.store.get()).toMatchObject({ reverseBeep: false, showTimer: false, muted: true });
+    // On the completion card too, like T / N.
+    emit({ type: 'firstInput' });
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(first.store.get().screen).toBe('complete');
+    tap('KeyB', 'b');
+    expect(first.store.get()).toMatchObject({ screen: 'complete', reverseBeep: true });
+    first.game.toggleReverseBeep(); // the action itself (GameActions)
+    expect(first.store.get().reverseBeep).toBe(false);
+    expect(sim.beepCalls.slice(1)).toEqual([false, true, false, true, false]);
+    first.game.dispose();
+
+    sim.beepCalls.length = 0;
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ reverseBeep: false, showTimer: false, muted: true });
+    expect(sim.beepCalls).toEqual([false]);
+  });
+
+  it('a save from before the reverse beep toggle loads with the beep on', () => {
+    savedGame({ rankings: {}, highestUnlocked: 0, lastLevel: 0 }); // settings: muted and showTimer only
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ reverseBeep: true, muted: false, showTimer: true });
+    expect(sim.beepCalls).toEqual([true]);
   });
 
   it('refreshes the title summaries when another tab writes the progress key', () => {

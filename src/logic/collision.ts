@@ -1,6 +1,6 @@
-import type { BoxState, Facing, LevelData, Vec2 } from '../core/types';
+import type { BoxState, Facing, LevelData, Vec2, WallSide } from '../core/types';
 import { FACING_X, FACING_Z, racksOf, rackCellOf } from '../core/racks';
-import { truckColumnsOf } from '../core/docks';
+import { trucksOf } from '../core/docks';
 
 /** Axis-aligned rectangle on the floor plane (world units). */
 export interface Rect {
@@ -35,6 +35,82 @@ export const BOX_SETTLE_SPEED = 0.4;
  * uprights of the column's cell. Thin, so the load (collider radius 0.46 in a 1-wide cell) keeps a few cm of play.
  */
 export const RACK_WALL = 0.02;
+/**
+ * Loading docks (docs/DOCKS.md): the jambs of a dock door as the carried load meets them. The opening is this much
+ * narrower than its run of door cells at each end, like the side uprights of a rack slot (RACK_WALL), so the load
+ * (radius 0.46) goes through a 1-cell door with a few cm of play.
+ */
+export const DOOR_JAMB = RACK_WALL;
+/** Thickness (u) of the wall slabs the carried load meets in a level with dock doors: far thicker than any step. */
+const WALL_SLAB = 2;
+/** Depth (u) of the pocket behind a dock door, beyond the wall line: the truck bed, one cell. */
+export const DOOR_POCKET = 1;
+
+/** A dock door in the collision world: its wall and its run of door cells along it (world units, jambs included). */
+export interface DoorSpan {
+  wall: WallSide;
+  from: number;
+  to: number;
+}
+
+/**
+ * The walls as the carried load meets them in a level with dock doors (docs/DOCKS.md): thick slabs outside `bounds`,
+ * the north and west ones open at each door (between its jambs) onto a pocket DOOR_POCKET deep (the truck bed),
+ * closed at its back. Nothing stands between the columns of one door. Inside the room they meet the load exactly as
+ * the walls (`bounds`) do. Each bed column's span of the door is shut on its own until it is opened (doorCells).
+ */
+export function doorWalls(bounds: Rect, doors: readonly DoorSpan[]): Rect[] {
+  const B = WALL_SLAB;
+  const j = DOOR_JAMB;
+  const { minX, minZ, maxX, maxZ } = bounds;
+  const out: Rect[] = [
+    { minX: minX - B, minZ: maxZ, maxX: maxX + B, maxZ: maxZ + B },
+    { minX: maxX, minZ: minZ - B, maxX: maxX + B, maxZ: maxZ + B },
+  ];
+  for (const wall of ['north', 'west'] as const) {
+    // Along the wall (x for the north one, z for the west one): the slab's pieces between the door openings.
+    const openings = doors
+      .filter((d) => d.wall === wall)
+      .map((d) => [d.from + j, d.to - j] as const)
+      .sort((p, q) => p[0] - q[0]);
+    const face = wall === 'north' ? minZ : minX;
+    const piece = (a: number, b: number, outer: number, inner: number) => {
+      if (b > a) out.push(wall === 'north' ? { minX: a, minZ: outer, maxX: b, maxZ: inner } : { minX: outer, minZ: a, maxX: inner, maxZ: b });
+    };
+    let at = wall === 'north' ? minX - B : minZ - B;
+    for (const [a, b] of openings) {
+      piece(at, a, face - B, face);
+      // The back of the pocket, beyond the bed.
+      piece(a, b, face - B, face - DOOR_POCKET);
+      at = Math.max(at, b);
+    }
+    piece(at, wall === 'north' ? maxX + B : maxZ + B, face - B, face);
+  }
+  return out;
+}
+
+/**
+ * Each truck bed column's span of its dock door (docs/DOCKS.md), door by door, column by column (the order of
+ * LevelGrid.truckColumns): one cell along the wall, from the wall line to the back of the pocket. While shut the
+ * carried load meets it like the wall; GameState opens only the span of the column the rig faces from its door cell
+ * (CollisionWorld.setDoorOpen), so a load turned on a door cell meets the door like the wall until the rig faces that
+ * column, and it never slides along a wide door into the next column.
+ */
+export function doorCells(bounds: Rect, doors: readonly DoorSpan[]): Rect[] {
+  const out: Rect[] = [];
+  for (const d of doors) {
+    const n = Math.round(d.to - d.from);
+    for (let k = 0; k < n; k++) {
+      const a = d.from + k;
+      out.push(
+        d.wall === 'north'
+          ? { minX: a, minZ: bounds.minZ - DOOR_POCKET, maxX: a + 1, maxZ: bounds.minZ }
+          : { minX: bounds.minX - DOOR_POCKET, minZ: a, maxX: bounds.minX, maxZ: a + 1 },
+      );
+    }
+  }
+  return out;
+}
 
 /** A storage rack column as the collision world sees it: the whole cell, and its walls when open for the load. */
 interface RackCollider {
@@ -155,14 +231,22 @@ export function pointRectDistance(px: number, pz: number, minX: number, minZ: nu
  * (read live from the box list; carried boxes and boxes in rack slots are skipped). Allocation-free queries.
  * A rack column is a solid cell for the body; for the carried load it is solid too, unless GameState opened it
  * (`setRackOpen`: the load enters its slot from the front), when the load only meets its back panel and side uprights.
- * A truck bed cell (docs/DOCKS.md) is solid for the body only (`bodyOnly`): the load goes over it like over a floor
- * cell, meeting only the boxes loaded there (their stack's base, like any floor stack).
+ * Loading docks (docs/DOCKS.md): the walls stay whole for the body (it stops at the wall line, at a door too); the
+ * carried load and the fork point meet them as slabs open at each dock door onto the truck bed beyond (`loadWalls`,
+ * see doorWalls), where they meet only the boxes loaded there (their stack's base, like any floor stack). For the load
+ * each bed column's span of the door stays shut like the wall until GameState opens it (`setDoorOpen`: the rig faces
+ * that column from its door cell), like a rack column; the fork point (empty tines) passes any door. Without docks
+ * the load meets the walls exactly as the body does.
  */
 export class CollisionWorld {
   readonly bounds: Rect;
   private readonly statics: readonly Rect[];
-  /** Obstacles for the forklift body only (truck bed cells): the carried load and the fork point never meet them. */
-  private readonly bodyOnly: readonly Rect[];
+  /** Levels with dock doors: the walls as the carried load and the fork point meet them (doorWalls), else null. */
+  private readonly loadWalls: readonly Rect[] | null;
+  /** Per truck bed column (LevelGrid.truckColumns order): its span of the door (doorCells); empty without docks. */
+  private readonly doors: readonly Rect[];
+  /** Per bed column: 1 while the carried load may pass its span of the door (see setDoorOpen). */
+  private readonly doorOpen: Uint8Array;
   private readonly boxHalf: number;
   private boxes: readonly BoxState[] = [];
   /** Per box: how much its collider is currently shrunk on every side (settling after a drop), 0 = full size. */
@@ -190,11 +274,13 @@ export class CollisionWorld {
     statics: readonly Rect[],
     boxSize: number,
     racks: readonly { cell: Rect; facing: Facing }[] = [],
-    bodyOnly: readonly Rect[] = [],
+    doors: readonly DoorSpan[] = [],
   ) {
     this.bounds = bounds;
     this.statics = statics;
-    this.bodyOnly = bodyOnly;
+    this.loadWalls = doors.length > 0 ? doorWalls(bounds, doors) : null;
+    this.doors = doorCells(bounds, doors);
+    this.doorOpen = new Uint8Array(this.doors.length);
     this.boxHalf = boxSize / 2;
     this.racks = racks.map((r) => rackCollider(r.cell, r.facing));
     this.rackOpen = new Uint8Array(racks.length);
@@ -221,8 +307,11 @@ export class CollisionWorld {
         racks.push({ cell: { minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }, facing: rack.facing });
       });
     }
-    const beds: Rect[] = truckColumnsOf(level).map(({ cell: c }) => ({ minX: c.x - hw, minZ: c.z - hd, maxX: c.x + 1 - hw, maxZ: c.z + 1 - hd }));
-    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, racks, beds);
+    // A dock door spans its run of door cells along its wall.
+    const doors: DoorSpan[] = trucksOf(level).map((t) =>
+      t.wall === 'north' ? { wall: t.wall, from: t.x - hw, to: t.x + t.w - hw } : { wall: t.wall, from: t.z - hd, to: t.z + t.w - hd },
+    );
+    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, racks, doors);
   }
 
   /** Number of storage rack columns. */
@@ -264,6 +353,29 @@ export class CollisionWorld {
   /** Current load inset of rack column `index` (0 = full cell). */
   rackInset(index: number): number {
     return index >= 0 && index < this.rackInsets.length ? this.rackInsets[index] : 0;
+  }
+
+  /** Number of truck bed columns (each with its span of a dock door). */
+  get doorCount(): number {
+    return this.doors.length;
+  }
+
+  /** Bed column `index`'s span of its door (world units, see doorCells). */
+  doorCell(index: number): Rect {
+    return this.doors[index];
+  }
+
+  /**
+   * Open (or shut) bed column `index`'s span of its door for the carried load: shut, the load meets it like the wall;
+   * open, the load passes onto the bed beyond (still meeting the jambs, the back of the pocket and any shut span
+   * beside it). The body and the fork point never meet it.
+   */
+  setDoorOpen(index: number, open: boolean): void {
+    if (index >= 0 && index < this.doorOpen.length) this.doorOpen[index] = open ? 1 : 0;
+  }
+
+  isDoorOpen(index: number): boolean {
+    return index >= 0 && index < this.doorOpen.length && this.doorOpen[index] === 1;
   }
 
   /** Boxes are read live from this array every query (only resting ones collide). */
@@ -319,7 +431,8 @@ export class CollisionWorld {
   /**
    * Deepest overlap of a circle with walls, static obstacles and resting boxes (settling ones shrunk). 0 = free.
    * `load`: the circle is the carried box, which passes over stacks that still have room (and meets a rack column it
-   * is being eased out of shrunk, see softenRack) and over truck beds; the body meets truck beds.
+   * is being eased out of shrunk, see softenRack) and through an open span of a dock door onto the truck bed beyond it
+   * (loadWalls; a shut span is wall); the body meets the whole walls.
    */
   deepestContact(cx: number, cz: number, r: number, out: Contact, load = false): number {
     out.depth = 0;
@@ -327,18 +440,23 @@ export class CollisionWorld {
     out.nz = 0;
     if (!(r > 0)) return 0;
     const hit = this.hit;
-    if (circleInsideContact(cx, cz, r, this.bounds, hit) > out.depth) copyContact(hit, out);
+    const walls = load ? this.loadWalls : null;
+    if (walls) {
+      for (let i = 0; i < walls.length; i++) {
+        const s = walls[i];
+        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+      }
+      const doors = this.doors;
+      for (let i = 0; i < doors.length; i++) {
+        if (this.doorOpen[i] === 1) continue;
+        const s = doors[i];
+        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
+      }
+    } else if (circleInsideContact(cx, cz, r, this.bounds, hit) > out.depth) copyContact(hit, out);
     const statics = this.statics;
     for (let i = 0; i < statics.length; i++) {
       const s = statics[i];
       if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
-    }
-    if (!load) {
-      const beds = this.bodyOnly;
-      for (let i = 0; i < beds.length; i++) {
-        const s = beds[i];
-        if (circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, hit) > out.depth) copyContact(hit, out);
-      }
     }
     const racks = this.racks;
     for (let i = 0; i < racks.length; i++) {
@@ -403,14 +521,24 @@ export class CollisionWorld {
 
   /**
    * Free space around a point: signed distance to the nearest wall / obstacle / resting box (negative when the
-   * point is inside one); truck beds never count (only the body meets them, and this measures for the fork point or
-   * the carried load). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or its stack's base).
-   * `load`: measured for the carried box (stacks with room do not count, see deepestContact; an open rack column
-   * counts as its walls). `ignoreRack`: a rack column left out (the one whose slot box is about to be lifted).
+   * point is inside one). It measures for the fork point or the carried load, so a dock door is open (loadWalls: the
+   * point may stand on the truck bed beyond it). `ignoreBoxId` excludes one box (e.g. the one about to be lifted, or
+   * its stack's base). `load`: measured for the carried box (stacks with room do not count, see deepestContact; an
+   * open rack column counts as its walls, a shut span of a dock door as wall). `ignoreRack`: a rack column left out
+   * (the one whose slot box is about to be lifted).
    */
   clearance(px: number, pz: number, ignoreBoxId: string | null = null, load = false, ignoreRack = -1): number {
     const b = this.bounds;
-    let d = Math.min(px - b.minX, b.maxX - px, pz - b.minZ, b.maxZ - pz);
+    const walls = this.loadWalls;
+    let d = Infinity;
+    if (walls) for (let i = 0; i < walls.length; i++) d = Math.min(d, pointRectDistance(px, pz, walls[i].minX, walls[i].minZ, walls[i].maxX, walls[i].maxZ));
+    else d = Math.min(px - b.minX, b.maxX - px, pz - b.minZ, b.maxZ - pz);
+    if (load) {
+      const doors = this.doors;
+      for (let i = 0; i < doors.length; i++) {
+        if (this.doorOpen[i] === 0) d = Math.min(d, pointRectDistance(px, pz, doors[i].minX, doors[i].minZ, doors[i].maxX, doors[i].maxZ));
+      }
+    }
     const statics = this.statics;
     for (let i = 0; i < statics.length; i++) {
       const s = statics[i];

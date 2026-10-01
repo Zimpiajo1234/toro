@@ -11,7 +11,7 @@ import {
 } from 'three';
 import { damp } from '../../core/math';
 import type { SlotState } from '../../core/types';
-import { outwardYaw } from '../builders/rack';
+import { endPlateColumn, outwardYaw } from '../builders/rack';
 import { rackSlotY } from '../dims';
 import { OneShot, bump } from '../tween';
 import { FLASH_SEC, INVITE_BASE, INVITE_PULSE, INVITE_RATE, TARGET_REST, flashEnvelope, flashGlow } from './success';
@@ -25,6 +25,15 @@ const FADE_RATE = 6;
 /** Transparent-pass slots, as ShelfView: solid first; ghosted after the floor overlays, depth prepasses first. */
 const SOLID_ORDER = -1;
 const GHOST_ORDER = 10;
+/**
+ * The see-through end plates (builders/rack END_PLATE): faint enough that the boxes of the end column read through
+ * them, just enough to hold the end cues. They never write depth, so whatever stands behind them still draws; while
+ * their bay is solid they draw after the solid rack, the boxes (order 0) and the floor overlays, band and marker (1–2),
+ * so they tint what is behind them. With a ghosted bay they fade along (× its opacity), just after its colour pass.
+ */
+export const END_PLATE_OPACITY = 0.2;
+const PLATE_ORDER = 2.5;
+const PLATE_GHOST_STEP = 1.5;
 
 /** Level complete: each slot with a cue pulses once, like the zones. */
 const WAVE_GLOW = 0.28;
@@ -56,7 +65,7 @@ export interface SlotTone {
  * Lights ONLY when the slot holds its destined box (`satisfied`): a flash as the box lands (views/success), then a soft
  * steady glow. While a box that fits its cue is being carried it pulses clearly (panel, cue and band in the carried
  * box's tone); a box that merely fits leaves it neutral (never red, never text). A truck level (views/TruckView) lights
- * the same way: its board panel, its sticker and a band around its box.
+ * the same way: its cell's panel on the dock sign, its stickers and a band round them.
  */
 export class SlotLight {
   private satisfied: boolean;
@@ -131,19 +140,22 @@ export class SlotLight {
 }
 
 /**
- * One column of a rack (a bay): its frame and the panels of its slots with a cue. Like ShelfView it fades out of the
- * way when it hides something the player needs to see, drawn in two passes (a depth-only prepass of every part, then
- * the colour) so the ghost stays a clean silhouette. Per bay, so a tall rack only fades where it hides something (its
- * cues never fade: RackView). Every material is transparent even while solid (opacity 1, depth write on): toggling
- * `transparent` would switch shader programs mid-game.
+ * One column of a rack (a bay): its frame, the panels of its slots with a cue and, for a column at an end of the
+ * rack, its see-through end plate. Like ShelfView it fades out of the way when it hides something the player needs to
+ * see, drawn in two passes (a depth-only prepass of every part, then the colour) so the ghost stays a clean
+ * silhouette. Per bay, so a tall rack only fades where it hides something (its cues never fade: RackView). Every
+ * material is transparent even while solid (opacity 1, depth write on): toggling `transparent` would switch shader
+ * programs mid-game.
  */
 export class RackBay {
-  /** World bounds of the bay's frame (its slots' panels and boxes stand inside). */
+  /** World bounds of the bay's frame (its slots' panels and boxes, and its end plate, stand inside). */
   readonly bounds = new Box3();
   readonly frame: Mesh;
   private readonly parts: Mesh[] = [];
   private readonly depthPasses: Mesh[] = [];
   private readonly materials: MeshStandardMaterial[] = [];
+  private readonly plates: Mesh[] = [];
+  private readonly plateMaterials: MeshStandardMaterial[] = [];
   private opacity = 1;
   private actor = false;
 
@@ -158,8 +170,8 @@ export class RackBay {
     geometry: BufferGeometry,
     material: MeshStandardMaterial,
     private readonly depthOnly: Material,
-    /** userData tag of its frame mesh: a rack bay, or the cue board of a truck bed column (views/TruckView). */
-    kind: 'rack' | 'truck' = 'rack',
+    /** userData tag of its frame mesh: a rack bay, or the sign over a dock door (views/TruckView). */
+    kind: 'rack' | 'sign' = 'rack',
   ) {
     this.frame = this.addPart(geometry, material);
     this.frame.userData[kind] = true;
@@ -191,6 +203,26 @@ export class RackBay {
   }
 
   /**
+   * The see-through end plate of the rack at this column (builders/rack END_PLATE): faint (END_PLATE_OPACITY), never
+   * writing depth nor casting a shadow, and without a depth prepass, so the boxes and the bay's own parts behind it
+   * still show; it fades with the bay.
+   */
+  addPlate(geometry: BufferGeometry, material: MeshStandardMaterial): Mesh {
+    material.transparent = true;
+    material.depthWrite = false;
+    material.depthFunc = LessEqualDepth;
+    const mesh = new Mesh(geometry, material);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.userData.rackEndPlate = this.column;
+    this.group.add(mesh);
+    this.plates.push(mesh);
+    this.plateMaterials.push(material);
+    this.apply(0);
+    return mesh;
+  }
+
+  /**
    * `hiding`: the bay covers an actor; `soft`: only resting boxes or zones. `rank` orders ghosted bays and shelves back
    * to front (0 = farthest), so two ghosts overlapping on screen still blend correctly.
    */
@@ -213,14 +245,18 @@ export class RackBay {
       depthPass.renderOrder = GHOST_ORDER + rank * 2;
       this.parts[i].renderOrder = ghost ? GHOST_ORDER + rank * 2 + 1 : SOLID_ORDER;
     }
+    for (let i = 0; i < this.plates.length; i++) {
+      this.plateMaterials[i].opacity = END_PLATE_OPACITY * this.opacity;
+      this.plates[i].renderOrder = ghost ? GHOST_ORDER + rank * 2 + PLATE_GHOST_STEP : PLATE_ORDER;
+    }
   }
 }
 
 /**
  * One storage rack (docs/RACKS.md): a bay per column (frame + a glowing panel per slot with a cue, see RackBay), the
- * cue of each such slot and its light. The cues are not part of their bay: opaque and unlit, they never fade, dim or
- * shade, even while the bay ghosts around them (drawn in the opaque pass, before any ghost, so the ghost's depth
- * prepass and colour pass simply stop at them).
+ * see-through plate at each end (in the bay of its end column), the cue of each such slot and its light. The cues are
+ * not part of their bay: opaque and unlit, they never fade, dim or shade, even while the bay ghosts around them (drawn
+ * in the opaque pass, before any ghost, so the ghost's depth prepass and colour pass simply stop at them).
  */
 export class RackView {
   readonly id: string;
@@ -232,9 +268,12 @@ export class RackView {
 
   constructor(
     id: string,
-    /** One frame geometry per column (builders/rack buildRackBays), in world space. */
+    /**
+     * The rack's geometries from builders/rack buildRackBays, in world space: one frame per column, in column order,
+     * and the see-through end plates (endPlateColumn: the column each closes).
+     */
     bayGeometries: readonly BufferGeometry[],
-    /** A fresh frame material per bay (each fades on its own). */
+    /** A fresh frame material per bay and per end plate (each fades on its own). */
     frameMaterial: () => MeshStandardMaterial,
     depthOnly: Material,
     /** Delay before a slot lights (lets the dropped box land first). */
@@ -242,11 +281,16 @@ export class RackView {
   ) {
     this.id = id;
     this.group.userData.rackId = id;
-    bayGeometries.forEach((geometry, column) => {
+    const frames = bayGeometries.filter((geometry) => endPlateColumn(geometry) === null);
+    frames.forEach((geometry, column) => {
       const bay = new RackBay(this.group, this.bounds, column, geometry, frameMaterial(), depthOnly);
       this.bays.push(bay);
       this.bounds.union(bay.bounds);
     });
+    for (const geometry of bayGeometries) {
+      const column = endPlateColumn(geometry);
+      if (column !== null) this.bays[column]?.addPlate(geometry, frameMaterial());
+    }
   }
 
   /**

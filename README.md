@@ -34,14 +34,30 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | Espacio | Recoger / dejar caja |
 | F / V · rueda del ratón | Delante de una estantería almacenable: subir / bajar la horquilla un hueco (un paso de rueda = un hueco; fuera de las estanterías la horquilla es automática) |
 | Q / E | Girar cámara (la conducción W/S/A/D no cambia) |
+| + / − (teclado principal o numérico) · pellizcar | Acercar / alejar la cámara (mantener = zoom continuo, un toque = un paso pequeño; ver **Zoom** abajo) |
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
+| B | Pitido de marcha atrás: sí / no (se guarda) |
 | T | Mostrar / ocultar tiempo |
 | N | Mostrar / ocultar movimientos |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
 | U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
-| RePág / AvPág · las dos teclas a la derecha de la P ([ / ] en teclado inglés; también con AltGr) | Solo en Modo prueba: nivel anterior / siguiente (al instante; si ya has movido una caja, mantén pulsada la tecla un momento, como R) |
+| RePág / AvPág · las dos teclas a la derecha de la P ([ / ] en teclado inglés; también con AltGr) | Solo en Modo prueba: nivel anterior / siguiente (al instante; si ya has movido una caja, mantén pulsada la tecla un momento, como R). En teclado español la segunda es la tecla +, que hace zoom: ahí el nivel siguiente es AltGr + esa tecla o AvPág |
+
+**Zoom** (mientras juegas): **+** acerca y **−** aleja la cámara (las teclas que escriben + y − en cualquier
+distribución, y las del teclado numérico), igual que pellizcar en el trackpad o en la pantalla táctil. Sube y baja con
+suavidad, sin tirones ni rebote. Con
+el zoom a 1 se ve el almacén entero, como siempre (nunca se aleja más); acercada (hasta unas 2,5×) la cámara sigue a
+la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E, las bandas del HUD y el
+fundido de lo que tapa la carretilla siguen igual. El zoom se mantiene al reiniciar el nivel y vuelve a 1 al cambiar
+de nivel y en el título (su órbita lenta nunca se acerca). La **rueda del ratón sola no hace zoom**: sigue siendo de
+la horquilla (Ctrl + rueda, lo que manda un pellizco en el trackpad, sí acerca y aleja). La pista de controles lo
+recuerda con "+ − zoom" al final de su primera fila. Al soltar la tecla (o los dedos) la cámara se para
+enseguida, y un toque en sentido contrario parte de lo que se ve. Si la página se quedó ampliada por un pellizco en el
+título, el primer pellizco en la partida la devuelve a su tamaño; después ya mueve la cámara. Se ajusta en
+`gameConfig.json` → `camera` (`zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`,
+`zoomStep`).
 
 **Modo prueba** (ajuste guardado, apagado por defecto): abre todos los niveles desde el título sin tocar el progreso
 real; al apagarlo vuelven los candados de siempre. Los tiempos se guardan con normalidad en los niveles ya
@@ -69,8 +85,7 @@ movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro,
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
 
-Mando compatible: stick izquierdo (mover en la dirección de la pantalla), cruceta (conducir como W/S/A/D), A (recoger / dejar), LB/RB (cámara), Start (continuar),
-Back (reiniciar), Y (repetir en la tarjeta final), X / B (subir / bajar la horquilla delante de una estantería almacenable).
+También se puede jugar con mando, aunque la pantalla solo indica teclado y ratón.
 
 El mapeo de movimiento se ajusta en `gameConfig.json` → `controls`: `keyboardMapping` (teclado y cruceta) `"vehicle"` (por defecto:
 W/S avanzar/atrás y A/D girar, relativo a la carretilla e independiente de la cámara), `"grid"` (cada tecla recorre un
@@ -119,8 +134,8 @@ color suena a campana, por símbolo a madera y la exacta a las dos. Reglas compl
 El nuevo sistema de apilado, de momento solo en el nivel **Benchmark** (los niveles 1–3 no lo usan). Una estantería
 almacenable es un mueble de metal pizarra con vigas crema (las de madera con cajas kraft siguen siendo solo obstáculos):
 columnas de 1 a 3 **huecos** de alto que se cargan y descargan **solo por el frente**, donde hay una línea pintada en el
-suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y en los paneles laterales
-para las columnas de los extremos, así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
+suelo. El panel del fondo de cada hueco muestra su **pista**, visible desde las dos caras (y, en las columnas de los
+extremos, en la placa casi transparente de cada lado, que deja ver las cajas; así se lee desde cualquier ángulo): una pegatina del color exacto de la caja, un
 símbolo en negrita sobre una pegatina neutra, los dos (esa caja exacta) o nada («libre»: guarda cualquier caja y nunca
 cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estantería cuando tapa la carretilla. Las pistas se combinan para que haya **un
 solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: al dejarla,
@@ -129,37 +144,42 @@ admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido 
 hay rojo (los huecos «libres» y el suelo no dicen nada). Mientras llevas una caja brillan con claridad los huecos y
 zonas cuya pista encaja. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
 
-Delante de una columna, **F / V** (o la rueda, o X / B en el mando) suben y bajan la horquilla un hueco, con un clic
+Delante de una columna, **F / V** (o la rueda) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
 horquilla a su altura, Espacio mete la caja (entra recta; se sale marcha atrás) o saca la del hueco. Los huecos se
 llenan en cualquier orden. Si una estantería te da la espalda, rodéala para cargarla (Q / E ayudan a leerla). La pista
 de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías
-añade la fila "F V subir / bajar horquilla · rueda · X B mando". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
+añade la fila "F V subir / bajar horquilla · rueda". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
 
 ## Muelles de carga (Benchmark, Modo prueba)
 
-Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión aparcado marcha atrás; su plataforma de
-madera entra en el almacén a ras del suelo, en una fila de casillas pegada al muro. Cada columna del camión se carga
-**solo de frente**, como una pila del suelo: la horquilla sube sola (F / V no hacen nada ahí), las cajas van de abajo
-arriba y cada **nivel** tiene su pista (color, símbolo o las dos), en un cartel detrás de la columna con una pegatina
-por nivel que nunca se tapa ni se atenúa. Los niveles del camión cuentan en el reparto único, igual que zonas y
-huecos: un nivel brilla y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar
-el siguiente nivel encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se
-puede volver a sacar marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja.
-Sin teclas nuevas. Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos:
-[docs/DOCKS.md](docs/DOCKS.md).
+Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión aparcado **fuera**, marcha atrás, con la
+trasera pegada al muro: nada del camión entra en el almacén. Delante de la puerta quedan sus **casillas de puerta** (de
+1 a 3, una por columna del camión), suelo normal. Para cargar una columna, ponte en su casilla de puerta mirando al
+muro: la carretilla se para en el muro y la horquilla y la caja cruzan la puerta hasta la plataforma (entra recta; se
+sale marcha atrás). Se carga **como una pila del suelo**: la horquilla sube sola (F / V no hacen nada ahí), las cajas
+van de abajo arriba, hasta 2 de alto, sin techo ni barras sobre la plataforma. Cada **nivel** tiene su pista (color,
+símbolo o las dos) en el **cartel enmarcado sobre la puerta**: una casilla por columna (justo encima de su casilla de
+puerta) y por nivel (abajo, el de la plataforma), con la pegatina de las estanterías por las dos caras, que nunca se
+atenúa ni sale en espejo. Los niveles del camión cuentan en el reparto único, igual que zonas y huecos: un nivel brilla
+y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar el siguiente nivel
+encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
+marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
 
-Todo procedural (Web Audio, sin archivos) y bajo la música; M lo silencia todo:
+Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha atrás, a su altura); M lo silencia todo:
 
 - **Motor eléctrico**: un zumbido suave que sube de tono con la velocidad y un rodar de ruedas sobre las baldosas;
   parada, en silencio.
 - **Horquilla**: al subir, la bomba hidráulica (algo más aguda por nivel); al bajar, un tono más grave y un soplo leve;
   al llegar, un «clonc» pequeño (nunca encima de coger o dejar una caja). Delante de una estantería, cada paso de F / V
   lleva además su clic.
-- **Marcha atrás**: un «bip… bip… bip» redondo, al ritmo y en la tonalidad de la música, mientras la carretilla
-  retrocede de verdad.
+- **Marcha atrás**: un «tin… tin… tin» dulce y breve, como una campanita (un tono puro con un leve brillo de octava
+  que se apaga solo en unos 0,3 s), uno por pulso y en la tonalidad de la música (620–880 Hz), mientras la carretilla
+  retrocede de verdad. Suena a la altura de la música y se distingue por su timbre, nunca más fuerte que coger o dejar
+  una caja. **B** lo quita o lo vuelve a poner (se guarda; en la partida lo confirma un aviso breve).
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y

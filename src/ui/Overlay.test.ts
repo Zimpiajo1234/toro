@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LevelCaption } from './LevelDots';
 import { Overlay } from './Overlay';
+import { beepNoticeText, soundNotice, soundNoticeText } from './SoundNotice';
 import { createUIStore, type GameActions, type LevelResult, type UIState } from './uiState';
 
 const noopActions: GameActions = {
@@ -11,6 +12,7 @@ const noopActions: GameActions = {
   nextLevel() {},
   toTitle() {},
   toggleMute() {},
+  toggleReverseBeep() {},
   toggleTimer() {},
   toggleMoves() {},
   toggleTestMode() {},
@@ -74,6 +76,9 @@ describe('Overlay', () => {
     expect(html).toContain('Nivel 1 · Primer pedido');
     expect(html).toContain('Mejor 0:38.9');
     expect(html).toContain('girar cámara');
+    // Zoom sits right after the camera turn in the footer.
+    expect(html).toContain('<span><kbd class="keycap">+</kbd> / <kbd class="keycap">−</kbd> zoom</span>');
+    expect(html.indexOf('girar cámara')).toBeLessThan(html.indexOf('zoom</span>'));
     expect(html).not.toContain('Reiniciar nivel');
   });
 
@@ -118,6 +123,21 @@ describe('Overlay', () => {
     expect(muted).toContain('class="title__footer-icon"');
     expect(muted).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
     expect(muted).not.toContain('Sonido desactivado');
+  });
+
+  it('title footer names B for the reverse beeper right after M, and tells the truth when it is off', () => {
+    const on = render({ screen: 'title' });
+    expect(on).toContain('<span class="ui-swap"><kbd class="keycap">B</kbd> pitido</span>');
+    expect(on.indexOf('M</kbd> silencio')).toBeLessThan(on.indexOf('B</kbd> pitido'));
+    expect(on.indexOf('B</kbd> pitido')).toBeLessThan(on.indexOf('T</kbd> tiempo'));
+    const off = render({ screen: 'title', reverseBeep: false });
+    // A quiet crossed bell and the way back, like the muted "M activar sonido".
+    expect(off).toMatch(/<span class="ui-swap"><svg class="title__footer-icon"[^>]*>.*?<\/svg><kbd class="keycap">B<\/kbd> activar pitido<\/span>/);
+    expect(off).not.toContain('B</kbd> pitido');
+    expect(off).toContain('M</kbd> silencio'); // mute is its own setting
+    // The saved state is never announced on load.
+    expect(off).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
+    expect(off).not.toContain('Pitido de marcha atrás');
   });
 
   it('caption never shows a locked level as available', () => {
@@ -166,14 +186,61 @@ describe('Overlay', () => {
     // Move row first, fork row under it.
     expect(racks.indexOf('recoger / dejar')).toBeLessThan(racks.indexOf('horquilla'));
     expect(racks).toContain('<kbd class="keycap">F</kbd><kbd class="keycap">V</kbd></span>subir / bajar horquilla');
-    expect(racks).toContain('rueda');
-    expect(racks).toContain('<kbd class="keycap">X</kbd><kbd class="keycap">B</kbd></span>mando');
+    // The wheel closes the fork row: two groups, one separator (the gamepad works but is never advertised).
+    const forkRow = racks.slice(racks.lastIndexOf('<p class="hint__row">'));
+    expect(forkRow).toMatch(/<span class="hint__sep" aria-hidden="true">·<\/span><span class="hint__group"><svg[^]*<\/svg>rueda<\/span><\/p>/);
+    expect(forkRow.match(/class="hint__group"/g)).toHaveLength(2);
+    expect(forkRow.match(/class="hint__sep"/g)).toHaveLength(1);
 
     // Only while playing.
     for (const screen of ['title', 'complete'] as const) {
       const html = render({ screen, racks: true });
       expect(html).not.toContain('recoger / dejar');
       expect(html).not.toContain('horquilla');
+    }
+  });
+
+  it('never advertises the gamepad: no pad buttons or "mando" in the hint, on the title or on the card', () => {
+    const screens: Partial<UIState>[] = [
+      { screen: 'title', levels },
+      { screen: 'playing' },
+      { screen: 'playing', racks: true },
+      { screen: 'complete', result: result({}) },
+    ];
+    for (const patch of screens) {
+      const html = render(patch);
+      expect(html).not.toMatch(/\bmando\b/i);
+      // Pad-only buttons (A and B are keyboard keys too: turn left, and the reverse beeper's toggle on the title).
+      for (const pad of ['X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Start', 'Back']) {
+        expect(html).not.toContain(`<kbd class="keycap">${pad}</kbd>`);
+      }
+      // In a level nothing names B (there it would read as the pad's fork-down button): the beep key is on the title.
+      if (patch.screen !== 'title') expect(html).not.toContain('<kbd class="keycap">B</kbd>');
+    }
+  });
+
+  const ZOOM_GROUP =
+    '<span class="hint__group"><span class="hint__keys"><kbd class="keycap">+</kbd><kbd class="keycap">−</kbd></span>' +
+    'zoom</span>';
+
+  it('control hint: + − zoom closes the move row, in every level, without adding a row', () => {
+    const plain = render({ screen: 'playing' });
+    expect(plain).toContain(`<span class="hint__sep" aria-hidden="true">·</span>${ZOOM_GROUP}</p>`);
+    expect(plain.indexOf('recoger / dejar')).toBeLessThan(plain.indexOf(ZOOM_GROUP));
+    expect(plain.match(/class="hint__row"/g)).toHaveLength(1);
+    expect(plain.match(/>zoom</g)).toHaveLength(1);
+
+    // With racks: still in the move row, before the fork row; the wheel stays with the forks (never "zoom").
+    const racks = render({ screen: 'playing', racks: true });
+    expect(racks.match(/class="hint__row"/g)).toHaveLength(2);
+    const forkRowAt = racks.lastIndexOf('<p class="hint__row">');
+    expect(racks.indexOf(ZOOM_GROUP)).toBeGreaterThan(0);
+    expect(racks.indexOf(ZOOM_GROUP)).toBeLessThan(forkRowAt);
+    expect(racks.slice(forkRowAt)).not.toContain('zoom');
+    expect(racks.slice(forkRowAt)).toContain('rueda');
+
+    for (const screen of ['title', 'complete'] as const) {
+      expect(render({ screen, racks: true })).not.toContain(ZOOM_GROUP);
     }
   });
 
@@ -403,5 +470,28 @@ describe('Overlay: move counter', () => {
     expect(practice).toContain('>Modo prueba · estos movimientos no se guardan</p>');
     const both = render({ screen: 'complete', result: result({ practice: true, minMoves: min }) });
     expect(both).toContain('>Modo prueba · este resultado no se guarda</p>');
+  });
+});
+
+describe('Sound notice (M, B)', () => {
+  const sound = (muted: boolean, reverseBeep: boolean) => ({ muted, reverseBeep });
+
+  it('names the setting that changed, in Spanish: the mute, or the reverse beeper', () => {
+    expect(soundNoticeText(true)).toBe('Sonido desactivado');
+    expect(beepNoticeText(false)).toBe('Pitido de marcha atrás: no');
+    expect(beepNoticeText(true)).toBe('Pitido de marcha atrás: sí');
+    expect(soundNotice(sound(false, true), sound(false, true))).toBeNull();
+    expect(soundNotice(sound(false, true), sound(false, false))).toEqual({ kind: 'beep', text: 'Pitido de marcha atrás: no', off: true });
+    expect(soundNotice(sound(true, false), sound(true, true))).toEqual({ kind: 'beep', text: 'Pitido de marcha atrás: sí', off: false });
+    expect(soundNotice(sound(false, true), sound(true, true))).toEqual({ kind: 'sound', text: 'Sonido desactivado', off: true });
+    // Both at once (never from one key press): the mute, which silences everything, is the one named.
+    expect(soundNotice(sound(true, true), sound(false, false))).toMatchObject({ kind: 'sound', text: 'Sonido activado' });
+  });
+
+  it('shows nothing until a toggle: saved settings are never announced when a level loads', () => {
+    const html = render({ screen: 'playing', muted: true, reverseBeep: false });
+    expect(html).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
+    expect(html).not.toContain('Pitido de marcha atrás');
+    expect(html).not.toContain('class="hud-pill notice');
   });
 });

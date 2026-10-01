@@ -61,6 +61,8 @@ export interface UIState {
   finished: boolean;
   result: LevelResult | null;
   muted: boolean;
+  /** The reverse beeper ("tin… tin…" while backing up) is on (persisted; B toggles it, on the title and in a level). */
+  reverseBeep: boolean;
   /**
    * 0 … 1 while R / pad Back (or, in "Modo prueba", a level-jump key) is held with work at stake (drawn as a fill
    * on the ↺ pill).
@@ -102,6 +104,8 @@ export interface GameActions {
   /** Back to the title screen. */
   toTitle(): void;
   toggleMute(): void;
+  /** Turn the reverse beeper on / off (persisted; independent of mute). */
+  toggleReverseBeep(): void;
   toggleTimer(): void;
   /** Show / hide the optional move counter (persisted, like the timer). */
   toggleMoves(): void;
@@ -133,6 +137,7 @@ export const initialUIState: UIState = {
   finished: false,
   result: null,
   muted: false,
+  reverseBeep: true,
   restartHold: 0,
   levels: [],
   canContinue: false,

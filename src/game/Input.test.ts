@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Input, type InputOptions } from './Input';
+import { Input, PINCH_WHEEL_PX_PER_STOP, ZOOM_KEY_RATE, ZOOM_TAP_STOPS, type InputOptions } from './Input';
 import type { GamepadLike } from './gamepad';
 
 /** Minimal window + document built on Node's EventTarget (tests run without a DOM). */
@@ -14,6 +14,7 @@ interface KeyInit {
   key?: string;
   repeat?: boolean;
   ctrlKey?: boolean;
+  metaKey?: boolean;
   altKey?: boolean;
   /** AltGr held: Windows reports it as Ctrl+Alt, with `getModifierState('AltGraph')` true. */
   altGraph?: boolean;
@@ -28,7 +29,7 @@ function key(type: 'keydown' | 'keyup', init: KeyInit): Event {
     key: init.key ?? '',
     repeat: init.repeat ?? false,
     ctrlKey: init.ctrlKey ?? init.altGraph ?? false,
-    metaKey: false,
+    metaKey: init.metaKey ?? false,
     altKey: init.altKey ?? init.altGraph ?? false,
     isComposing: false,
     getModifierState: (k: string) => k === 'AltGraph' && init.altGraph === true,
@@ -121,6 +122,21 @@ describe('Input keyboard', () => {
     down({ code: 'KeyT', key: 't' });
     const t = input.poll();
     expect([t.movesPressed, t.timerPressed]).toEqual([false, true]);
+  });
+
+  it('reports B (the reverse beeper on / off) as its own edge, once per press', () => {
+    const { input, down, up } = setup();
+    down({ code: 'KeyB', key: 'b' });
+    const s = input.poll();
+    expect([s.beepPressed, s.mutePressed, s.movesPressed, s.timerPressed, s.any]).toEqual([true, false, false, false, true]);
+    expect(input.poll().beepPressed).toBe(false);
+    down({ code: 'KeyB', key: 'b', repeat: true }); // held: never a second toggle
+    expect(input.poll().beepPressed).toBe(false);
+    up({ code: 'KeyB', key: 'b' });
+    down({ code: '', key: 'B' }); // no code (autofill-style events): the character still works
+    expect(input.poll().beepPressed).toBe(true);
+    down({ code: 'KeyB', key: 'b', ctrlKey: true }); // a browser shortcut is left alone
+    expect(input.poll().beepPressed).toBe(false);
   });
 
   it('tracks R as held until released (hold-to-restart), re-synced by repeats', () => {
@@ -367,13 +383,20 @@ interface WheelInit {
   deltaY: number;
   deltaMode?: number;
   ctrlKey?: boolean;
+  metaKey?: boolean;
   timeStamp?: number;
   target?: object;
 }
 
 function wheelEvent(init: WheelInit): Event {
   const ev = new Event('wheel', { cancelable: true });
-  Object.assign(ev, { deltaY: init.deltaY, deltaX: 0, deltaMode: init.deltaMode ?? 0, ctrlKey: init.ctrlKey ?? false, metaKey: false });
+  Object.assign(ev, {
+    deltaY: init.deltaY,
+    deltaX: 0,
+    deltaMode: init.deltaMode ?? 0,
+    ctrlKey: init.ctrlKey ?? false,
+    metaKey: init.metaKey ?? false,
+  });
   Object.defineProperty(ev, 'timeStamp', { value: init.timeStamp ?? 0 });
   if (init.target) Object.defineProperty(ev, 'target', { value: init.target });
   return ev;
@@ -442,21 +465,29 @@ describe('Input fork levels (docs/RACKS.md)', () => {
     expect(input.poll().forkStep).toBe(-1);
   });
 
-  it('leaves the wheel alone off the playing screen, with Ctrl (zoom / pinch) and over a text field', () => {
+  it('leaves the wheel alone off the playing screen (Ctrl + wheel too: the browser zoom), with ⌘ and over a text field', () => {
     let playing = false;
     const { input, win } = setup({ isGameplay: () => playing });
     const title = wheelEvent({ deltaY: -100 });
     win.dispatchEvent(title);
     expect(title.defaultPrevented).toBe(false);
-    expect(input.poll().forkStep).toBe(0);
+    const browserZoom = wheelEvent({ deltaY: -100, ctrlKey: true });
+    win.dispatchEvent(browserZoom);
+    expect(browserZoom.defaultPrevented).toBe(false);
+    const pinch = wheelEvent({ deltaY: -4, ctrlKey: true });
+    win.dispatchEvent(pinch);
+    expect(pinch.defaultPrevented).toBe(false);
+    const off = input.poll(1 / 60);
+    expect([off.forkStep, off.zoom, off.zoomStep]).toEqual([0, 0, 0]);
     playing = true;
-    const zoom = wheelEvent({ deltaY: -100, ctrlKey: true });
-    win.dispatchEvent(zoom);
-    expect(zoom.defaultPrevented).toBe(false);
-    const field = wheelEvent({ deltaY: -100, target: { tagName: 'INPUT', type: 'text' } });
+    const cmd = wheelEvent({ deltaY: -100, metaKey: true });
+    win.dispatchEvent(cmd);
+    expect(cmd.defaultPrevented).toBe(false);
+    const field = wheelEvent({ deltaY: -100, ctrlKey: true, target: { tagName: 'INPUT', type: 'text' } });
     win.dispatchEvent(field);
     expect(field.defaultPrevented).toBe(false);
-    expect(input.poll().forkStep).toBe(0);
+    const s = input.poll(1 / 60);
+    expect([s.forkStep, s.zoom, s.zoomStep]).toEqual([0, 0, 0]);
   });
 
   it('forgets pending steps when the window loses focus, and stops listening after dispose', () => {
@@ -481,6 +512,333 @@ describe('Input fork levels (docs/RACKS.md)', () => {
     expect(input.poll().forkStep).toBe(-1); // B
   });
 });
+
+describe('Input camera zoom', () => {
+  it('+ / − (main row and numpad) give a small step on a tap; repeats add none', () => {
+    const { input, down, up } = setup();
+    for (const [code, key, sign] of [
+      ['Equal', '=', 1],
+      ['Equal', '+', 1], // Shift + = on US keyboards
+      ['NumpadAdd', '+', 1],
+      ['Minus', '-', -1],
+      ['NumpadSubtract', '-', -1],
+    ] as const) {
+      const ev = down({ code, key });
+      expect(ev.defaultPrevented).toBe(true);
+      down({ code, key, repeat: true });
+      up({ code, key });
+      const s = input.poll(1 / 60);
+      expect([s.zoomStep, s.zoom]).toEqual([sign * ZOOM_TAP_STOPS, 0]); // released: no held rate
+      expect(s.any).toBe(true);
+      const next = input.poll(1 / 60);
+      expect([next.zoomStep, next.zoom]).toEqual([0, 0]);
+    }
+  });
+
+  it('holding + / − zooms on at ZOOM_KEY_RATE stops per second; + and − together cancel', () => {
+    const { input, down, up } = setup();
+    down({ code: 'NumpadAdd', key: '+' });
+    const first = input.poll(0.1);
+    expect(first.zoomStep).toBeCloseTo(ZOOM_TAP_STOPS); // the tap's step, eased in by the camera…
+    expect(first.zoom).toBeCloseTo(ZOOM_KEY_RATE * 0.1); // …and the held rate, followed as it goes
+    down({ code: 'NumpadAdd', key: '+', repeat: true });
+    const held = input.poll(0.5);
+    expect([held.zoomStep, held.zoom]).toEqual([0, ZOOM_KEY_RATE * 0.5]);
+    down({ code: 'Minus', key: '-' });
+    const both = input.poll(0.5);
+    expect([both.zoomStep, both.zoom]).toEqual([-ZOOM_TAP_STOPS, 0]); // the − tap; the held rates cancel
+    up({ code: 'NumpadAdd', key: '+' });
+    expect(input.poll(0.25).zoom).toBeCloseTo(-ZOOM_KEY_RATE * 0.25);
+    up({ code: 'Minus', key: '-' });
+    const idle = input.poll(1);
+    expect([idle.zoom, idle.zoomStep, idle.any]).toEqual([0, 0, false]);
+  });
+
+  it('reads "+" / "-" by character on any layout: the Spanish "+" key (BracketRight) zooms, AltGr + it still jumps levels', () => {
+    const { input, down, up } = setup();
+    down({ code: 'BracketRight', key: '+' }); // Spanish / German "+"
+    const plus = input.poll();
+    expect([plus.zoomStep, plus.levelStep, plus.levelStepHeld]).toEqual([ZOOM_TAP_STOPS, 0, 0]);
+    up({ code: 'BracketRight', key: '+' });
+    down({ code: 'BracketRight', key: ']', altGraph: true }); // Spanish "]"
+    const jump = input.poll();
+    expect([jump.zoomStep, jump.zoom, jump.levelStep]).toEqual([0, 0, 1]);
+    up({ code: 'BracketRight', key: ']' });
+    down({ code: 'Slash', key: '-' }); // Spanish / German "-"
+    expect(input.poll().zoomStep).toBeCloseTo(-ZOOM_TAP_STOPS);
+    up({ code: 'Slash', key: '-' });
+    down({ code: 'Digit6', key: '-' }); // AZERTY "-"
+    expect(input.poll().zoomStep).toBeCloseTo(-ZOOM_TAP_STOPS);
+  });
+
+  it('leaves Ctrl / ⌘ + / − to the browser zoom', () => {
+    const { input, down } = setup({ isGameplay: () => true });
+    for (const init of [
+      { code: 'Equal', key: '=', ctrlKey: true },
+      { code: 'Minus', key: '-', ctrlKey: true },
+      { code: 'NumpadAdd', key: '+', ctrlKey: true },
+      { code: 'BracketRight', key: '+', ctrlKey: true },
+      { code: 'Equal', key: '=', metaKey: true },
+      { code: 'Minus', key: '-', metaKey: true },
+    ]) {
+      expect(down(init).defaultPrevented).toBe(false);
+    }
+    const s = input.poll(1);
+    expect([s.zoom, s.zoomStep]).toEqual([0, 0]);
+  });
+
+  it('forgets held zoom keys and pending steps when the window loses focus', () => {
+    const { input, down, win } = setup();
+    down({ code: 'Equal', key: '=' });
+    win.dispatchEvent(new Event('blur'));
+    const s = input.poll(1);
+    expect([s.zoom, s.zoomStep]).toEqual([0, 0]);
+  });
+
+  it('while playing, a trackpad pinch (Ctrl + wheel) follows the fingers and never steps the forks', () => {
+    const { input, win } = setup({ isGameplay: () => true });
+    const apart = wheelEvent({ deltaY: -10, ctrlKey: true, timeStamp: 10 });
+    win.dispatchEvent(apart);
+    expect(apart.defaultPrevented).toBe(true); // not the page's zoom
+    win.dispatchEvent(wheelEvent({ deltaY: -5, ctrlKey: true, timeStamp: 26 }));
+    const s = input.poll(1 / 60);
+    expect(s.zoom).toBeCloseTo(15 / PINCH_WHEEL_PX_PER_STOP);
+    expect(2 ** s.zoom).toBeCloseTo(Math.exp(15 / 100)); // Chromium's pinch scale for those deltas
+    expect([s.zoomStep, s.forkStep]).toEqual([0, 0]); // it follows the fingers: not a step
+    win.dispatchEvent(wheelEvent({ deltaY: 8, ctrlKey: true, timeStamp: 42 })); // fingers together: further
+    expect(input.poll(1 / 60).zoom).toBeCloseTo(-8 / PINCH_WHEEL_PX_PER_STOP);
+    // A long pinch never adds up to a fork step.
+    for (let i = 0; i < 40; i++) win.dispatchEvent(wheelEvent({ deltaY: -10, ctrlKey: true, timeStamp: 100 + i * 16 }));
+    expect(Array.from({ length: 3 }, () => input.poll(1 / 60).forkStep)).toEqual([0, 0, 0]);
+  });
+
+  it('while playing, a Ctrl + mouse wheel notch is one tap step (pixels or Firefox lines)', () => {
+    const { input, win } = setup({ isGameplay: () => true });
+    win.dispatchEvent(wheelEvent({ deltaY: -100, ctrlKey: true, timeStamp: 10 }));
+    const notch = input.poll();
+    expect([notch.zoomStep, notch.zoom]).toEqual([ZOOM_TAP_STOPS, 0]);
+    win.dispatchEvent(wheelEvent({ deltaY: 3, deltaMode: 1, ctrlKey: true, timeStamp: 30 }));
+    const s = input.poll();
+    expect([s.zoomStep, s.zoom, s.forkStep]).toEqual([-ZOOM_TAP_STOPS, 0, 0]);
+  });
+
+  it('the plain wheel still steps the forks and never zooms', () => {
+    const { input, win } = setup({ isGameplay: () => true });
+    win.dispatchEvent(wheelEvent({ deltaY: -100, timeStamp: 10 }));
+    const notch = input.poll(1 / 60);
+    expect([notch.forkStep, notch.zoom, notch.zoomStep]).toEqual([1, 0, 0]);
+    for (let i = 0; i < 12; i++) win.dispatchEvent(wheelEvent({ deltaY: 10, timeStamp: 300 + i * 16 }));
+    const trackpad = input.poll(1 / 60);
+    expect([trackpad.forkStep, trackpad.zoom]).toEqual([-1, 0]);
+  });
+
+  describe('touch pinch on the scene', () => {
+    type Finger = [id: number, x: number, y: number];
+    function touchSetup(playing: { value: boolean } = { value: true }) {
+      const surface = new EventTarget();
+      const env = setup({ isGameplay: () => playing.value, touchSurface: surface });
+      const touch = (type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel', ...fingers: Finger[]) => {
+        const ev = new Event(type, { cancelable: true });
+        Object.assign(ev, { touches: fingers.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })) });
+        surface.dispatchEvent(ev);
+        return ev;
+      };
+      return { ...env, touch };
+    }
+
+    it('two fingers moving apart zoom in by the log of their span ratio, together zoom out; the page does not zoom', () => {
+      const { input, touch } = touchSetup();
+      expect(touch('touchstart', [0, 100, 100]).defaultPrevented).toBe(false);
+      expect(touch('touchstart', [0, 100, 100], [1, 200, 100]).defaultPrevented).toBe(true);
+      expect(input.poll().zoom).toBe(0); // a baseline, no jump
+      expect(touch('touchmove', [0, 50, 100], [1, 250, 100]).defaultPrevented).toBe(true); // span 100 → 200
+      expect(input.poll().zoom).toBeCloseTo(1);
+      touch('touchmove', [0, 100, 100], [1, 200, 100]); // 200 → 100
+      touch('touchmove', [0, 100, 100], [1, 100, 150]); // 100 → 50
+      expect(input.poll().zoom).toBeCloseTo(-2);
+    });
+
+    it('leaves one finger alone', () => {
+      const { input, touch } = touchSetup();
+      expect(touch('touchstart', [0, 100, 100]).defaultPrevented).toBe(false);
+      expect(touch('touchmove', [0, 300, 200]).defaultPrevented).toBe(false);
+      expect(touch('touchend').defaultPrevented).toBe(false);
+      expect(input.poll().zoom).toBe(0);
+    });
+
+    it('re-takes the baseline when a finger is added or lifted, so the view never jumps', () => {
+      const { input, touch } = touchSetup();
+      touch('touchstart', [0, 0, 0], [1, 100, 0]);
+      touch('touchstart', [0, 0, 0], [1, 100, 0], [2, 500, 0]);
+      touch('touchend', [1, 100, 0], [2, 500, 0]); // finger 0 lifted: 1 and 2 are the pinch now (span 400)
+      expect(input.poll().zoom).toBe(0);
+      touch('touchmove', [1, 100, 0], [2, 900, 0]); // 400 → 800
+      expect(input.poll().zoom).toBeCloseTo(1);
+      touch('touchend', [2, 900, 0]); // one finger left
+      touch('touchstart', [2, 900, 0], [3, 950, 0]); // a new second finger: baseline 50
+      touch('touchmove', [2, 900, 0], [3, 1000, 0]); // 50 → 100
+      expect(input.poll().zoom).toBeCloseTo(1);
+    });
+
+    it('off the playing screen two fingers are left to the page, and nothing zooms', () => {
+      const playing = { value: false };
+      const { input, touch } = touchSetup(playing);
+      expect(touch('touchstart', [0, 100, 100], [1, 200, 100]).defaultPrevented).toBe(false);
+      expect(touch('touchmove', [0, 50, 100], [1, 250, 100]).defaultPrevented).toBe(false);
+      expect(input.poll().zoom).toBe(0);
+      playing.value = true; // the level starts mid-gesture: the next move only sets the baseline
+      touch('touchmove', [0, 50, 100], [1, 250, 100]);
+      expect(input.poll().zoom).toBe(0);
+      touch('touchmove', [0, 0, 100], [1, 400, 100]); // 200 → 400
+      expect(input.poll().zoom).toBeCloseTo(1);
+    });
+
+    it("sets the surface's touch-action while playing only (no browser pinch before a touch event could stop it)", () => {
+      const playing = { value: false };
+      const surface = Object.assign(new EventTarget(), { style: { touchAction: '' } });
+      const { input } = setup({ isGameplay: () => playing.value, touchSurface: surface });
+      input.poll();
+      expect(surface.style.touchAction).toBe('');
+      playing.value = true;
+      input.poll();
+      expect(surface.style.touchAction).toBe('pan-x pan-y'); // one-finger pans stay
+      playing.value = false;
+      input.poll();
+      expect(surface.style.touchAction).toBe('');
+      playing.value = true;
+      input.poll();
+      input.dispose();
+      expect(surface.style.touchAction).toBe('');
+    });
+
+    it('stops listening to the surface after dispose', () => {
+      const { input, touch } = touchSetup();
+      input.dispose();
+      expect(touch('touchstart', [0, 100, 100], [1, 200, 100]).defaultPrevented).toBe(false);
+      touch('touchmove', [0, 50, 100], [1, 250, 100]);
+      expect(input.poll().zoom).toBe(0);
+    });
+  });
+
+  describe('Safari gesture events', () => {
+    function gesture(win: EventTarget, type: 'gesturestart' | 'gesturechange' | 'gestureend', scale: number, timeStamp = 1000) {
+      const ev = new Event(type, { cancelable: true });
+      Object.assign(ev, { scale });
+      Object.defineProperty(ev, 'timeStamp', { value: timeStamp });
+      win.dispatchEvent(ev);
+      return ev;
+    }
+
+    it('a trackpad pinch zooms by the change in scale while playing, and the page does not zoom', () => {
+      const { input, win } = setup({ isGameplay: () => true });
+      expect(gesture(win, 'gesturestart', 1).defaultPrevented).toBe(true);
+      expect(gesture(win, 'gesturechange', 2).defaultPrevented).toBe(true);
+      expect(input.poll().zoom).toBeCloseTo(1);
+      gesture(win, 'gesturechange', 1);
+      expect(input.poll().zoom).toBeCloseTo(-1);
+      gesture(win, 'gestureend', 1);
+      gesture(win, 'gesturechange', 4); // no gesture going on: nothing to compare with
+      expect(input.poll().zoom).toBe(0);
+    });
+
+    it('off the playing screen gestures are left to the page', () => {
+      const { input, win } = setup({ isGameplay: () => false });
+      expect(gesture(win, 'gesturestart', 1).defaultPrevented).toBe(false);
+      expect(gesture(win, 'gesturechange', 2).defaultPrevented).toBe(false);
+      expect(input.poll().zoom).toBe(0);
+    });
+
+    it('never counts a pinch twice: with fingers on the scene (iOS) or right after a Ctrl + wheel pinch', () => {
+      const surface = new EventTarget();
+      const { input, win } = setup({ isGameplay: () => true, touchSurface: surface });
+      const touches = new Event('touchstart', { cancelable: true });
+      Object.assign(touches, { touches: [{ identifier: 0, clientX: 0, clientY: 0 }, { identifier: 1, clientX: 100, clientY: 0 }] });
+      surface.dispatchEvent(touches);
+      expect(gesture(win, 'gesturestart', 1).defaultPrevented).toBe(true); // still no page zoom
+      gesture(win, 'gesturechange', 2);
+      expect(input.poll().zoom).toBe(0); // the touches carry this pinch
+      const lifted = new Event('touchend', { cancelable: true });
+      Object.assign(lifted, { touches: [] });
+      surface.dispatchEvent(lifted);
+      gesture(win, 'gestureend', 2);
+
+      win.dispatchEvent(wheelEvent({ deltaY: -10, ctrlKey: true, timeStamp: 5000 }));
+      gesture(win, 'gesturestart', 1, 5010);
+      gesture(win, 'gesturechange', 2, 5020);
+      expect(input.poll().zoom).toBeCloseTo(10 / PINCH_WHEEL_PX_PER_STOP); // the wheel's share only
+    });
+  });
+
+  it('while the page itself is still pinch-zoomed (a pinch over the title), pinches stay the browser\'s until it is back', () => {
+    const surface = Object.assign(new EventTarget(), { style: { touchAction: '' } });
+    const { input, win, down, up } = setup({ isGameplay: () => true, touchSurface: surface });
+    const viewport = { scale: 2 };
+    Object.assign(win, { visualViewport: viewport });
+    input.poll(1 / 60);
+    expect(surface.style.touchAction).toBe(''); // the browser may pinch the page back out
+    const pinch = wheelEvent({ deltaY: 10, ctrlKey: true, timeStamp: 10 });
+    win.dispatchEvent(pinch);
+    expect(pinch.defaultPrevented).toBe(false);
+    const gesture = new Event('gesturechange', { cancelable: true });
+    Object.assign(gesture, { scale: 0.5 });
+    win.dispatchEvent(gesture);
+    expect(gesture.defaultPrevented).toBe(false);
+    const fingers = (type: string, span: number) => {
+      const ev = new Event(type, { cancelable: true });
+      Object.assign(ev, { touches: [{ identifier: 0, clientX: 0, clientY: 0 }, { identifier: 1, clientX: span, clientY: 0 }] });
+      surface.dispatchEvent(ev);
+      return ev;
+    };
+    expect(fingers('touchstart', 200).defaultPrevented).toBe(false);
+    expect(fingers('touchmove', 100).defaultPrevented).toBe(false);
+    // The rest of the game keeps working: the plain wheel still steps the forks, + / − still zoom the camera.
+    const fork = wheelEvent({ deltaY: -100, timeStamp: 30 });
+    win.dispatchEvent(fork);
+    expect(fork.defaultPrevented).toBe(true);
+    down({ code: 'Equal', key: '=' });
+    const s = input.poll(1 / 60);
+    expect(s.zoom).toBeCloseTo(ZOOM_KEY_RATE / 60); // no pinch share, only the held +
+    expect([s.zoomStep, s.forkStep]).toEqual([ZOOM_TAP_STOPS, 1]);
+    up({ code: 'Equal', key: '=' });
+
+    viewport.scale = 1; // pinched back out: the camera takes pinches again
+    input.poll(1 / 60);
+    expect(surface.style.touchAction).toBe('pan-x pan-y');
+    const again = wheelEvent({ deltaY: -10, ctrlKey: true, timeStamp: 500 });
+    win.dispatchEvent(again);
+    expect(again.defaultPrevented).toBe(true);
+    expect(input.poll(1 / 60).zoom).toBeCloseTo(10 / PINCH_WHEEL_PX_PER_STOP);
+    expect(fingers('touchstart', 100).defaultPrevented).toBe(true);
+    fingers('touchmove', 200);
+    expect(input.poll(1 / 60).zoom).toBeCloseTo(1);
+  });
+
+  it('the gamepad triggers give an analog rate: RT closer, LT further', () => {
+    const frames = [triggers(0, 1), triggers(0.55, 0), triggers(0.05, 0.08)];
+    let i = 0;
+    const { input, down } = setup({ gamepads: () => [frames[Math.min(i++, frames.length - 1)]] });
+    expect(input.poll(0.5).zoom).toBeCloseTo(ZOOM_KEY_RATE * 0.5);
+    expect(input.poll(1).zoom).toBeCloseTo(-ZOOM_KEY_RATE * 0.5);
+    const rest = input.poll(1); // resting triggers: inside the dead zone
+    expect([rest.zoom, rest.any]).toEqual([0, false]);
+    down({ code: 'Equal', key: '=' });
+    expect(input.poll(0).zoomStep).toBeCloseTo(ZOOM_TAP_STOPS);
+  });
+});
+
+/** A standard pad with only the triggers pulled (LT = button 6, RT = 7; analog `value`). */
+function triggers(lt: number, rt: number): GamepadLike {
+  return {
+    index: 0,
+    connected: true,
+    mapping: 'standard',
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, (_, b) => {
+      const value = b === 6 ? lt : b === 7 ? rt : 0;
+      return { pressed: value > 0.5, value };
+    }),
+  };
+}
 
 function pad(...pressed: number[]): GamepadLike {
   return {

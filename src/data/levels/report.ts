@@ -190,7 +190,7 @@ function blockerIds(m: LevelMetrics): string {
 
 /**
  * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks («hueco 2 de R» for a rack slot,
- * «camión T …, nivel 2» for a truck bed column).
+ * «camión T (x,z), nivel 2» for a truck bed column, named by its door cell: the one its map character stands on).
  */
 function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
   const model = new LevelGrid(level);
@@ -204,13 +204,15 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
     const cell = model.cellOf(model.slotCell[pos - model.cellCount]);
     return { text: `hueco ${slot.level + 1} de ${grid[cell.z][cell.x]}`, cell };
   };
+  /** Where a move takes or leaves its box on the map: a slot's rack cell, a truck bed's door cell, else the cell. */
+  const mapCell = (pos: number) => (model.isSlot(pos) ? slotName(pos).cell : model.cellOf(model.accessOf(pos)));
   return plan.map((move, i) => {
     const code = stacks[move.from].slice(-1);
     const box = boxOfCode(code);
     const lifted = lift(stacks, move.from);
     const height = model.isSlot(move.drop) ? 0 : lifted[move.drop].length;
-    const at = model.isSlot(move.drop) ? slotName(move.drop).cell : model.cellOf(move.drop);
-    const fromCellOf = model.isSlot(move.from) ? slotName(move.from).cell : model.cellOf(move.from);
+    const at = mapCell(move.drop);
+    const fromCellOf = mapCell(move.from);
     const from = model.isSlot(move.from)
       ? slotName(move.from)
       : model.isBed(move.from)

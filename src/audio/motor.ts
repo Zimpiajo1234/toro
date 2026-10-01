@@ -5,9 +5,10 @@ import { mulberry32 } from './random';
 import { ReverseBeeper } from './beeper';
 
 /*
- * The forklift's own sounds, all on the (dry) motor bus: an electric traction motor, the tyres on the tiles, the
- * hydraulic forks and the reverse beeper. Every tuning value lives in the tables below; levels are on the motor bus
- * (`audio.motor` in gameConfig.json scales them all).
+ * The forklift's own sounds: an electric traction motor, the tyres on the tiles and the hydraulic forks on the (dry)
+ * motor bus, plus the reverse beeper (beeper.ts), which AudioEngine sends to the SFX bus so it is heard with the music
+ * rather than under it. Every tuning value lives in the tables below; their levels are on the motor bus (`audio.motor`
+ * in gameConfig.json scales them all).
  */
 
 /** Electric traction motor: a smooth whine whose pitch and level climb with speed. Silent at a standstill. */
@@ -146,12 +147,16 @@ export class MotorSound {
   private lastClunkAt = -Infinity;
   private hushUntil = -Infinity;
 
-  /** `noise` = the graph's shared white-noise buffer (a small one is made when omitted). `beepHz` = reverse beep pitch. */
+  /**
+   * `noise` = the graph's shared white-noise buffer (a small one is made when omitted). `beepHz` = reverse beep pitch;
+   * `beepOut` = where the beeper plays (AudioEngine: the SFX bus; `out` when omitted).
+   */
   constructor(
     private readonly ctx: BaseAudioContext,
     out: AudioNode,
     noise?: AudioBuffer,
     beepHz?: number,
+    beepOut: AudioNode = out,
   ) {
     const nodes: AudioNode[] = [];
     const keep = <T extends AudioNode>(n: T): T => {
@@ -220,7 +225,7 @@ export class MotorSound {
     knockFilter.connect(this.knockGain);
     this.noise.connect(knockFilter);
 
-    this.beeper = new ReverseBeeper(ctx, out, beepHz);
+    this.beeper = new ReverseBeeper(ctx, beepOut, beepHz);
 
     this.nodes = nodes;
     this.sources = [...this.drive, this.noise, this.seam, this.pump, this.pumpOvertone, this.clunkTone];
@@ -245,6 +250,14 @@ export class MotorSound {
   /** Whether the reverse beeper is running. */
   get reversing(): boolean {
     return this.beeper.beeping;
+  }
+
+  /**
+   * The reverse beeper on / off (the player's «pitido» setting, B): off, backing up is silent and a beep sounding fades
+   * out at once; the drive whine and the forks are unaffected.
+   */
+  setReverseBeep(enabled: boolean): void {
+    this.beeper.setEnabled(enabled);
   }
 
   /** No end-of-travel clunk until audio time `until` (a box was just picked or set down: its own knock says it). */

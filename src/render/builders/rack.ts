@@ -10,13 +10,14 @@ import { roundedRectPoints, roundedRectShape } from '../shapes';
 
 /*
  * Storage rack (docs/RACKS.md): a plain, low-poly piece of painted metal, clearly another piece of furniture than the
- * wooden shelves (builders/shelf.ts): slate uprights, cream load beams, open slot floors, a back panel per slot and a
- * solid panel at each end, no bracing. Measured in depth d from the front face (d = 0) to the back face (d = 1) of its
+ * wooden shelves (builders/shelf.ts): slate uprights, cream load beams, open slot floors, a back panel per slot and,
+ * at each end, only a faint see-through plate that holds the end cues (no solid side wall: the boxes in the end column
+ * show from the side), no bracing. Measured in depth d from the front face (d = 0) to the back face (d = 1) of its
  * 1-cell-deep cells.
  *
  * Clearances (cell units): the resting box spans d 0.11‥0.89 and ±0.39 across; the load going in keeps a couple of
  * cm of play inside the collision walls (logic RACK_WALL), reaching d ≈ 0.91 at most. So the uprights and the end
- * panels stay within 0.06 of the column edges, the beams' inner lips (d ≤ 0.12, ≥ 0.88) carry the box, and the back
+ * plates stay within 0.06 of the column edges, the beams' inner lips (d ≤ 0.12, ≥ 0.88) carry the box, and the back
  * panel starts at 0.95.
  */
 
@@ -37,12 +38,14 @@ export const RACK_PANEL = { halfW: 0.44, d0: 0.95, d1: 0.98 } as const;
 /** Height of a back panel: from the slot floor up to the beam of the slot above. */
 export const PANEL_HEIGHT = RACK.pitch - RACK.beam;
 /**
- * Solid end panel of the rack (along-rack offsets from its end), between the front and back uprights, from the floor
- * to the top beam of the end column: set a touch behind the uprights' outer faces, so they frame it.
+ * See-through end plate of the rack (along-rack offsets from its end), between the front and back uprights, from the
+ * floor to the top beam of the end column, set a touch behind the uprights' outer faces, so they frame it. Not a wall:
+ * a faint sheet (views/RackView END_PLATE_OPACITY, never writing depth nor casting a shadow) that only holds the end
+ * cues, so the boxes in the end column read through it. Its own geometry (buildRackBays), apart from the solid frame.
  */
-export const END_PANEL = { u0: 0.015, u1: 0.04 } as const;
+export const END_PLATE = { u0: 0.015, u1: 0.04 } as const;
 /**
- * Cue sticker (the «leyenda» of a slot), on both faces of its back panel and on the outer face of the end panel beside
+ * Cue sticker (the «leyenda» of a slot), on both faces of its back panel and on the outer face of the end plate beside
  * it: the front of a box as a flat sticker for an unlit material (its colour exactly the box's, never shaded), a rim
  * and, in the middle, a bold glyph. `lift` keeps each layer just off the surface under it.
  */
@@ -140,10 +143,12 @@ export function cueEndSides(rack: Pick<LevelRack, 'facing' | 'columns'>, column:
 }
 
 /**
- * Frame of a storage rack in world space, one geometry per column (a bay, so each can fade on its own): uprights,
- * the bottom deck, cream beams under every slot floor and on top of the column, the slot floors, a solid panel at
- * each end of the rack and the plain back panel of every «libre» slot (a slot with a cue gets its own panel mesh,
- * buildSlotPanel, so it can glow). The upright between two columns belongs to the first of them.
+ * A storage rack in world space. First its frame, one geometry per column in column order (a bay, so each can fade on
+ * its own): uprights, the bottom deck, cream beams under every slot floor and on top of the column, the slot floors
+ * and the plain back panel of every «libre» slot (a slot with a cue gets its own panel mesh, buildSlotPanel, so it can
+ * glow). The upright between two columns belongs to the first of them. No wall closes the ends. Then the see-through
+ * plate of each end (END_PLATE; one geometry per end column, both ends in one for a one-column rack), tagged with that
+ * column (endPlateColumn): views/RackView draws it apart, faint, with its bay.
  */
 export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry[] {
   const c = theme.rack;
@@ -151,11 +156,13 @@ export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, t
   const bays = rack.columns.map(() => new PartList());
   const out = outwardZ(rack.facing);
   const zOf = (d: number) => out * (0.5 - d);
-  const block = (col: number, color: string, u0: number, u1: number, y0: number, y1: number, d0: number, d1: number) => {
+  const put = (parts: PartList, color: string, u0: number, u1: number, y0: number, y1: number, d0: number, d1: number) => {
     const za = zOf(d0);
     const zb = zOf(d1);
-    bays[col].block(color, u0, u1, y0, y1, Math.min(za, zb), Math.max(za, zb));
+    parts.block(color, u0, u1, y0, y1, Math.min(za, zb), Math.max(za, zb));
   };
+  const block = (col: number, color: string, u0: number, u1: number, y0: number, y1: number, d0: number, d1: number) =>
+    put(bays[col], color, u0, u1, y0, y1, d0, d1);
   const faces = [
     [0, POST],
     [1 - POST, 1],
@@ -174,10 +181,17 @@ export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, t
     for (const [d0, d1] of faces) block(col, c.frame, u0, u0 + POST, 0, top, d0, d1);
   }
 
-  // Solid end panels between the end uprights, up to the top beam of the end column (they carry its cues).
-  const endTop = (col: number) => rackSlotY(rack.columns[col].length);
-  block(0, c.panel, END_PANEL.u0, END_PANEL.u1, 0, endTop(0), POST, 1 - POST);
-  block(w - 1, c.panel, w - END_PANEL.u1, w - END_PANEL.u0, 0, endTop(w - 1), POST, 1 - POST);
+  // The see-through plates between the end uprights, up to the top beam of the end column: they only hold its end
+  // cues (buildSlotCue), apart from the frame so they can stay faint.
+  const plates = new Map<number, PartList>();
+  for (const [col, u0, u1] of [
+    [0, END_PLATE.u0, END_PLATE.u1],
+    [w - 1, w - END_PLATE.u1, w - END_PLATE.u0],
+  ] as const) {
+    const parts = plates.get(col) ?? new PartList();
+    plates.set(col, parts);
+    put(parts, c.panel, u0, u1, 0, rackSlotY(rack.columns[col].length), POST, 1 - POST);
+  }
 
   rack.columns.forEach((slots, col) => {
     // Between the uprights: end uprights are a full POST inside the rack, inner ones half.
@@ -204,7 +218,19 @@ export function buildRackBays(rack: LevelRack, level: Pick<LevelData, 'size'>, t
   });
 
   const placement = rackPlacement(rack, level);
-  return bays.map((local) => new PartList().append(local, placement).build());
+  const place = (local: PartList) => new PartList().append(local, placement).build();
+  const endPlates = [...plates].map(([col, local]) => {
+    const geometry = place(local);
+    geometry.userData.rackEndPlate = col;
+    return geometry;
+  });
+  return [...bays.map(place), ...endPlates];
+}
+
+/** The end column a geometry of buildRackBays is the see-through end plate of, or null for a column's frame. */
+export function endPlateColumn(geometry: BufferGeometry): number | null {
+  const col: unknown = geometry.userData.rackEndPlate;
+  return typeof col === 'number' ? col : null;
 }
 
 /**
@@ -247,7 +273,7 @@ export function buildSlotPanel(theme: Theme): BufferGeometry {
 /**
  * The cue of a slot, in the slot-local space of buildSlotPanel, for an unlit material (never shaded, never faded): a
  * sticker on both faces of the back panel and, for a column at an end of the rack, on the outer face of that end
- * panel (`endSides`, see cueEndSides), each upright and unmirrored for whoever looks at that face (pure yaws: the
+ * plate (`endSides`, see cueEndSides), each upright and unmirrored for whoever looks at that face (pure yaws: the
  * rack reads from any side), plus the tape on the slot's front lip. One geometry per look and ends, shared by its
  * slots.
  */
@@ -257,13 +283,13 @@ export function buildSlotCue(look: CueLook, endSides: readonly (1 | -1)[] = []):
   parts.add(buildCueFace(look), null, { y, z: 0.5 - RACK_PANEL.d0 + CUE.lift });
   parts.add(buildCueFace(look), null, { y, z: 0.5 - RACK_PANEL.d1 - CUE.lift, ry: Math.PI });
   for (const side of endSides) {
-    parts.add(buildCueFace(look), null, { x: side * (0.5 - END_PANEL.u0 + CUE.lift), y, ry: (side * Math.PI) / 2 });
+    parts.add(buildCueFace(look), null, { x: side * (0.5 - END_PLATE.u0 + CUE.lift), y, ry: (side * Math.PI) / 2 });
   }
   parts.block(look.lip, -LIP.half, LIP.half, 0, LIP.height, 0.5 - LIP.d1, 0.5 - LIP.d0);
   return parts.build();
 }
 
-/** Measures of a cue sticker (CUE for a rack slot; builders/truck TRUCK_CUE for a truck level, a little smaller). */
+/** Measures of a cue sticker (CUE for a rack slot; builders/truck SIGN_CUE for a cell of a dock sign, smaller). */
 export interface CueDims {
   halfW: number;
   halfH: number;
@@ -275,7 +301,7 @@ export interface CueDims {
 
 /**
  * One cue sticker, in the XY plane facing +Z from z = 0: the rim, the fill over it and the bold glyph on top. Shared by
- * the rack slots and the truck cue boards (docs/DOCKS.md), so both read the same.
+ * the rack slots and the dock signs over the truck doors (docs/DOCKS.md), so both read the same.
  */
 export function buildCueFace(look: Pick<CueLook, 'fill' | 'rim' | 'ink' | 'glyph'>, dims: CueDims = CUE): BufferGeometry {
   const parts = new PartList();
@@ -321,7 +347,7 @@ export function buildSlotGlowGeometry(): BufferGeometry {
   return buildGlowFrameGeometry(SLOT_GLOW, PANEL_HEIGHT / 2, [0.5 + SLOT_GLOW.gap, -0.5 - SLOT_GLOW.gap]);
 }
 
-/** Measures of a glow band (SLOT_GLOW; builders/truck TRUCK_GLOW around a truck level). */
+/** Measures of a glow band (SLOT_GLOW; builders/truck SIGN_GLOW round a dock sign cell's sticker). */
 export interface GlowFrameDims {
   halfW: number;
   solidX: number;

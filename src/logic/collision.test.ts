@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { BoxState } from '../core/types';
-import { BOX_SETTLE_SPEED, circleRectContact, CollisionWorld, createContact, pointRectDistance, type Rect } from './collision';
+import type { BoxState, LevelData } from '../core/types';
+import { BOX_SETTLE_SPEED, circleRectContact, CollisionWorld, createContact, DOOR_JAMB, pointRectDistance, type Rect } from './collision';
 
 const BOUNDS: Rect = { minX: -5, minZ: -5, maxX: 5, maxZ: 5 };
 
@@ -199,6 +199,120 @@ describe('CollisionWorld rack column closing on the load', () => {
     expect(world.softenRack(0, 0, touching + 0.1, 0.46)).toBe(0);
     expect(world.softenRack(3, 0, 0, 0.46)).toBe(0);
     expect(world.rackInset(3)).toBe(0);
+  });
+});
+
+describe('CollisionWorld dock doors (docs/DOCKS.md)', () => {
+  /** A 6×4 room; `trucks` in its north / west walls. */
+  const room = (trucks: LevelData['trucks']): LevelData => ({
+    id: 'x',
+    order: 1,
+    name: 'x',
+    size: { width: 6, depth: 4 },
+    forklift: { x: 5, z: 3, heading: 0 },
+    boxes: [],
+    zones: [],
+    shelves: [],
+    ...(trucks ? { trucks } : {}),
+    decor: { plants: [], windows: [] },
+    theme: 'default',
+  });
+  const hit = createContact();
+
+  it('without docks the load meets the walls exactly as the body does', () => {
+    const world = CollisionWorld.fromLevel(room(undefined), 0.78);
+    for (const [x, z] of [
+      [-2.7, 0],
+      [0, -1.7],
+      [-2.8, -1.8],
+      [2.9, 1.9],
+      [0.3, 0.2],
+    ]) {
+      expect(world.deepestContact(x, z, 0.46, hit, true)).toBeCloseTo(world.deepestContact(x, z, 0.46, hit), 12);
+      expect(world.clearance(x, z, null, true)).toBeCloseTo(Math.min(x + 3, 3 - x, z + 2, 2 - z), 12);
+    }
+  });
+
+  it('a north door: the load passes the wall line only through an open column, between its jambs, into a pocket one cell deep; never the body', () => {
+    // Door cells (2,0) and (3,0): world x −1‥1 along the north wall (z = −2); the bed pocket is z −3‥−2.
+    const world = CollisionWorld.fromLevel(room([{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }], [{ color: 'mint' }]] }]), 0.78);
+    expect(world.doorCount).toBe(2);
+    expect(world.doorCell(0)).toEqual({ minX: -1, minZ: -3, maxX: 0, maxZ: -2 });
+    expect(world.doorCell(1)).toEqual({ minX: 0, minZ: -3, maxX: 1, maxZ: -2 });
+    // Shut (until GameState opens a column), the door is wall for the load: resting against its line, never past it.
+    expect([world.isDoorOpen(0), world.isDoorOpen(1)]).toEqual([false, false]);
+    expect(world.deepestContact(-0.5, -2 + 0.46, 0.46, hit, true)).toBeCloseTo(0, 9);
+    expect(world.deepestContact(-0.5, -2 + 0.4, 0.46, hit, true)).toBeCloseTo(0.06, 9);
+    expect(hit.nz).toBe(1);
+    expect(world.clearance(-0.5, -2.5, null, true)).toBeLessThan(0);
+    // Column 0 open: the load passes onto its bed, never into the shut span beside it (no sliding along the door).
+    world.setDoorOpen(0, true);
+    expect(world.isDoorOpen(0)).toBe(true);
+    expect(world.deepestContact(-0.5, -2.5, 0.46, hit, true)).toBe(0);
+    expect(world.deepestContact(0, -2.5, 0.46, hit, true)).toBeCloseTo(0.46, 9);
+    expect(hit.nx).toBe(-1);
+    expect(world.clearance(-0.5, -2.5, null, true)).toBeCloseTo(0.5 - DOOR_JAMB, 9);
+    // Both open: nothing stands between the columns of one door.
+    world.setDoorOpen(1, true);
+    for (const x of [-0.5, 0, 0.5]) expect(world.deepestContact(x, -2.5, 0.46, hit, true), `x ${x}`).toBe(0);
+    // The body always meets the whole wall, also at an open door.
+    expect(world.deepestContact(0, -2.1, 0.42, hit)).toBeCloseTo(0.42 + 0.1, 9);
+    expect(hit.nz).toBe(1);
+    // The back of the pocket, and the jambs (DOOR_JAMB into each end of the run).
+    expect(world.deepestContact(0, -2.6, 0.46, hit, true)).toBeCloseTo(0.06, 9);
+    expect(hit.nz).toBe(1);
+    expect(world.deepestContact(-1 + DOOR_JAMB + 0.46, -2.5, 0.46, hit, true)).toBeCloseTo(0, 9);
+    expect(world.deepestContact(-1 + DOOR_JAMB + 0.4, -2.5, 0.46, hit, true)).toBeCloseTo(0.06, 9);
+    expect(hit.nx).toBe(1);
+    // Beside the door the wall is whole for the load too.
+    expect(world.deepestContact(-2, -1.8, 0.46, hit, true)).toBeCloseTo(0.26, 9);
+    expect(world.deepestContact(2, -1.8, 0.46, hit, true)).toBeCloseTo(0.26, 9);
+    // The fork point (empty tines) passes any door, shut or open: on the bed it has room; beside the door it is inside
+    // the wall.
+    world.setDoorOpen(0, false);
+    world.setDoorOpen(1, false);
+    expect(world.clearance(0, -2.5)).toBeCloseTo(0.5, 9);
+    expect(world.clearance(-2, -2.5)).toBeLessThan(0);
+    // Elsewhere (south and east walls, the room) exactly as the plain walls.
+    expect(world.deepestContact(2.8, 1.8, 0.46, hit, true)).toBeCloseTo(world.deepestContact(2.8, 1.8, 0.46, hit), 12);
+    expect(world.clearance(1.5, 0.5, null, true)).toBeCloseTo(1.5, 12);
+    // Out-of-range columns are ignored.
+    world.setDoorOpen(5, true);
+    expect(world.isDoorOpen(5)).toBe(false);
+  });
+
+  it('a west door in the corner and a north door next to it: each opens its own pocket, the corner stays solid', () => {
+    const world = CollisionWorld.fromLevel(
+      room([
+        { id: 't1', wall: 'west', x: 0, z: 0, w: 1, columns: [[{ color: 'blue' }]] },
+        { id: 't2', wall: 'north', x: 0, z: 0, w: 1, columns: [[{ color: 'mint' }]] },
+      ]),
+      0.78,
+    );
+    // West pocket: x −4‥−3 beside row 0 (z −2‥−1); north pocket: z −3‥−2 over column 0 (x −3‥−2).
+    expect(world.doorCell(0)).toEqual({ minX: -4, minZ: -2, maxX: -3, maxZ: -1 });
+    expect(world.doorCell(1)).toEqual({ minX: -3, minZ: -3, maxX: -2, maxZ: -2 });
+    expect(world.deepestContact(-3.5, -1.5, 0.46, hit, true)).toBeGreaterThan(0);
+    world.setDoorOpen(0, true);
+    expect(world.deepestContact(-3.5, -1.5, 0.46, hit, true)).toBe(0);
+    // Each door opens on its own.
+    expect(world.deepestContact(-2.5, -2.5, 0.46, hit, true)).toBeGreaterThan(0);
+    world.setDoorOpen(1, true);
+    expect(world.deepestContact(-2.5, -2.5, 0.46, hit, true)).toBe(0);
+    expect(world.clearance(-3.5, -2.5)).toBeLessThan(0);
+    // Two doors side by side on one wall leave a post of two jambs between them.
+    const pair = CollisionWorld.fromLevel(
+      room([
+        { id: 't1', wall: 'north', x: 1, z: 0, w: 1, columns: [[{ color: 'blue' }]] },
+        { id: 't2', wall: 'north', x: 2, z: 0, w: 1, columns: [[{ color: 'mint' }]] },
+      ]),
+      0.78,
+    );
+    pair.setDoorOpen(0, true);
+    pair.setDoorOpen(1, true);
+    expect(pair.clearance(-1, -2.5)).toBeLessThan(0);
+    expect(pair.clearance(-1.5, -2.5, null, true)).toBeCloseTo(0.5 - DOOR_JAMB, 9);
+    expect(pair.clearance(-0.5, -2.5, null, true)).toBeCloseTo(0.5 - DOOR_JAMB, 9);
   });
 });
 

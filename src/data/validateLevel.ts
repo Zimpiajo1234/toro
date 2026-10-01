@@ -3,6 +3,7 @@ import {
   COLOR_IDS,
   FACINGS,
   MAX_RACK_SLOTS,
+  MAX_TRUCK_COLUMNS,
   MAX_TRUCK_LEVELS,
   SYMBOL_IDS,
   cellKey,
@@ -177,12 +178,15 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   });
   const hasRacks = racks.length > 0;
 
-  // Loading docks (docs/DOCKS.md): a truck bed is a straight run of cells against the north (z = 0) or west (x = 0)
-  // wall, 1 cell deep, one column per cell, 1–MAX_TRUCK_LEVELS levels per column, every level with a cue; its cells are
-  // obstacles for the forklift and it is loaded from the floor cell in front of each column.
+  // Loading docks (docs/DOCKS.md): a dock door is a straight run of door cells against the north (z = 0) or west
+  // (x = 0) wall, one bed column per door cell (1–MAX_TRUCK_COLUMNS), 1–MAX_TRUCK_LEVELS levels per column, every level
+  // with a cue. The door cells are floor, free of furniture (and of zones, boxes and the forklift at the start: checked
+  // below); the bed columns lie outside the map, just beyond the wall, and are loaded through the door from them.
   const truckIds = new Set<string>();
-  /** Bed cell key → [truck index, column]. */
+  /** Bed cell key (outside the map) → [truck index, column]. */
   const truckCells = new Map<string, [number, number]>();
+  /** Door cell key → [truck index, column]. */
+  const doorCells = new Map<string, [number, number]>();
   /** Name of each truck slot for messages, in core/docks `truckSlotsOf` order. */
   const truckSlotNames: string[] = [];
   const trucks: LevelTruck[] = arr(r.trucks, 'trucks').map((x, i) => {
@@ -214,23 +218,25 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       columns,
     };
     if (truck.w !== columns.length) fail(`trucks[${i}].w must equal its number of columns (${columns.length})`);
-    if (wall === 'north' && truck.z !== 0) fail(`trucks[${i}] is in the north wall: its bed runs along row z = 0`);
-    if (wall === 'west' && truck.x !== 0) fail(`trucks[${i}] is in the west wall: its bed runs along column x = 0`);
+    if (columns.length > MAX_TRUCK_COLUMNS) fail(`trucks[${i}] has ${columns.length} columns, more than ${MAX_TRUCK_COLUMNS}: its dock door is 1 to ${MAX_TRUCK_COLUMNS} cells wide`);
+    if (wall === 'north' && truck.z !== 0) fail(`trucks[${i}] is in the north wall: its door cells run along row z = 0`);
+    if (wall === 'west' && truck.x !== 0) fail(`trucks[${i}] is in the west wall: its door cells run along column x = 0`);
     if (truckIds.has(truck.id)) fail(`duplicate truck id "${truck.id}"`);
     if (rackIds.has(truck.id)) fail(`trucks[${i}] has the id "${truck.id}" of a rack: racks and trucks never share an id`);
     truckIds.add(truck.id);
     columns.forEach((_, j) => {
-      const cell = truckCellOf(truck, j);
-      if (!inBounds(cell.x, cell.z)) fail(`trucks[${i}] leaves the warehouse at ${cell.x},${cell.z}`);
-      const k = cellKey(cell);
-      if (blocked.has(k)) fail(`trucks[${i}] overlaps another obstacle at ${k}`);
-      blocked.add(k);
-      truckCells.set(k, [i, j]);
+      const door = truckFrontOf(truck, j);
+      if (!inBounds(door.x, door.z)) fail(`trucks[${i}] leaves the warehouse at ${door.x},${door.z}`);
+      const k = cellKey(door);
+      // The door cells stay floor (the forklift stands there to load): no shelf, plant, rack or other dock door.
+      if (blocked.has(k) || doorCells.has(k)) fail(`trucks[${i}] overlaps another obstacle at ${k}`);
+      doorCells.set(k, [i, j]);
+      truckCells.set(cellKey(truckCellOf(truck, j)), [i, j]);
     });
     return truck;
   });
   const hasTrucks = trucks.length > 0;
-  // Every rack column and truck column is loaded from its front cell: floor, whatever else stands around.
+  // Every rack column is loaded from its front cell: floor, whatever else stands around (a dock's door cell too).
   racks.forEach((rack, i) => {
     rack.columns.forEach((_, j) => {
       const front = frontCellOf(rack, j);
@@ -238,13 +244,11 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
         fail(`racks[${i}] column ${j} has no room in front: cell ${front.x},${front.z} is a wall, a shelf, a plant or another rack`);
     });
   });
-  trucks.forEach((truck, i) => {
-    truck.columns.forEach((_, j) => {
-      const front = truckFrontOf(truck, j);
-      if (!inBounds(front.x, front.z) || blocked.has(cellKey(front)))
-        fail(`trucks[${i}] column ${j} has no room in front: cell ${front.x},${front.z} is a shelf, a plant, a rack or another truck`);
-    });
-  });
+  /** The dock door a cell is in front of, as messages name it, or null. */
+  const doorAt = (k: string): string | null => {
+    const at = doorCells.get(k);
+    return at ? `the dock door of trucks[${at[0]}] (column ${at[1]})` : null;
+  };
   // The dock door is the truck's run along its wall: no window on it.
   windows.forEach((win, i) => {
     trucks.forEach((truck, j) => {
@@ -264,6 +268,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   };
   if (!inBounds(forklift.x, forklift.z)) fail('forklift starts out of bounds');
   if (blocked.has(cellKey(forklift))) fail('forklift starts inside an obstacle');
+  // A door cell holds its truck's character in a .level map: nothing else starts there.
+  const forkliftDoor = doorAt(cellKey(forklift));
+  if (forkliftDoor) fail(`forklift starts on ${forkliftDoor}: door cells start empty`);
 
   // Zones: each declares what it accepts (a color, a symbol, or both) and optionally a color recipe to stack.
   const zoneIds = new Set<string>();
@@ -295,6 +302,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (blocked.has(k)) fail(`zone "${zone.id}" is inside an obstacle`);
     if (zoneCells.has(k)) fail(`two zones share cell ${k}`);
     if (k === cellKey(forklift)) fail(`zone "${zone.id}" is under the forklift start`);
+    // Its locked box would close that bed column for good.
+    const door = doorAt(k);
+    if (door) fail(`zone "${zone.id}" is on ${door}: the truck is loaded from there`);
     zoneCells.add(k);
     return zone;
   });
@@ -328,8 +338,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     };
     if (boxIds.has(box.id)) fail(`duplicate box id "${box.id}"`);
     boxIds.add(box.id);
-    if (!inBounds(box.x, box.z)) fail(`box "${box.id}" out of bounds`);
     const k = cellKey(box);
+    // A box loaded on a truck rests on its bed cell, outside the map beyond the dock door.
+    if (!inBounds(box.x, box.z) && !truckCells.has(k)) fail(`box "${box.id}" out of bounds`);
     const rackCell = rackCells.get(k);
     if (rackCell) {
       // A box in a storage rack slot.
@@ -360,6 +371,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (box.level !== undefined) fail(`box "${box.id}" has a level but is not in a rack slot (floor stacks go by list order)`);
     if (blocked.has(k)) fail(`box "${box.id}" is inside an obstacle`);
     if (k === cellKey(forklift)) fail(`box "${box.id}" is under the forklift start`);
+    const door = doorCells.get(k);
+    if (door)
+      fail(`box "${box.id}" starts on ${doorAt(k)}: door cells start empty (a box loaded on the truck is on its bed cell ${cellKey(truckCellOf(trucks[door[0]], door[1]))})`);
     const stack = stacks.get(k);
     if (stack) stack.push(sortableOf(box));
     else stacks.set(k, [sortableOf(box)]);

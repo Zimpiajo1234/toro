@@ -1,14 +1,27 @@
-import { Box3, Color, Matrix4, Mesh, SRGBColorSpace, Vector3, type BufferGeometry, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
+import {
+  Box3,
+  Color,
+  DoubleSide,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  Raycaster,
+  SRGBColorSpace,
+  Vector3,
+  type BufferGeometry,
+  type MeshStandardMaterial,
+  type Object3D,
+} from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
 import { cueFits, isDestined } from '../../core/sorting';
-import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type TruckSlotState } from '../../core/types';
+import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type TruckSlotState, type WallSide } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../../data/levels';
 import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
-import { TRUCK, TRUCK_CUE } from '../builders/truck';
-import { buildWallGeometry, dockSpan, wallLayouts } from '../builders/walls';
+import { DOCK_PLATE, DOCK_SIGN, SIGN_CUE, TRUCK, dockColumnX, signBottom, signMidZ, signRowY, signRows, signTop } from '../builders/truck';
+import { DOOR, buildWallGeometry, dockSpan, wallLayouts } from '../builders/walls';
 import { CameraRig } from '../CameraRig';
 import { DIORAMA, DOCK, ZONE, boxDims } from '../dims';
 import { LevelView } from '../LevelView';
@@ -16,18 +29,21 @@ import { LOCK_DELAY } from './BoxView';
 import { FLASH_PEAK, LOCK_SEC, TARGET_REST } from './success';
 
 /*
- * Loading docks on screen (docs/DOCKS.md): a door in the wall, a truck backed into it with its bed on the bed cells
- * (level with the floor: boxes stack on it as on the floor), a cue board per bed column with one full-colour sticker
- * per level (bottom at the bottom, over the full stack, readable from both sides), levels that light like rack slots
- * (only with the destined box on right levels below; the strong pulse only for the next level of a column), the board
- * ghosting like a rack bay (never its stickers) and the truck outside sinking with its wall. Layouts are inline.
+ * Loading docks on screen (docs/DOCKS.md): a door in the wall with the dock plate in it, a truck parked OUTSIDE (its
+ * low open flatbed level with the floor, its rear flush with the wall's outer face, nothing of it in the room and
+ * nothing over or between its bed columns: boxes stack on it as on the floor), and the framed sign over the door: one
+ * cell per bed column (right above its door cell) and level (bottom row = level 0), with a full-colour sticker on both
+ * faces. Levels light like rack slots on the sign (only with the destined box on right levels below; the strong pulse
+ * only for the next level of a column); the sign ghosts like a rack bay (never its stickers), softly with its wall
+ * sunk; the truck never sinks and stays in frame. Layouts are inline: 1- to 3-column trucks of up to 2 levels, on the
+ * north and the west wall.
  */
 
 const level = (text: string): LevelData => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
 
 /**
- * The docs/DOCKS.md example: a north dock at cells 2–3. Column 0: «azul» / «▲»; column 1: «coral ◆», with the menta ▲
- * loaded on it by mistake. The azul ▲ goes to the bottom of column 0 and the menta ▲ on top of it.
+ * The docs/DOCKS.md example: a north dock at door cells 2–3. Column 0: «azul» / «▲»; column 1: «coral ◆», with the
+ * menta ▲ loaded on it by mistake. The azul ▲ goes to the bottom of column 0 and the menta ▲ on top of it.
  */
 const NORTH = level(`
 # 1 · Muelle de ejemplo
@@ -47,30 +63,102 @@ a = caja azul ▲        b = caja amarillo ■    c = caja coral ◆
 T = camión muelle norte: azul / ▲ | coral ◆ + caja menta ▲
 `);
 
-/** A west dock at rows 1–3 with a three-level column first, then «menta», then «lavanda ✚» already loaded. */
+/** A one-column north dock at cell 3: «azul» / «▲». The azul ■ is the zone's, so the azul ▲ goes below the menta ▲. */
+const NORTH1 = level(`
+# 2 · Muelle norte de una columna
+id: muelle-norte-uno
+limit: 2
+
+  012345
+0 ...T..
+1 ......
+2 .a.cb.
+3 ..^..1
+
+1 = zona ■
+a = caja azul ▲        b = caja azul ■        c = caja menta ▲
+T = camión muelle norte: azul / ▲
+`);
+
+/** A three-column north dock at cells 1–3: «azul» / «coral», «menta», «lavanda». */
+const NORTH3 = level(`
+# 3 · Muelle norte triple
+id: muelle-norte-triple
+limit: 2
+
+  0123456
+0 .TTT...
+1 .......
+2 .a.b.c.
+3 ...^.d.
+
+a = caja azul ●        b = caja coral ◆       c = caja menta ■       d = caja lavanda ✚
+T = camión muelle norte: azul / coral | menta | lavanda
+`);
+
+/** A one-column west dock at row 2: «lavanda ✚» already loaded right, then «azul» over it. */
 const WEST = level(`
-# 2 · Muelle oeste
+# 4 · Muelle oeste
 id: muelle-oeste
-limit: 3
+limit: 2
 ventanas: norte 4-5
+
+  01234567
+0 ........
+1 ........
+2 T....1..
+3 ..a..b..
+4 ....^...
+
+1 = zona amarillo
+a = caja azul ●        b = caja amarillo ■
+T = camión muelle oeste: lavanda ✚ + caja lavanda ✚ / azul
+`);
+
+/** The docs example on the west wall: rows 1–2, column 0 (north) «azul» / «▲», column 1 «coral ◆» + menta ▲. */
+const WEST2 = level(`
+# 5 · Muelle oeste doble
+id: muelle-oeste-doble
+limit: 2
 
   01234567
 0 ........
 1 T.......
 2 T....1..
-3 T.a..b..
+3 .a..b...
 4 ....^.c.
-5 ..d.e...
 
-1 = zona amarillo
-a = caja azul ●       b = caja lavanda ▲     c = caja coral ◆
-d = caja menta ●      e = caja amarillo ■
-T = camión muelle oeste: azul / ▲ / coral | menta | lavanda ✚ + caja lavanda ✚
+1 = zona ■
+a = caja azul ▲        b = caja amarillo ■    c = caja coral ◆
+T = camión muelle oeste: azul / ▲ | coral ◆ + caja menta ▲
 `);
 
+/** A three-column west dock at rows 1–3: «azul», «menta» / «coral», «lavanda». */
+const WEST3 = level(`
+# 6 · Muelle oeste triple
+id: muelle-oeste-triple
+limit: 2
+
+  0123456
+0 .......
+1 T......
+2 T..a.b.
+3 T..c...
+4 ...^.d.
+
+a = caja azul ●        b = caja coral ◆       c = caja menta ■       d = caja lavanda ✚
+T = camión muelle oeste: azul | menta / coral | lavanda
+`);
+
+const ALL = [NORTH, NORTH1, NORTH3, WEST, WEST2, WEST3];
+
 const YAW = Math.PI / 4;
+const T = DIORAMA.wallThickness;
 const height = boxDims(GAME_CONFIG).height;
 const half = GAME_CONFIG.box.size / 2;
+const tanPitch = Math.tan((GAME_CONFIG.camera.pitchDeg * Math.PI) / 180);
+/** A camera yaw that sinks the wall of `wall` (the camera behind it, outside). */
+const behindOf = (wall: WallSide) => (wall === 'north' ? YAW + Math.PI / 2 : YAW - Math.PI / 2);
 
 function setup(lvl: LevelData = NORTH, yaw = YAW): { snap: GameSnapshot; view: LevelView } {
   const snap = new GameState(lvl).getSnapshot();
@@ -81,33 +169,64 @@ function step(view: LevelView, snap: GameSnapshot, seconds: number, yaw = YAW, t
   for (let i = 0; i < Math.round(seconds * 60); i++) view.update(snap, 1 / 60, t0 + i / 60, yaw, 0);
 }
 
+type Lit = Mesh<BufferGeometry, MeshStandardMaterial>;
+type Unlit = Mesh<BufferGeometry, MeshBasicMaterial>;
 const truckGroup = (view: LevelView, id = 't1') => view.root.children.find((c) => c.userData.truckId === id)!;
-const outside = (view: LevelView, id = 't1') => view.root.children.find((c) => c.userData.truckOutside === id)!;
-const part = <T extends Mesh>(view: LevelView, tag: string, id: string) =>
-  truckGroup(view, id.split(':')[0]).children.find((c) => c.userData[tag] === id) as T | undefined;
-const cueMesh = (view: LevelView, id: string) => part<Mesh<BufferGeometry, MeshBasicMaterial>>(view, 'truckCue', id);
-const panel = (view: LevelView, id: string) => part<Mesh<BufferGeometry, MeshStandardMaterial>>(view, 'truckSlotId', id);
-const band = (view: LevelView, id: string) => part<Mesh<BufferGeometry, MeshBasicMaterial>>(view, 'truckGlow', id);
-/** The cue board frame of each bed column, in column order. */
-const boards = (view: LevelView, id = 't1') =>
-  truckGroup(view, id)
-    .children.filter((c) => c.userData.truck)
-    .sort((a, b) => a.userData.column - b.userData.column) as Mesh<BufferGeometry, MeshStandardMaterial>[];
+const child = <M extends Mesh>(view: LevelView, tag: string, id: string) =>
+  truckGroup(view, id.split(':')[0]).children.find((c) => c.userData[tag] === id) as M | undefined;
+const body = (view: LevelView, id = 't1') => child<Lit>(view, 'truckBody', id)!;
+const plate = (view: LevelView, id = 't1') => child<Lit>(view, 'truckPlate', id)!;
+const signFrame = (view: LevelView, id = 't1') => truckGroup(view, id).children.find((c) => c.userData.sign) as Lit;
+const cueMesh = (view: LevelView, id: string) => child<Unlit>(view, 'truckCue', id);
+const band = (view: LevelView, id: string) => child<Unlit>(view, 'truckGlow', id);
+const panel = (view: LevelView, id: string) => child<Lit>(view, 'signPanel', id);
 const boxGroup = (view: LevelView, id: string) => view.root.children.find((c) => c.userData.boxId === id)!;
-const boxMesh = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Mesh<BufferGeometry, MeshStandardMaterial>;
-const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => c.userData[tag]) as Mesh<BufferGeometry, MeshBasicMaterial>;
+const boxMesh = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Lit;
+const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => c.userData[tag]) as Unlit;
+/** The dock's fit box (the only one reaching down to the driveway). */
+const truckFit = (view: LevelView) => view.fitBoxes.find((f) => f.min.y < DOCK.apronTop)!;
 const slotOf = (snap: GameSnapshot, id: string) => snap.truckSlots!.find((s) => s.id === id)!;
 const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
 const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+/** Direction from the scene toward the camera (LevelView's `back`). */
+const toCamera = (yaw: number) => {
+  const p = (GAME_CONFIG.camera.pitchDeg * Math.PI) / 180;
+  return new Vector3(Math.cos(p) * Math.sin(yaw), Math.sin(p), Math.cos(p) * Math.cos(yaw));
+};
+
+/** World → dock-local (builders/truck: x along the wall, y up, z inward from the wall's inner face). */
+function toDock(lvl: LevelData, wall: WallSide, p: Vector3): Vector3 {
+  const { width: w, depth: d } = lvl.size;
+  return wall === 'north' ? new Vector3(p.x + w / 2, p.y, p.z + d / 2) : new Vector3(d / 2 - p.z, p.y, p.x + w / 2);
+}
+/** Dock-local → world. */
+function toWorld(lvl: LevelData, wall: WallSide, x: number, y: number, z: number): Vector3 {
+  const { width: w, depth: d } = lvl.size;
+  return wall === 'north' ? new Vector3(x - w / 2, y, z - d / 2) : new Vector3(z - w / 2, y, d / 2 - x);
+}
+/** A dock-local box in world space. */
+const dockBox = (lvl: LevelData, wall: WallSide, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+  new Box3().setFromPoints([toWorld(lvl, wall, x0, y0, z0), toWorld(lvl, wall, x1, y1, z1)]);
+
+function isPainted(col: { getX(i: number): number; getY(i: number): number; getZ(i: number): number }, i: number, c: Color): boolean {
+  return Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4;
+}
 
 function painted(geo: BufferGeometry, hex: string): number {
   const c = new Color(hex);
   const col = geo.getAttribute('color');
   let n = 0;
-  for (let i = 0; i < col.count; i++) {
-    if (Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4) n++;
-  }
+  for (let i = 0; i < col.count; i++) if (isPainted(col, i, c)) n++;
   return n;
+}
+
+/** World-space vertices of `mesh`. */
+function vertices(mesh: Mesh): Vector3[] {
+  mesh.updateWorldMatrix(true, false);
+  const pos = mesh.geometry.getAttribute('position');
+  const out: Vector3[] = [];
+  for (let i = 0; i < pos.count; i++) out.push(new Vector3().fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld));
+  return out;
 }
 
 /** World-space bounds of each triangle of `mesh` (optionally only those painted `hex`). */
@@ -119,7 +238,7 @@ function triangles(mesh: Mesh, hex?: string): Box3[] {
   const c = hex ? new Color(hex) : null;
   const out: Box3[] = [];
   for (let i = 0; i < pos.count; i += 3) {
-    if (c && !(Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4)) continue;
+    if (c && !isPainted(col, i, c)) continue;
     const box = new Box3();
     for (let k = 0; k < 3; k++) box.expandByPoint(new Vector3().fromBufferAttribute(pos, i + k).applyMatrix4(mesh.matrixWorld));
     out.push(box);
@@ -132,12 +251,28 @@ const overlaps = (a: Box3, b: Box3, eps = 1e-4) =>
   a.max.x > b.min.x + eps && a.min.x < b.max.x - eps && a.max.y > b.min.y + eps && a.min.y < b.max.y - eps && a.max.z > b.min.z + eps && a.min.z < b.max.z - eps;
 
 /**
+ * The walls of `lvl` as LevelView places them (world space, both faces hit by rays); with `yaw`, only those standing
+ * for a camera at that yaw (WallView: a wall sinks while the camera is behind it).
+ */
+function wallMeshes(lvl: LevelData, yaw?: number): Mesh[] {
+  const standing = wallLayouts(lvl).filter((l) => yaw === undefined || l.inward.x * Math.sin(yaw) + l.inward.z * Math.cos(yaw) > -0.05);
+  return standing.map((layout) => {
+    const mesh = new Mesh(buildWallGeometry(layout, defaultTheme, new Vector3(0.5, 1, -0.5).normalize()).body, new MeshBasicMaterial({ side: DoubleSide }));
+    mesh.position.copy(layout.position);
+    mesh.rotation.y = layout.rotationY;
+    mesh.updateMatrixWorld(true);
+    return mesh;
+  });
+}
+
+/**
  * Hand-driven snapshot edits (the view only reads it). `load`: rest `box` on truck slot `slot`, satisfied when it is
  * the destined one on satisfied levels below (then locked, and the level above becomes loadable). `carry`: lift it.
  */
 function load(snap: GameSnapshot, box: BoxState, slot: TruckSlotState): void {
   const column = snap.truckSlots!.filter((s) => s.truckId === slot.truckId && s.column === slot.column);
   const right = column.every((s) => s.level >= slot.level || s.satisfied) && isDestined(slot, box);
+  for (const s of snap.truckSlots!) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
   Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, zoneId: null, slotId: null, truckSlotId: slot.id, correct: right, locked: right });
   Object.assign(slot, { occupiedBy: box.id, satisfied: right, loadable: false });
   const above = column.find((s) => s.level === slot.level + 1);
@@ -155,7 +290,7 @@ function carry(snap: GameSnapshot, box: BoxState): void {
   snap.forklift.carrying = box.id;
   snap.forklift.forkLift = 1;
 }
-/** Highest panel glow of each truck level over `seconds`. */
+/** Highest glow of each truck level's sign panel over `seconds`. */
 function peakGlow(view: LevelView, snap: GameSnapshot, seconds: number): Map<string, number> {
   const peak = new Map<string, number>();
   for (let i = 0; i < Math.round(seconds * 60); i++) {
@@ -166,9 +301,8 @@ function peakGlow(view: LevelView, snap: GameSnapshot, seconds: number): Map<str
 }
 
 describe('dock door', () => {
-  it('opens its wall over the bed cells from the floor to the lintel: baseboard broken, the trailer passes clear', () => {
-    const T = DIORAMA.wallThickness;
-    for (const lvl of [NORTH, WEST]) {
+  it('opens its wall over the door cells from the sill up: baseboard broken, a load up to level 1 passes clear', () => {
+    for (const lvl of ALL) {
       const truck = lvl.trucks![0];
       const layouts = wallLayouts(lvl);
       const layout = layouts.find((l) => l.side === truck.wall)!;
@@ -179,20 +313,31 @@ describe('dock door', () => {
       const door = layout.doors[0];
       const geo = buildWallGeometry(layout, defaultTheme, new Vector3(0.5, 1, -0.5).normalize());
       const mesh = new Mesh(geo.body);
-      // No wall and no baseboard inside the opening, between the sill and the lintel.
+      // No wall and no baseboard inside the opening, between the sill and the door top.
       const opening = new Box3(new Vector3(door.a, DOCK.sillTop, -T), new Vector3(door.b, DOCK.doorTop, 0.05));
       for (const hex of [defaultTheme.wall.base, defaultTheme.wall.trim]) {
         for (const tri of triangles(mesh, hex)) expect(overlaps(tri, opening)).toBe(false);
       }
-      // Nothing at all where the trailer deck and its rails pass (the rolled-up door waits in the head).
-      const passage = new Box3(new Vector3(span.a + TRUCK.inset, TRUCK.deckBottom, -T), new Vector3(span.b - TRUCK.inset, 1.8, 0));
+      // Nothing at all where a box goes through, from the bed cell to the door cell, up to a load carried to level 1
+      // (forks up + one stack step: its top at ≈ 1.62; the shutter's rail waits above it).
+      const loadTop = 0.34 + 2 * height;
+      expect(loadTop).toBeLessThan(DOCK.doorTop - DOOR.rail);
+      const passage = new Box3(new Vector3(span.a + 0.5 - half, DOCK.sillTop + 0.01, -1), new Vector3(span.b - 0.5 + half, loadTop + 0.01, 0.05));
       for (const tri of triangles(mesh)) expect(overlaps(tri, passage)).toBe(false);
+      // The rolled-up door waits outside, over the opening (the inner face over the door is the sign's).
+      const roll = triangles(mesh, defaultTheme.truck.shutter);
+      expect(roll.length).toBeGreaterThan(0);
+      for (const tri of roll) {
+        expect(tri.max.z).toBeLessThanOrEqual(-T + 1e-6);
+        expect(tri.min.y).toBeGreaterThan(DOCK.doorTop);
+      }
       // Framed in slate, sealed in rubber outside: never a functional hue.
       expect(painted(geo.body, defaultTheme.truck.doorFrame)).toBeGreaterThan(0);
       expect(painted(geo.body, defaultTheme.truck.rubber)).toBeGreaterThan(0);
-      // The windows are still there, on their own.
-      expect(layouts.flatMap((l) => l.openings)).toHaveLength(1);
+      for (const tri of triangles(mesh, defaultTheme.truck.rubber)) expect(tri.max.z).toBeLessThanOrEqual(-T + 1e-6);
     }
+    // The windows are still there, on their own.
+    expect(wallLayouts(NORTH).flatMap((l) => l.openings)).toHaveLength(1);
   });
 
   it('adds no door, no truck and nothing new to levels without docks', () => {
@@ -213,7 +358,11 @@ a = caja azul
     const { snap, view } = setup(plain);
     expect(snap.truckSlots).toBeUndefined();
     step(view, snap, 0.5);
-    expect(view.root.children.some((c) => c.userData.truckId || c.userData.truckOutside)).toBe(false);
+    let tagged = 0;
+    view.root.traverse((o) => {
+      if (o.userData.truckId || o.userData.truckBody || o.userData.truckPlate || o.userData.sign || o.userData.truckCue) tagged++;
+    });
+    expect(tagged).toBe(0);
     view.dispose();
   });
 });
@@ -234,31 +383,64 @@ describe('truck', () => {
     }
   });
 
-  it('lays its bed on the bed cells level with the floor, clear of every box its columns hold', () => {
-    for (const lvl of [NORTH, WEST]) {
-      const { snap, view } = setup(lvl);
-      const group = truckGroup(view);
-      const bed = group.children.find((c) => c.userData.truckBed) as Mesh;
-      const bounds = bed.geometry.boundingBox!;
-      // Flat: planks a hair over the floor, rails and the leveller barely above them.
-      expect(bounds.max.y).toBeLessThanOrEqual(TRUCK.railTop + 1e-6);
-      expect(bounds.min.y).toBeLessThan(0);
-      const columns = new Map<string, TruckSlotState[]>();
-      for (const s of snap.truckSlots!) columns.set(`${s.truckId}:${s.column}`, [...(columns.get(`${s.truckId}:${s.column}`) ?? []), s]);
-      expect(columns.size).toBe(lvl.trucks![0].columns.length);
-      const meshes = group.children.filter((c): c is Mesh => c instanceof Mesh && !c.userData.truckCue && !c.userData.truckGlow);
-      for (const levels of columns.values()) {
-        const p = levels[0].pos;
-        expect(bounds.containsPoint(new Vector3(p.x, 0, p.z))).toBe(true);
-        // The space a full column of boxes takes, from the planks up: nothing of the truck reaches into it.
-        const stack = new Box3(new Vector3(p.x - half, DOCK.bedTop + 0.005, p.z - half), new Vector3(p.x + half, levels.length * height, p.z + half));
-        for (const mesh of meshes) for (const tri of triangles(mesh)) expect(overlaps(tri, stack)).toBe(false);
+  it('waits entirely outside, its bed level with the floor and its rear flush with the wall; only the flat plate is in the door', () => {
+    for (const lvl of ALL) {
+      const truck = lvl.trucks![0];
+      const { view } = setup(lvl);
+      const span = dockSpan(truck, lvl);
+      const local = vertices(body(view)).map((p) => toDock(lvl, truck.wall, p));
+      // Nothing of the truck, its driveway or the pit face past the wall's outer face.
+      for (const p of local) expect(p.z).toBeLessThanOrEqual(-T + 1e-5);
+      // Low: from any camera looking over it (at the camera pitch), it never hides the floor inside the warehouse.
+      for (const p of local) expect(p.y).toBeLessThanOrEqual(-p.z * tanPitch + 1e-5);
+      // The bed (from the planks up): its rear just off the wall's outer face, flush with it.
+      const rear = Math.max(...local.filter((p) => p.y > TRUCK.deckBottom - 0.03).map((p) => p.z));
+      expect(rear).toBeLessThan(-T);
+      expect(rear).toBeGreaterThan(-T - 0.02);
+      // Its planks level with the floor, within the door run.
+      const deck = triangles(body(view), defaultTheme.truck.deck).map((b) => new Box3().setFromPoints([toDock(lvl, truck.wall, b.min), toDock(lvl, truck.wall, b.max)]));
+      expect(deck.length).toBeGreaterThan(0);
+      expect(Math.max(...deck.map((b) => b.max.y))).toBeCloseTo(DOCK.bedTop, 5);
+      expect(Math.min(...deck.map((b) => b.min.x))).toBeGreaterThanOrEqual(span.a);
+      expect(Math.max(...deck.map((b) => b.max.x))).toBeLessThanOrEqual(span.b);
+      // The dock plate: flat (under the drop preview), in the door opening, onto the floor only by its lip.
+      const drop = ZONE.padHeight + 0.008;
+      for (const p of vertices(plate(view)).map((q) => toDock(lvl, truck.wall, q))) {
+        expect(p.y).toBeLessThan(drop);
+        expect(p.z).toBeLessThanOrEqual(DOCK_PLATE.lip + 1e-5);
+        expect(p.x).toBeGreaterThanOrEqual(span.a + DOCK.doorInset - 1e-5);
+        expect(p.x).toBeLessThanOrEqual(span.b - DOCK.doorInset + 1e-5);
       }
       view.dispose();
     }
   });
 
-  it('stacks the boxes on its bed at floor stack heights', () => {
+  it('leaves its load open: nothing over or between its bed columns, and each full column clear of the door', () => {
+    for (const lvl of ALL) {
+      const truck = lvl.trucks![0];
+      const { snap, view } = setup(lvl);
+      const span = dockSpan(truck, lvl);
+      const rear = -T - TRUCK.rearGap;
+      const far = rear - TRUCK.bedLength;
+      // Between the drop sides, from the headboard to the wall, over the plate: none of the dock's own parts.
+      const space = dockBox(lvl, truck.wall, span.a + TRUCK.inset + TRUCK.side + 1e-3, span.b - TRUCK.inset - TRUCK.side - 1e-3, DOCK_PLATE.top + 0.003, 3, far + TRUCK.headboard.postDepth + 1e-3, 0);
+      const meshes = truckGroup(view).children.filter((c): c is Mesh => c instanceof Mesh);
+      for (const mesh of meshes) for (const tri of triangles(mesh)) expect(overlaps(tri, space)).toBe(false);
+      // Each bed column's full stack, from the planks up, is clear of the door, its frame, seals and roll too.
+      const walls = wallMeshes(lvl);
+      const columns = new Map<number, TruckSlotState[]>();
+      for (const s of snap.truckSlots!) columns.set(s.column, [...(columns.get(s.column) ?? []), s]);
+      expect(columns.size).toBe(truck.columns.length);
+      for (const levels of columns.values()) {
+        const p = levels[0].pos;
+        const stack = new Box3(new Vector3(p.x - half, DOCK_PLATE.top + 0.003, p.z - half), new Vector3(p.x + half, levels.length * height, p.z + half));
+        for (const mesh of [...meshes, ...walls]) for (const tri of triangles(mesh)) expect(overlaps(tri, stack)).toBe(false);
+      }
+      view.dispose();
+    }
+  });
+
+  it('stacks the boxes on its bed outside, at floor stack heights', () => {
     const { snap, view } = setup();
     const blue = boxOf(snap, 'blue', 'triangle');
     const mint = boxOf(snap, 'mint', 'triangle');
@@ -266,27 +448,83 @@ describe('truck', () => {
     load(snap, mint, slotOf(snap, 't1:0:1'));
     step(view, snap, 1.5);
     const p = slotOf(snap, 't1:0:0').pos;
+    // Beyond the wall: the bed cell's centre is half a cell past the wall's inner face.
+    expect(p.z).toBeCloseTo(-NORTH.size.depth / 2 - 0.5, 6);
     expect(boxGroup(view, blue.id).position.y).toBeCloseTo(0, 3);
     expect(boxGroup(view, mint.id).position.y).toBeCloseTo(height, 3);
     expect(boxGroup(view, mint.id).position.x).toBeCloseTo(p.x, 3);
     expect(boxGroup(view, mint.id).position.z).toBeCloseTo(p.z, 3);
     view.dispose();
   });
+});
 
-  it('shows one sticker per level on the board of its column, bottom at the bottom, above the full stack, at full colour', () => {
-    const r = defaultTheme.rack;
-    for (const lvl of [NORTH, WEST]) {
+describe('dock sign', () => {
+  it('hangs over the door, clear of the wall and its cap: one cell per bed column over its door cell, bottom row = level 0', () => {
+    for (const lvl of ALL) {
+      const truck = lvl.trucks![0];
       const { snap, view } = setup(lvl);
+      const span = dockSpan(truck, lvl);
+      const rows = signRows(truck);
+      const frame = signFrame(view);
+      expect(frame).toBeDefined();
+      const bounds = new Box3().setFromPoints(vertices(frame).map((p) => toDock(lvl, truck.wall, p)));
+      expect(bounds.min.y).toBeCloseTo(signBottom(), 5);
+      expect(bounds.min.y).toBeGreaterThan(DOCK.doorTop + DOOR.frame);
+      expect(bounds.max.y).toBeCloseTo(signTop(rows), 5);
+      expect(bounds.min.x).toBeCloseTo(span.a, 5);
+      expect(bounds.max.x).toBeCloseTo(span.b, 5);
+      // Off the wall (only its two brackets touch the inner face), in front of the cap's overhang.
+      expect(bounds.min.z).toBeGreaterThanOrEqual(-1e-5);
+      const layout = wallLayouts(lvl).find((l) => l.side === truck.wall)!;
+      const cap = new Box3(
+        new Vector3(layout.capFrom, DIORAMA.wallHeight, -T - DIORAMA.capOverhang),
+        new Vector3(layout.capTo, DIORAMA.wallHeight + DIORAMA.capHeight, DIORAMA.capOverhang),
+      );
+      for (const tri of triangles(frame)) {
+        const t = new Box3().setFromPoints([toDock(lvl, truck.wall, tri.min), toDock(lvl, truck.wall, tri.max)]);
+        expect(overlaps(t, cap)).toBe(false);
+      }
+      // Every level's sticker sits on its cell: right over its door cell, its row from the bottom up.
       for (const s of snap.truckSlots!) {
         const cue = cueMesh(view, s.id)!;
         expect(cue).toBeDefined();
-        expect(cue.position.x).toBeCloseTo(s.pos.x, 6);
-        expect(cue.position.z).toBeCloseTo(s.pos.z, 6);
-        const levels = snap.truckSlots!.filter((t) => t.truckId === s.truckId && t.column === s.column);
-        // Never behind the load: its bottom edge over the top of a full column.
-        expect(cue.position.y - TRUCK_CUE.halfH).toBeGreaterThan(levels.length * height);
-        const above = levels.find((t) => t.level === s.level + 1);
-        if (above) expect(cueMesh(view, above.id)!.position.y).toBeGreaterThan(cue.position.y + 2 * TRUCK_CUE.halfH);
+        const at = toDock(lvl, truck.wall, cue.position);
+        const door = toDock(lvl, truck.wall, new Vector3(cellToWorld(s.front, lvl.size).x, 0, cellToWorld(s.front, lvl.size).z));
+        expect(at.x).toBeCloseTo(door.x, 5);
+        expect(at.x).toBeCloseTo(dockColumnX(truck, lvl, s.column), 5);
+        expect(at.y).toBeCloseTo(signRowY(s.level), 5);
+        expect(at.z).toBeCloseTo(signMidZ(), 5);
+        expect(panel(view, s.id)!.position.distanceTo(cue.position)).toBeLessThan(1e-9);
+        // The sticker fits its cell (between the frame's bars).
+        expect(2 * SIGN_CUE.halfH).toBeLessThan(DOCK_SIGN.row - DOCK_SIGN.divider);
+        expect(2 * SIGN_CUE.halfW).toBeLessThan(1 - DOCK_SIGN.divider);
+      }
+      // A column with fewer levels than the tallest leaves plain cream panels in the frame, and only there.
+      const board = triangles(frame, defaultTheme.truck.board).map((b) => new Box3().setFromPoints([toDock(lvl, truck.wall, b.min), toDock(lvl, truck.wall, b.max)]));
+      const blanks = truck.columns.reduce((n, cues) => n + rows - cues.length, 0);
+      expect(board.length > 0).toBe(blanks > 0);
+      truck.columns.forEach((cues, column) => {
+        const x = dockColumnX(truck, lvl, column);
+        for (let k = 0; k < rows; k++) {
+          const cell = new Box3(new Vector3(x - 0.45, signRowY(k) - 0.15, 0), new Vector3(x + 0.45, signRowY(k) + 0.15, 1));
+          expect(board.some((b) => overlaps(b, cell)), `${lvl.id} column ${column} row ${k}`).toBe(k >= cues.length);
+        }
+      });
+      // Always in frame and in the shadow volume (it may rise over the wall cap), with the whole truck.
+      const fit = new Box3(truckFit(view).min, truckFit(view).max);
+      expect(fit.containsBox(new Box3().setFromPoints(vertices(frame)))).toBe(true);
+      expect(fit.containsBox(new Box3().setFromPoints(vertices(body(view))))).toBe(true);
+      expect(view.shadowBounds.containsBox(fit)).toBe(true);
+      view.dispose();
+    }
+  });
+
+  it('shows each level at full colour: unlit, opaque, the colour of the box it asks for, its symbol bold', () => {
+    const r = defaultTheme.rack;
+    for (const lvl of ALL) {
+      const { snap, view } = setup(lvl);
+      for (const s of snap.truckSlots!) {
+        const cue = cueMesh(view, s.id)!;
         // Unlit, opaque, not tone mapped: exactly its colours, never shaded or faded.
         expect(cue.material.toneMapped).toBe(false);
         expect(cue.material.transparent).toBe(false);
@@ -301,35 +539,85 @@ describe('truck', () => {
     }
   });
 
-  it('turns each sticker to the warehouse and to the outside: front-facing, upright, never mirrored', () => {
-    for (const lvl of [NORTH, WEST]) {
+  it('turns a sticker to the warehouse and one to the outside: upright, never mirrored, one facing every camera angle', () => {
+    for (const lvl of ALL) {
+      const truck = lvl.trucks![0];
       const { snap, view } = setup(lvl);
+      const inward = truck.wall === 'north' ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
+      const yaws = [0, 1, 2, 3].map((k) => YAW + (k * Math.PI) / 2);
       for (const s of snap.truckSlots!) {
         const mesh = cueMesh(view, s.id)!;
         mesh.updateWorldMatrix(true, false);
+        // A pure yaw: never mirrored, never tilted (its up stays up).
         expect(mesh.matrixWorld.determinant()).toBeCloseTo(1, 6);
+        expect(new Vector3(0, 1, 0).transformDirection(mesh.matrixWorld).y).toBeCloseTo(1, 6);
         const pos = mesh.geometry.getAttribute('position');
         const nor = mesh.geometry.getAttribute('normal');
         const rot = new Matrix4().extractRotation(mesh.matrixWorld);
-        // The loading side (TRUCK_FACING): +z for a north dock, +x for a west one.
-        const loading = s.wall === 'north' ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
         const sides = new Set<number>();
+        const best = yaws.map(() => -1);
         for (let i = 0; i < pos.count; i += 3) {
           const v = [0, 1, 2].map((k) => new Vector3().fromBufferAttribute(pos, i + k).applyMatrix4(mesh.matrixWorld));
           const winding = v[1].clone().sub(v[0]).cross(v[2].clone().sub(v[0])).normalize();
           const n = new Vector3().fromBufferAttribute(nor, i).applyMatrix4(rot);
           // Counter-clockwise seen from where its normal points: drawn, not culled (a mirror would flip it).
           expect(winding.dot(n)).toBeGreaterThan(0.99);
-          sides.add(Math.round(n.dot(loading)));
+          sides.add(Math.round(n.dot(inward)));
+          yaws.forEach((yaw, k) => {
+            const c = toCamera(yaw).setY(0).normalize();
+            best[k] = Math.max(best[k], n.dot(c));
+          });
         }
         expect([...sides].sort()).toEqual([-1, 1]);
+        for (const b of best) expect(b).toBeGreaterThan(0.5);
       }
+      view.dispose();
+    }
+  });
+
+  it('never covers a sticker with its frame, from any camera quarter: its brackets hide behind the end bars', () => {
+    const raycaster = new Raycaster();
+    const yaws = [0, 1, 2, 3].map((k) => YAW + (k * Math.PI) / 2);
+    for (const lvl of ALL) {
+      const { snap, view } = setup(lvl);
+      const frame = signFrame(view);
+      frame.updateWorldMatrix(true, false);
+      // Either face of a frame triangle blocks the view (a sticker point may even sit inside a bar or a bracket).
+      const solid = new Mesh(frame.geometry, new MeshBasicMaterial({ side: DoubleSide }));
+      solid.matrixAutoUpdate = false;
+      solid.matrixWorld.copy(frame.matrixWorld);
+      for (const s of snap.truckSlots!) {
+        const cue = cueMesh(view, s.id)!;
+        cue.updateWorldMatrix(true, false);
+        const pos = cue.geometry.getAttribute('position');
+        const nor = cue.geometry.getAttribute('normal');
+        const rot = new Matrix4().extractRotation(cue.matrixWorld);
+        for (const yaw of yaws) {
+          const dir = toCamera(yaw);
+          let seen = 0;
+          for (let i = 0; i < pos.count; i += 3) {
+            const n = new Vector3().fromBufferAttribute(nor, i).applyMatrix4(rot);
+            // Only the face turned toward that camera shows (its back face is culled).
+            if (n.dot(dir) <= 0) continue;
+            const v = [0, 1, 2].map((k) => new Vector3().fromBufferAttribute(pos, i + k).applyMatrix4(cue.matrixWorld));
+            const centre = v[0].clone().add(v[1]).add(v[2]).divideScalar(3);
+            // Its corners (a hair inside) and its centre, just off the sticker's surface, looking at the camera.
+            for (const p of [...v.map((q) => q.lerp(centre, 0.05)), centre]) {
+              raycaster.set(p.addScaledVector(n, 1e-4), dir);
+              expect(raycaster.intersectObject(solid, false), `${lvl.id} ${s.id} yaw ${yaw.toFixed(2)}`).toEqual([]);
+              seen++;
+            }
+          }
+          expect(seen).toBeGreaterThan(0);
+        }
+      }
+      solid.material.dispose();
       view.dispose();
     }
   });
 });
 
-describe('truck levels light like rack slots', () => {
+describe('truck levels light like rack slots, on the sign', () => {
   it('lights a level only with its destined box on right levels below: flash, burst, soft glow, deeper box', () => {
     const { snap, view } = setup();
     step(view, snap, 1);
@@ -352,6 +640,11 @@ describe('truck levels light like rack slots', () => {
     expect(peak).toBeGreaterThan(FLASH_PEAK * 0.9);
     expect(bandPeak).toBeGreaterThan(0.8);
     expect(burst).toBe(true);
+    // The burst plays on the box on the bed, at the door plane (the face the default camera sees).
+    const ring = view.root.children.find((c) => c.userData.successBurst)!;
+    const p = slotOf(snap, 't1:0:0').pos;
+    expect(ring.position.x).toBeCloseTo(p.x, 6);
+    expect(ring.position.z).toBeCloseTo(p.z, 6);
     step(view, snap, LOCK_DELAY + LOCK_SEC + 1);
     expect(panel(view, 't1:0:0')!.material.emissiveIntensity).toBeCloseTo(TARGET_REST, 2);
     // The sticker glows by brightening its own colour, never below full colour.
@@ -396,7 +689,7 @@ describe('truck levels light like rack slots', () => {
     view.dispose();
   });
 
-  it('previews the drop on the bed at its level, on top of a locked box, in the box tone only where it is right now', () => {
+  it('previews the drop on the bed outside at its level, on top of a locked box, in the box tone only where it is right now', () => {
     const { snap, view } = setup();
     load(snap, boxOf(snap, 'blue', 'triangle'), slotOf(snap, 't1:0:0'));
     const mint = boxOf(snap, 'mint', 'triangle');
@@ -408,14 +701,16 @@ describe('truck levels light like rack slots', () => {
     expect(preview.visible).toBe(true);
     expect(preview.position.x).toBeCloseTo(top.pos.x, 2);
     expect(preview.position.z).toBeCloseTo(top.pos.z, 2);
+    expect(preview.position.z).toBeLessThan(-NORTH.size.depth / 2 - T);
     expect(preview.position.y).toBeCloseTo(height + ZONE.padHeight + 0.008, 2);
     expect(colorDistance(preview.material.color, new Color(defaultTheme.zones.mint.border))).toBeLessThan(0.02);
 
-    // «coral ◆» would not take it: the preview stays neutral.
+    // «coral ◆» would not take it: the preview stays neutral, over the plate and the bed (never under them).
     const coral = slotOf(snap, 't1:1:0');
     Object.assign(snap.hint, { dropCell: { ...coral.cell }, dropLevel: 0, dropTruckSlotId: coral.id });
     step(view, snap, 1);
     expect(preview.visible).toBe(true);
+    expect(preview.position.y).toBeGreaterThan(DOCK_PLATE.top + 0.002);
     expect(colorDistance(preview.material.color, new Color(defaultTheme.floor.edge))).toBeLessThan(0.02);
     view.dispose();
   });
@@ -424,7 +719,7 @@ describe('truck levels light like rack slots', () => {
     // «azul» takes the azul ▲ (the zone ■ is the azul ■'s): the azul ■ fits the cue, is tinted and pulses, then buzzes
     // on the drop (wrongTarget: logic/GameState.docks.test.ts), as a rack slot's cue would (docs/DOCKS.md, vista previa).
     const TRAP = level(`
-# 3 · Trampa del camión
+# 7 · Trampa del camión
 id: trampa-camion
 limit: 2
 
@@ -455,67 +750,174 @@ T = camión muelle norte: azul
   });
 });
 
-describe('truck and camera', () => {
-  it('fades a cue board like a rack bay while it hides the forklift from outside (wall sunk), never its stickers', () => {
-    const behind = YAW + Math.PI;
-    const { snap, view } = setup(NORTH, behind);
-    const front = cellToWorld(slotOf(snap, 't1:1:0').front, NORTH.size);
-    snap.forklift.pos = { ...front };
-    snap.forklift.heading = Math.PI;
-    step(view, snap, 1.5, behind);
-    const board = boards(view)[0];
-    expect(board.material.opacity).toBeLessThan(0.4);
-    expect(board.material.depthWrite).toBe(false);
-    expect(panel(view, 't1:0:0')!.material.opacity).toBeCloseTo(board.material.opacity, 6);
-    for (const s of snap.truckSlots!) {
-      const cue = cueMesh(view, s.id)!;
-      expect(cue.visible).toBe(true);
-      expect(cue.material.transparent).toBe(false);
-      expect(cue.material.opacity).toBe(1);
-      expect(cue.material.depthWrite).toBe(true);
-    }
-    // From inside (the default camera) the boards stand behind everything: solid.
-    step(view, snap, 2);
-    for (const b of boards(view)) expect(b.material.opacity).toBe(1);
-    view.dispose();
-  });
-
-  it('sinks the truck outside with its wall when the camera goes behind it, and raises it back; framed only standing', () => {
-    const S = DIORAMA.slabThickness;
-    for (const [lvl, behind] of [
-      [NORTH, YAW + Math.PI / 2],
-      [WEST, YAW - Math.PI / 2],
-    ] as const) {
-      const { snap, view } = setup(lvl);
-      const out = outside(view);
-      const fit = view.fitBoxes.find((f) => f.max.y > 0.9 && (f.min.z < -lvl.size.depth / 2 - 1 || f.min.x < -lvl.size.width / 2 - 1))!;
-      step(view, snap, 0.5);
-      expect(out.visible).toBe(true);
-      expect(out.scale.y).toBeCloseTo(1, 6);
-      expect(fit).toBeDefined();
-      let last = out.scale.y;
-      for (let i = 0; i < 180; i++) {
-        view.update(snap, 1 / 60, i / 60, behind, 0);
-        expect(out.scale.y).toBeLessThanOrEqual(last + 1e-9);
-        last = out.scale.y;
+describe('dock and camera', () => {
+  it('fades the sign like a rack bay while it hides the forklift from outside, softly while its wall is down, never its stickers', () => {
+    for (const lvl of [NORTH, WEST2]) {
+      const truck = lvl.trucks![0];
+      const behind = behindOf(truck.wall);
+      const { snap, view } = setup(lvl, behind);
+      // The forklift where the sign stands between it and the camera: its middle seen through the sign's middle.
+      const back = toCamera(behind);
+      const span = dockSpan(truck, lvl);
+      const centre = toWorld(lvl, truck.wall, (span.a + span.b) / 2, (signBottom() + signTop(signRows(truck))) / 2, signMidZ());
+      const at = centre.clone().addScaledVector(back, -(centre.y - 0.6) / back.y);
+      snap.forklift.pos = { x: at.x, z: at.z };
+      step(view, snap, 1.5, behind);
+      const frame = signFrame(view);
+      expect(frame.material.opacity).toBeLessThan(0.4);
+      expect(frame.material.depthWrite).toBe(false);
+      for (const s of snap.truckSlots!) expect(panel(view, s.id)!.material.opacity).toBeCloseTo(frame.material.opacity, 6);
+      for (const s of snap.truckSlots!) {
+        const cue = cueMesh(view, s.id)!;
+        expect(cue.visible).toBe(true);
+        expect(cue.material.transparent).toBe(false);
+        expect(cue.material.opacity).toBe(1);
+        expect(cue.material.depthWrite).toBe(true);
       }
-      expect(out.visible).toBe(false);
-      // Nothing of it left to frame beyond the warehouse, and the bed and its boards stay.
-      expect(fit.max.y).toBeLessThanOrEqual(-S + 1e-3);
-      expect(fit.min.x).toBeGreaterThan(-lvl.size.width / 2 - DIORAMA.wallThickness - 1e-3);
-      expect(fit.min.z).toBeGreaterThan(-lvl.size.depth / 2 - DIORAMA.wallThickness - 1e-3);
-      expect(truckGroup(view).visible).toBe(true);
+      // Nothing behind it now (the forklift in the far corner), but its wall is down: it stands where the lintel was,
+      // a soft ghost.
+      snap.forklift.pos = { x: lvl.size.width / 2 - 0.5, z: lvl.size.depth / 2 - 0.5 };
+      step(view, snap, 2, behind);
+      expect(frame.material.opacity).toBeGreaterThan(0.5);
+      expect(frame.material.opacity).toBeLessThan(0.7);
+      // From inside (the default camera) the sign hangs behind everything: solid, even over a stack on the bed.
+      const s0 = snap.truckSlots!.find((s) => s.level === 1)!;
+      const below = snap.truckSlots!.find((s) => s.column === s0.column && s.level === 0)!;
+      const loose = snap.boxes.filter((b) => b.truckSlotId === null || b.truckSlotId === undefined);
+      if (!below.occupiedBy) load(snap, loose[0], below);
+      load(snap, loose.find((b) => b.id !== below.occupiedBy)!, s0);
       step(view, snap, 3);
-      expect(out.visible).toBe(true);
-      expect(out.scale.y).toBeCloseTo(1, 3);
-      expect(fit.max.y).toBeGreaterThan(0.9);
+      expect(frame.material.opacity).toBe(1);
       view.dispose();
     }
   });
 
-  it('keeps the frame calm while the Benchmark dock wall sinks and rises: idle orbit and Q/E turns, truck in frame', () => {
-    // The truck's reach used to come back into the fit within ~4 frames of its wall rising: a 2.4 % per-frame zoom on
-    // the idle orbit (3.1 % on a portrait Q/E turn). Walls alone step by up to ≈ 0.7 %.
+  it('never ghosts a rack for a box the standing dock wall already hides: on the forks through the door or on the bed (Benchmark)', () => {
+    const bench = getSpecialLevel(BENCHMARK_ID)!;
+    const { snap, view } = setup(bench);
+    const { width: w, depth: d } = bench.size;
+    // R stands two cells east of the door; from the default camera a box on the bed beyond (2,0) lies «behind» it, but
+    // behind the wall first.
+    const rack = view.root.children.find((c) => c.userData.rackId === 'r1')!;
+    const bays = rack.children.filter((c): c is Lit => c instanceof Mesh && c.userData.rack === true);
+    expect(bays).toHaveLength(2);
+    const opacity = () => bays.map((b) => b.material.opacity);
+    step(view, snap, 1);
+    expect(opacity()).toEqual([1, 1]);
+    // The amarillo ✚ on the forks, through the door of (2,0): the forklift's body against the wall on that door cell.
+    const yellow = boxOf(snap, 'yellow', 'cross');
+    carry(snap, yellow);
+    snap.forklift.pos = { x: 2.5 - w / 2, z: GAME_CONFIG.forklift.bodyRadius - d / 2 };
+    snap.forklift.heading = Math.PI;
+    step(view, snap, 1.5);
+    expect(boxGroup(view, yellow.id).position.z + half).toBeLessThan(-d / 2);
+    expect(opacity()).toEqual([1, 1]);
+    // Loaded on its level (t1:1:0), the forklift back in the aisle: R stays solid all the while.
+    load(snap, yellow, slotOf(snap, 't1:1:0'));
+    snap.forklift.pos = { x: 2.5 - w / 2, z: 3.5 - d / 2 };
+    for (let i = 0; i < 180; i++) {
+      view.update(snap, 1 / 60, i / 60, YAW, 0);
+      expect(opacity()).toEqual([1, 1]);
+    }
+    // With its wall sunk the camera looks from outside: the bed stands in front of everything, it hides nothing.
+    step(view, snap, 2, behindOf('north'));
+    expect(opacity()).toEqual([1, 1]);
+    view.dispose();
+  });
+
+  it('never ghosts a stacked box for a lid the standing dock wall already hides', () => {
+    // A two-box floor stack right beside the door: from the default camera the coral ◆ on the bed of (2,0) is «behind»
+    // its top box, but behind the wall first.
+    const STACK = level(`
+# 8 · Pila junto a la puerta
+id: pila-junto-puerta
+limit: 2
+
+  012345
+0 .TTc..
+1 ......
+2 1....2
+3 .d...^
+
+1 = zona azul          2 = zona menta
+c = pila azul ●,menta ▲
+d = caja lavanda ■
+T = camión muelle norte: lavanda | coral + caja coral ◆
+`);
+    const { snap, view } = setup(STACK);
+    const top = boxOf(snap, 'mint', 'triangle');
+    expect(top).toMatchObject({ cell: { x: 3, z: 0 }, level: 1 });
+    expect(boxOf(snap, 'coral', 'diamond')).toMatchObject({ cell: { x: 2, z: -1 }, truckSlotId: 't1:1:0' });
+    for (let i = 0; i < 120; i++) {
+      view.update(snap, 1 / 60, i / 60, YAW, 0);
+      expect(boxMesh(view, top.id).material.opacity).toBe(1);
+    }
+    view.dispose();
+  });
+
+  it('never sinks: the truck, its plate and the sign stay put and in frame while their wall goes down and up', () => {
+    for (const lvl of [NORTH, WEST2, NORTH3]) {
+      const truck = lvl.trucks![0];
+      const { snap, view } = setup(lvl);
+      step(view, snap, 0.5);
+      const fit = truckFit(view);
+      const before = { min: fit.min.clone(), max: fit.max.clone() };
+      const bodyBounds = new Box3().setFromPoints(vertices(body(view)));
+      expect(fit.heightScale).toBe(1);
+      expect(new Box3(fit.min, fit.max).containsBox(bodyBounds)).toBe(true);
+      const loaded = snap.boxes.find((b) => b.truckSlotId);
+      const behind = behindOf(truck.wall);
+      let sank = false;
+      for (let i = 0; i < 240; i++) {
+        view.update(snap, 1 / 60, i / 60, behind, 0);
+        sank ||= view.fitBoxes.some((f) => f !== fit && f.heightScale < 0.01);
+        for (const mesh of [body(view), plate(view), signFrame(view)]) {
+          expect(mesh.visible).toBe(true);
+          expect(mesh.scale.y).toBe(1);
+        }
+        expect(fit.min.equals(before.min) && fit.max.equals(before.max)).toBe(true);
+        expect(fit.heightScale).toBe(1);
+      }
+      expect(sank).toBe(true);
+      // A box on the bed stays on the bed (never left floating over a sunk truck).
+      if (loaded) expect(boxGroup(view, loaded.id).position.y).toBeCloseTo(loaded.level * height, 3);
+      view.dispose();
+    }
+  });
+
+  it('shows the boxes on the bed through the door from the camera: nothing of the wall or the sign in the way', () => {
+    const raycaster = new Raycaster();
+    for (const lvl of [NORTH1, NORTH3, WEST, WEST3]) {
+      const truck = lvl.trucks![0];
+      const { snap, view } = setup(lvl);
+      // Fill every bed column up to its top (whatever boxes: the view only reads the positions).
+      const loose = snap.boxes.filter((b) => !b.truckSlotId);
+      for (const s of snap.truckSlots!) if (!s.occupiedBy) load(snap, loose.shift()!, s);
+      step(view, snap, 1);
+      const group = truckGroup(view);
+      const sign = group.children.filter((c): c is Mesh => c instanceof Mesh && (c.userData.sign || c.userData.signPanel || c.userData.truckCue));
+      for (const m of sign) m.updateMatrixWorld(true);
+      // The standing wall's two camera quarters (the other two sink it).
+      const yaws = truck.wall === 'north' ? [YAW, -YAW] : [YAW, YAW + Math.PI / 2];
+      for (const yaw of yaws) {
+        const dir = toCamera(yaw);
+        const walls = wallMeshes(lvl, yaw);
+        for (const s of snap.truckSlots!) {
+          const c = s.pos;
+          const local = toDock(lvl, truck.wall, new Vector3(c.x, 0, c.z));
+          // The middle of the face the box turns to the warehouse, a hair in front of it.
+          const face = toWorld(lvl, truck.wall, local.x, s.level * height + height / 2, local.z + half + 0.005);
+          raycaster.set(face, dir);
+          const hits = raycaster.intersectObjects([...walls, ...sign], false);
+          expect(hits, `${lvl.id} ${s.id} yaw ${yaw.toFixed(2)}`).toEqual([]);
+        }
+      }
+      view.dispose();
+    }
+  });
+
+  it('keeps the frame calm on the Benchmark while its dock wall sinks and rises: idle orbit and Q/E turns, truck in frame', () => {
+    // The truck is static and always framed: only the walls move the fit (≈ 0.7 % per frame at most).
     const MAX_STEP = 0.015;
     const bench = getSpecialLevel(BENCHMARK_ID)!;
     const runs: [string, number, (rig: CameraRig, frame: number) => void][] = [
@@ -523,7 +925,6 @@ describe('truck and camera', () => {
       ['Q', 5 * 150, (rig, f) => f % 150 === 0 && f < 600 && rig.rotate(1)],
       ['E', 5 * 150, (rig, f) => f % 150 === 0 && f < 600 && rig.rotate(-1)],
     ];
-    const bounds = new Box3();
     const p = new Vector3();
     for (const [w, h] of [[1920, 1080], [800, 1200]]) {
       for (const [name, frames, drive] of runs) {
@@ -533,7 +934,7 @@ describe('truck and camera', () => {
         const view = new LevelView(snap, defaultTheme, GAME_CONFIG, rig.yaw);
         rig.setFitBoxes(view.fitBoxes);
         rig.update(0);
-        const out = outside(view);
+        const bounds = new Box3().setFromPoints([...vertices(body(view)), ...vertices(signFrame(view))]);
         let prev = rig.camera.top;
         let worst = 0;
         let spill = 0;
@@ -544,10 +945,9 @@ describe('truck and camera', () => {
           view.update(snap, 1 / 60, f / 60, rig.yaw, 0);
           worst = Math.max(worst, Math.abs(rig.camera.top / prev - 1));
           prev = rig.camera.top;
-          sank ||= !out.visible;
-          if (!out.visible) continue;
-          out.updateWorldMatrix(true, true);
-          bounds.setFromObject(out, true);
+          sank ||= view.fitBoxes.some((fb) => fb.heightScale < 0.01);
+          if (f % 10 !== 0) continue;
+          rig.camera.updateMatrixWorld(true);
           for (let i = 0; i < 8; i++) {
             p.set(i & 1 ? bounds.max.x : bounds.min.x, i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z);
             p.project(rig.camera);
@@ -563,15 +963,23 @@ describe('truck and camera', () => {
     }
   });
 
-  it('plays the completion wave on truck levels too, and releases every truck resource on dispose', () => {
+  it('plays the completion wave on truck levels too, creates nothing per frame and releases every resource on dispose', () => {
     const { snap, view } = setup(WEST);
     step(view, snap, 2);
     // «lavanda ✚» starts right: already glowing softly, no flash on load.
-    expect(panel(view, 't1:2:0')!.material.emissiveIntensity).toBeCloseTo(TARGET_REST, 2);
+    expect(panel(view, 't1:0:0')!.material.emissiveIntensity).toBeCloseTo(TARGET_REST, 2);
+    const count = () => {
+      let n = 0;
+      view.root.traverse(() => n++);
+      return n;
+    };
+    const before = count();
     view.handleEvent({ type: 'levelComplete' }, snap);
     const peak = peakGlow(view, snap, 3);
-    expect(peak.get('t1:2:0')!).toBeGreaterThan(TARGET_REST + 0.1);
-    expect(peak.get('t1:0:0')!).toBeGreaterThan(0.1);
+    expect(peak.get('t1:0:0')!).toBeGreaterThan(TARGET_REST + 0.1);
+    expect(peak.get('t1:0:1')!).toBeGreaterThan(0.1);
+    step(view, snap, 2, behindOf('west'));
+    expect(count()).toBe(before);
 
     const disposed = new Set<object>();
     const tracked: Object3D[] = [];
@@ -583,7 +991,7 @@ describe('truck and camera', () => {
         m.addEventListener('dispose', () => disposed.add(m));
       }
     });
-    expect(tracked.some((o) => o.parent === outside(view))).toBe(true);
+    expect(tracked.filter((o) => o.parent === truckGroup(view)).length).toBeGreaterThan(3);
     view.dispose();
     for (const o of tracked) {
       const mesh = o as Mesh;

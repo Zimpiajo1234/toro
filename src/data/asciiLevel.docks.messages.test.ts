@@ -42,11 +42,11 @@ function explained(message: string): { line: number; column: number; reason: str
 }
 
 describe('validateLevel truck messages, in Spanish at the place to fix', () => {
-  it('no room in front of a column: points at that column', () => {
-    expect(explained('trucks[0] column 1 has no room in front: cell 3,1 is a shelf, a plant, a rack or another truck')).toEqual({
+  it('a truck wider than 3 columns: points at the truck', () => {
+    expect(explained('trucks[0] has 4 columns, more than 3: its dock door is 1 to 3 cells wide')).toEqual({
       line: 7,
-      column: 6,
-      reason: expect.stringMatching(/^el camión «T» se carga desde el almacén y delante de esta casilla \(la 3,1\)/),
+      column: 5,
+      reason: expect.stringMatching(/^el camión «T» tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas; quítale columnas o usa dos camiones$/),
     });
   });
 
