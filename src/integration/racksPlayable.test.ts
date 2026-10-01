@@ -127,7 +127,7 @@ describe('rack levels are playable with the real controls', () => {
   ] as const)('%s: recovers from a cue that fits but is not the destiny (the slot stays dark, the box moves on)', (_, dt) => {
     const grid = new LevelGrid(DECOY);
     const mint = DECOY.boxes.find((b) => b.color === 'mint')!;
-    const out = autopilot(DECOY, dt, [{ from: grid.index(mint.x, mint.z), drop: grid.cellCount + 0 }]);
+    const out = autopilot(DECOY, dt, [{ from: grid.index(mint.x, mint.z), drop: grid.positionOfSlot('r1:0:0') }]);
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     const all = drops(out.events);

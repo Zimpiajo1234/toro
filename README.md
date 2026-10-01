@@ -3,7 +3,8 @@
 *Un pequeño almacén, a tu ritmo.*
 
 Juego web cozy: una carretilla elevadora low poly ordena cajas pastel en sus zonas de entrega.
-Sin derrota, sin presión. Solo un cronómetro y un contador de movimientos, los dos opcionales, y tus mejores marcas.
+Sin derrota, sin presión. Solo un cronómetro, un contador de movimientos y otro de objetivos, todos opcionales, y tus
+mejores marcas.
 
 **Niveles:** hoy el juego trae los niveles 1–3. Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los
 sistemas que usaban (apilar con recetas, símbolos, estanterías almacenables) siguen en el juego y en sus tests. Un
@@ -32,7 +33,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | S / ↓ | Marcha atrás |
 | A / ← · D / → | Girar a la izquierda · a la derecha (también parado; W + A avanza girando) |
 | Espacio | Recoger / dejar caja |
-| F / V · rueda del ratón | Delante de una estantería almacenable: subir / bajar la horquilla un hueco (un paso de rueda = un hueco; fuera de las estanterías la horquilla es automática) |
+| F / V · rueda del ratón | Delante de una estantería almacenable o de un camión: subir / bajar la horquilla un hueco o un nivel (un paso de rueda = uno; fuera de ellos la horquilla es automática) |
 | Q / E | Girar cámara (la conducción W/S/A/D no cambia) |
 | + / − (teclado principal o numérico) · pellizcar | Acercar / alejar la cámara (mantener = zoom continuo, un toque = un paso pequeño; ver **Zoom** abajo) |
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
@@ -41,6 +42,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | P | Pistas: sí / no (se guarda; apagadas por defecto): mientras llevas una caja se iluminan los destinos que la aceptarían (ver **Pistas** abajo) |
 | T | Mostrar / ocultar tiempo |
 | N | Mostrar / ocultar movimientos |
+| O | Mostrar / ocultar objetivos («Quedan 9») |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
 | U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
@@ -90,6 +92,15 @@ movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro,
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
 
+**Contador de objetivos** (ajuste guardado, visible por defecto; O o un clic en su píldora lo ocultan, como T y N):
+arriba a la derecha, delante de los movimientos, «Quedan 9» = las cajas que faltan por dejar en su sitio («Queda 1» con
+una) y, al terminar el nivel, antes de la tarjeta, «Todo en su sitio». Cuenta lo mismo que decide el final del nivel:
+en cada zona, las cajas de su receta que aún no están bien puestas; en estanterías y camiones, cada hueco o nivel con
+pista que aún no tiene su caja de destino (los «libre» nunca cuentan, ni una caja equivocada). Baja de uno en uno al
+dejar cada caja en su sitio, con el mismo «tic» que un movimiento, y vuelve a subir si levantas una caja ya colocada
+(donde se puede: con estanterías o camiones una caja en su sitio queda fija). En pantallas estrechas (≤ 480 px) baja,
+junto a los movimientos, bajo el tiempo. Un progreso guardado antes de este contador carga con él visible.
+
 **Pistas** (ajuste guardado, **apagadas por defecto**; **P** las enciende y las apaga, en el título y en la partida):
 una ayuda para quien la quiera. Encendidas, mientras llevas una caja se iluminan los destinos que la aceptarían: las
 zonas que la toman, el escalón de la receta que llenaría, los huecos y niveles del camión cuya pista encaja y, si
@@ -124,7 +135,7 @@ src/
   game/        bucle, input, orquestación
 ```
 
-Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md).
+Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías y camiones (las reglas que comparten): [docs/STORAGE.md](docs/STORAGE.md).
 
 ## Apilar
 
@@ -159,14 +170,15 @@ el brillo destella, se asienta suave y la caja toma un tono más hondo de su col
 admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido suave y se puede volver a coger; nunca
 hay rojo (los huecos «libres» y el suelo no dicen nada). Con las **pistas** encendidas (P; apagadas por defecto),
 mientras llevas una caja brillan con claridad los huecos y zonas cuya pista encaja; apagadas, solo te guían las pistas
-de los huecos. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
+de los huecos. Todo esto, solo en los niveles con almacenaje (estanterías o camiones); los demás funcionan como siempre.
 
 Delante de una columna, **F / V** (o la rueda) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
 horquilla a su altura, Espacio mete la caja (entra recta; se sale marcha atrás) o saca la del hueco. Los huecos se
 llenan en cualquier orden. Si una estantería te da la espalda, rodéala para cargarla (Q / E ayudan a leerla). La pista
-de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías
-añade la fila "F V subir / bajar horquilla · rueda". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
+de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías o
+camiones añade la fila "F V subir / bajar horquilla · rueda". Reglas comunes: [docs/STORAGE.md](docs/STORAGE.md);
+lo propio de la estantería: [docs/RACKS.md](docs/RACKS.md).
 
 ## Muelles de carga (Benchmark, Modo prueba)
 
@@ -174,19 +186,24 @@ Un **muelle** es una puerta en el muro norte u oeste con un pequeño camión apa
 trasera pegada al muro: nada del camión entra en el almacén. Delante de la puerta quedan sus **casillas de puerta** (de
 1 a 3, una por columna del camión), suelo normal. Para cargar una columna, ponte en su casilla de puerta mirando al
 muro: la carretilla se para en el muro y la horquilla y la caja cruzan la puerta hasta la plataforma (entra recta; se
-sale marcha atrás). Se carga **como una pila del suelo**: la horquilla sube sola (F / V no hacen nada ahí), las cajas
-van de abajo arriba, hasta 2 de alto, sin techo ni barras sobre la plataforma. Cada **nivel** tiene su pista (color,
-símbolo o las dos) en el **cartel enmarcado sobre la puerta**: una casilla por columna (justo encima de su casilla de
-puerta) y por nivel (abajo, el de la plataforma), con la pegatina de las estanterías por las dos caras, que nunca se
-atenúa ni sale en espejo. Los niveles del camión cuentan en el reparto único, igual que zonas y huecos: un nivel brilla
-y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar el siguiente nivel
-encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
-marcha atrás. Con las **pistas** encendidas (P; apagadas por defecto), mientras llevas una caja late el siguiente
-nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+sale marcha atrás). Se carga **como una pila del suelo**: las cajas van de abajo arriba, hasta 2 de alto, sin techo ni
+barras sobre la plataforma. La horquilla, en cambio, va **por teclas**, como en una estantería: **F / V** (o la rueda)
+eligen el nivel, con el mismo clic suave y un marco tenue en su casilla del cartel. Se deja solo en el siguiente nivel
+libre de la columna y se saca solo la caja de arriba, con la horquilla a su altura; si va baja, la caja choca con la de
+la plataforma (F la sube por encima). Los niveles de abajo llevan su pista (color, símbolo o las dos) en el **cartel
+enmarcado sobre la puerta**: una casilla por columna (justo encima de su casilla de puerta) y por nivel (abajo, el de
+la plataforma), con la pegatina de las estanterías por las dos caras, que nunca se atenúa ni sale en espejo. Encima de
+las pistas, hasta 2 de alto (según el límite del nivel), los niveles son **libres** (casilla lisa en el cartel): sirven
+para aparcar cualquier caja, también encima de una fija, y no cuentan en el reparto. Los niveles con pista cuentan en
+el reparto único, igual que zonas y huecos: un nivel brilla y su caja queda fija solo con **su** caja y con todo lo de
+debajo bien; aun así se puede cargar el siguiente nivel encima. Cualquier otra caja (también una que encaje en la
+pista) suena con el zumbido suave y se puede volver a sacar marcha atrás. Con las **pistas** encendidas (P; apagadas
+por defecto), mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja. Sin teclas nuevas.
 A cada lado de la puerta, una **barandilla naranja** baja, de una casilla, con una planta detrás: al camión se llega de
 frente, desde la fila de detrás de la puerta, y hay que entrar bastante recto (muy torcida, la caja puede quedarse
 atascada en la puerta: marcha atrás y otra vez, alineada).
-Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
+Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas comunes:
+[docs/STORAGE.md](docs/STORAGE.md); lo propio del muelle: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
 
@@ -195,8 +212,8 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
 - **Motor eléctrico**: un zumbido suave que sube de tono con la velocidad y un rodar de ruedas sobre las baldosas;
   parada, en silencio.
 - **Horquilla**: al subir, la bomba hidráulica (algo más aguda por nivel); al bajar, un tono más grave y un soplo leve;
-  al llegar, un «clonc» pequeño (nunca encima de coger o dejar una caja). Delante de una estantería, cada paso de F / V
-  lleva además su clic.
+  al llegar, un «clonc» pequeño (nunca encima de coger o dejar una caja). Delante de una estantería o de un camión, cada
+  paso de F / V lleva además su clic.
 - **Marcha atrás**: un «tin… tin… tin» dulce y breve, como una campanita (un tono puro con un leve brillo de octava
   que se apaga solo en unos 0,3 s), uno por pulso y en la tonalidad de la música (620–880 Hz), mientras la carretilla
   retrocede de verdad. Suena a la altura de la música y se distingue por su timbre, nunca más fuerte que coger o dejar

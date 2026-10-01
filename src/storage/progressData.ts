@@ -12,6 +12,8 @@ export interface Settings {
   showTimer: boolean;
   /** The optional move counter (HUD pill + the card's moves), like the timer. Additive field, default shown. */
   showMoves: boolean;
+  /** The optional objectives counter (HUD pill «Quedan N»), like the timer. Additive field, default shown. */
+  showObjectives: boolean;
   /** "Modo prueba": every level can be started from the title (unlock progress itself is never changed). */
   testMode: boolean;
   /** The reverse beeper ("tin… tin…" while backing up; B toggles it). Additive field, default on. */
@@ -27,6 +29,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   muted: false,
   showTimer: true,
   showMoves: true,
+  showObjectives: true,
   testMode: false,
   reverseBeep: true,
   targetHints: false,
@@ -142,11 +145,13 @@ export function parseProgress(json: string | null): ProgressModel {
   if (isValidIndex(raw.lastLevel)) progress.lastLevel = raw.lastLevel;
   if (typeof raw.lastLevelId === 'string' && raw.lastLevelId !== '') progress.lastLevelId = raw.lastLevelId;
   if (isRecord(raw.settings)) {
-    const { muted, showTimer, showMoves, testMode, reverseBeep, targetHints } = raw.settings;
+    const { muted, showTimer, showMoves, showObjectives, testMode, reverseBeep, targetHints } = raw.settings;
     if (typeof muted === 'boolean') progress.settings.muted = muted;
     if (typeof showTimer === 'boolean') progress.settings.showTimer = showTimer;
     // Additive field (same version): saves written before the move counter lack it (default shown).
     if (typeof showMoves === 'boolean') progress.settings.showMoves = showMoves;
+    // Additive field (same version): saves written before the objectives counter lack it (default shown).
+    if (typeof showObjectives === 'boolean') progress.settings.showObjectives = showObjectives;
     // Additive field (same version): saves written before it simply lack it (default off).
     if (typeof testMode === 'boolean') progress.settings.testMode = testMode;
     // Additive field (same version): saves written before the beep toggle lack it (default on).

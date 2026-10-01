@@ -10,7 +10,7 @@ import {
   type MeshStandardMaterial,
 } from 'three';
 import { damp } from '../../core/math';
-import type { SlotState } from '../../core/types';
+import type { StorageSlotState } from '../../core/types';
 import { endPlateColumn, outwardYaw } from '../builders/rack';
 import { rackSlotY } from '../dims';
 import { OneShot, bump } from '../tween';
@@ -77,7 +77,7 @@ export class SlotLight {
   private readonly wave = new OneShot(0.75);
 
   constructor(
-    state: Pick<SlotState, 'satisfied'>,
+    state: Pick<StorageSlotState, 'satisfied'>,
     private readonly material: MeshStandardMaterial,
     private readonly cue: MeshBasicMaterial,
     private readonly band: Mesh,
@@ -299,7 +299,7 @@ export class RackView {
    * `bandMaterial`: a vertex-alpha overlay, hidden until it glows; `destined` = its tones with its destined box).
    */
   addSlot(
-    state: SlotState,
+    state: StorageSlotState,
     geometry: BufferGeometry,
     material: MeshStandardMaterial,
     cueGeometry: BufferGeometry,
@@ -326,7 +326,7 @@ export class RackView {
   }
 
   /** The bay holding `slot` (its boxes ghost with it). */
-  bayOf(slot: Pick<SlotState, 'column'>): RackBay | undefined {
+  bayOf(slot: Pick<StorageSlotState, 'column'>): RackBay | undefined {
     return this.bays[slot.column];
   }
 
@@ -334,7 +334,7 @@ export class RackView {
    * `invite` 0‥1: how strongly the slot pulses for the box being carried (0 = still); `carried` = that box's tones
    * (null when nothing is carried).
    */
-  syncSlot(state: SlotState, invite: number, carried: SlotTone | null, time: number, dt: number): void {
+  syncSlot(state: StorageSlotState, invite: number, carried: SlotTone | null, time: number, dt: number): void {
     this.lights.get(state.id)?.sync(state.satisfied, invite, carried, time, dt);
   }
 

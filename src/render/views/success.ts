@@ -3,11 +3,11 @@ import { easeInOutSine, easeOutCubic, lerp } from '../../core/math';
 import { OneShot, bump } from '../tween';
 
 /*
- * Levels with storage racks (docs/RACKS.md): a zone or a cued slot lights only with its destined box, and that box is
+ * Levels with storage (docs/STORAGE.md): a zone or a cued slot lights only with its destined box, and that box is
  * then done and fixed (BoxState.locked). The sequence, from the moment the box lands (the drop glide, DROP_GLIDE_SEC):
  * the target's glow flashes intense and a small burst plays (a soft ring and a few sparkles in the box colour), the
  * glow eases to a soft steady level, then the box eases to a deeper tone of its colour (views/BoxView). While a box is
- * carried, the targets whose cue fits it glow much more than in the levels without racks: a clear, calm pulse.
+ * carried, the targets whose cue fits it glow much more than in the levels without storage: a clear, calm pulse.
  */
 
 /** Target glow once it holds its destined box (the zones' rest level, as always). */
@@ -24,13 +24,13 @@ export const LOCK_SEC = 0.6;
 export const BURST_SEC = 0.65;
 /**
  * Strong invitation while carrying (glow = INVITE_BASE + INVITE_PULSE · sin): about four times the soft breathing of
- * the levels without racks (0.1 ± 0.07), readable at a glance, at the same calm rhythm.
+ * the levels without storage (0.1 ± 0.07), readable at a glance, at the same calm rhythm.
  */
 export const INVITE_BASE = 0.4;
 export const INVITE_PULSE = 0.16;
 export const INVITE_RATE = 2.3;
 /** The quiet swap hint keeps its old strength under the strong invitation: SWAP_INVITE (0.32) × 0.17 / 0.56. */
-export const RACK_SWAP_INVITE = 0.1;
+export const TARGET_SWAP_INVITE = 0.1;
 
 /**
  * Flash envelope at progress `p` of FLASH_SEC: 0 → 1 (quick, ease out) → 0 (calm ease in-out). Glow during the flash:
@@ -66,7 +66,7 @@ const SLOT_OUT = [0.54, 0.72] as const;
 export type BurstMode = 'floor' | 'slot';
 
 /**
- * A small success burst, pooled by LevelView (levels with racks): a soft rounded ring (on a slot's front face; a zone
+ * A small success burst, pooled by LevelView (levels with storage): a soft rounded ring (on a slot's front face; a zone
  * has its own floor ring) and a few sparkles in the box colour that spread, twinkle and fade over BURST_SEC. Hidden
  * while idle; everything is built once (no allocation while it plays).
  */

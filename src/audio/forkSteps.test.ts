@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ForkStepWatcher, type RackAt } from './forkSteps';
+import { ForkStepWatcher, type StorageAt } from './forkSteps';
 
-const at = (rackId: string, column: number, level: number): RackAt => ({ rackId, column, level });
+const at = (unitId: string, column: number, level: number): StorageAt => ({ unitId, column, level });
 
 describe('ForkStepWatcher', () => {
   it('clicks each step that takes effect at the rack column, never at the top or the bottom', () => {
@@ -33,9 +33,9 @@ describe('ForkStepWatcher', () => {
     expect(w.observe(at('r2', 0, 1), 1)).toBe(0); // against the step asked for
   });
 
-  it('reads the reused hint object by value (GameState mutates hint.rack in place)', () => {
+  it('reads the reused hint object by value (GameState mutates hint.storage in place)', () => {
     const w = new ForkStepWatcher();
-    const hint = at('r1', 0, 0) as { rackId: string; column: number; level: number };
+    const hint = at('r1', 0, 0) as { unitId: string; column: number; level: number };
     expect(w.observe(hint, 0)).toBe(0);
     hint.level = 1;
     expect(w.observe(hint, 1)).toBe(1);

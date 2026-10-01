@@ -10,12 +10,12 @@ const GLOW_REST = 0.15;
 const RISE_SHARE = 0.3;
 const RING_OPACITY = 0.5;
 const RING_GROWTH = 0.45;
-/** Halo opacity per unit of glow, and its cap (higher in levels with racks: the strong pulse and the flash). */
+/** Halo opacity per unit of glow, and its cap (higher in levels with storage: the strong pulse and the flash). */
 const HALO_GAIN = 1.5;
 const HALO_MAX = 0.7;
-const RACK_HALO_MAX = 0.85;
-/** Levels with racks: the celebration ring as the destined box lands reads a little stronger. */
-const RACK_RING_OPACITY = 0.65;
+const TARGET_HALO_MAX = 0.85;
+/** Levels with storage: the celebration ring as the destined box lands reads a little stronger. */
+const TARGET_RING_OPACITY = 0.65;
 /** Recipe step the carried box would fill: breathes with the pad (same rhythm), a bit brighter as it is small. */
 const STEP_GLOW = 0.16;
 const STEP_PULSE = 0.1;
@@ -28,9 +28,9 @@ export interface ZoneGeometries {
 
 /**
  * Delivery zone: glow rises and settles when satisfied (with one soft expanding ring), eases off
- * when released, breathes gently while a box it would take is being carried. In levels with racks (`rack`), only its
- * destined box satisfies it: then it flashes intense and settles soft (views/success), and it pulses clearly (about
- * four times the gentle breathing) while a box it would take is carried.
+ * when released, breathes gently while a box it would take is being carried. In levels with storage (`targetRules`),
+ * only its destined box satisfies it: then it flashes intense and settles soft (views/success), and it pulses clearly
+ * (about four times the gentle breathing) while a box it would take is carried.
  */
 export class ZoneView {
   readonly id: string;
@@ -63,16 +63,16 @@ export class ZoneView {
     private readonly haloMaterial: MeshBasicMaterial,
     /** Delay before the celebration starts (lets the dropped box land first). */
     private readonly landDelay: number,
-    /** A level with storage racks: the flash and the strong invitation (views/success). */
-    private readonly rack = false,
+    /** A level with storage: the flash and the strong invitation (views/success). */
+    private readonly targetRules = false,
     /**
-     * Levels with racks: the glow tone (halo and pad emissive) once the zone holds its destined box (that box's zone
+     * Levels with storage: the glow tone (halo and pad emissive) once the zone holds its destined box (that box's zone
      * glow; null = the pad's own). While inviting it takes the carried box's instead (sync `tint`), so a neutral «any ▲»
      * pad lights in the colour of the box it would take, not cream on cream. A colour pad's own glow is that anyway.
      */
     private readonly destinedTint: Color | null = null,
   ) {
-    this.celebrate = new OneShot(rack ? FLASH_SEC : 1.1);
+    this.celebrate = new OneShot(targetRules ? FLASH_SEC : 1.1);
     this.id = state.id;
     this.color = state.color;
     this.group.userData.zoneId = state.id;
@@ -133,7 +133,7 @@ export class ZoneView {
 
     if (this.celebrate.step(dt)) {
       const p = this.celebrate.p;
-      if (this.rack) this.glow = flashGlow(p, this.celebrateFrom);
+      if (this.targetRules) this.glow = flashGlow(p, this.celebrateFrom);
       else
         this.glow =
           p < RISE_SHARE
@@ -145,7 +145,7 @@ export class ZoneView {
 
     // Teach the goal without words: zones that would take the carried box breathe softly.
     this.breathe = damp(this.breathe, invite, 3, dt);
-    const breatheGlow = this.rack
+    const breatheGlow = this.targetRules
       ? this.breathe * (INVITE_BASE + INVITE_PULSE * Math.sin(time * INVITE_RATE))
       : this.breathe * (0.1 + 0.07 * Math.sin(time * 2.3));
     // …and so does the recipe step that box would fill (its own envelope: no jump when the next step changes).
@@ -159,14 +159,14 @@ export class ZoneView {
     const glow = this.glow + breatheGlow + wave * 0.28;
     this.padMaterial.emissiveIntensity = glow;
     this.pad.position.y = wave * 0.012;
-    if (this.rack) {
+    if (this.targetRules) {
       const tone = (this.satisfied || this.celebrate.active) && this.destinedTint ? this.destinedTint : invite > 0 ? tint : null;
       if (tone) {
         this.haloMaterial.color.copy(tone);
         this.padMaterial.emissive.copy(tone);
       }
     }
-    this.haloMaterial.opacity = Math.min(this.rack ? RACK_HALO_MAX : HALO_MAX, glow * HALO_GAIN);
+    this.haloMaterial.opacity = Math.min(this.targetRules ? TARGET_HALO_MAX : HALO_MAX, glow * HALO_GAIN);
     this.halo.visible = this.haloMaterial.opacity > 0.01;
 
     if (this.ringAnim.step(dt)) {
@@ -174,7 +174,7 @@ export class ZoneView {
       const s = 1 + RING_GROWTH * easeOutCubic(p);
       this.ring.visible = p < 1;
       this.ring.scale.set(s, 1, s);
-      this.ringMaterial.opacity = (this.rack ? RACK_RING_OPACITY : RING_OPACITY) * (1 - p) * (1 - p);
+      this.ringMaterial.opacity = (this.targetRules ? TARGET_RING_OPACITY : RING_OPACITY) * (1 - p) * (1 - p);
     } else if (!this.ringAnim.active) {
       this.ring.visible = false;
     }

@@ -3,7 +3,7 @@ import type { BoxState, ColorId } from '../../core/types';
 import { damp, easeInOutSine, easeOutBack, easeOutCubic } from '../../core/math';
 import { GAME_CONFIG } from '../../config';
 import type { BoxPalette } from '../../themes/types';
-import { rackSlotY } from '../dims';
+import type { SupportLook } from '../storage/support';
 import { OneShot, bump } from '../tween';
 import { FLASH_SEC, LOCK_SEC } from './success';
 
@@ -46,7 +46,7 @@ const SLIDE_FROM = 0.4;
 const GHOST_OPACITY = 0.55;
 const GHOST_RATE = 6;
 /**
- * Levels with racks: a box locked on its destiny (BoxState.locked) deepens once it has landed and its target's flash
+ * Levels with storage: a box locked on its destiny (BoxState.locked) deepens once it has landed and its target's flash
  * has settled (views/success), over LOCK_SEC; its faint "correct" lift fades with it, so it reads done and fixed.
  */
 export const LOCK_DELAY = DROP_GLIDE_SEC + FLASH_SEC;
@@ -60,6 +60,7 @@ const UP = new Vector3(0, 1, 0);
 const _target = new Vector3();
 const _targetQuat = new Quaternion();
 const _euler = new Euler();
+const NO_STORAGE: ReadonlyMap<string, SupportLook> = new Map();
 
 /**
  * One pickable box. The group carries the visual transform (damped, never teleports) and the
@@ -88,7 +89,7 @@ export class BoxView {
   private hover = 0;
   private correctGlow: number;
   private glideTurn = 1;
-  /** Resting in a rack slot (last seen while not carried): sets the hover lift and the next pick hop. */
+  /** Resting on a storage shelf (a rack slot; last seen while not carried): sets the hover lift and the next pick hop. */
   private inSlot: boolean;
   /** Last seen BoxState.locked, and how far the box has eased to its deeper tone (0 = own tone, 1 = locked tone). */
   private locked: boolean;
@@ -107,10 +108,16 @@ export class BoxView {
     /** Stack levels only: the material may fade (ghost) while the box hides the forklift. */
     ghostable = false,
     /**
-     * Levels with racks: the tint that takes the box to its locked tone (lockTintOf), multiplying every painted tone of
-     * the box (material colour); null = never tinted (levels without racks: `locked` is always false there).
+     * Levels with storage: the tint that takes the box to its locked tone (lockTintOf), multiplying every painted tone
+     * of the box (material colour); null = never tinted (levels without storage: `locked` is always false there).
      */
     private readonly lockTint: Color | null = null,
+    /**
+     * The support of each of the level's storage slots, by slot id (render/storage SUPPORT_LOOK of its skin's support):
+     * a box stored there rests at that level's floor (on a shelf: dims rackSlotY; in a stack, a truck bed: its stack
+     * height, as on the floor).
+     */
+    private readonly slotSupport: ReadonlyMap<string, SupportLook> = NO_STORAGE,
   ) {
     if (ghostable) {
       // Always transparent (opacity 1 while solid) so fading never switches shader programs mid-game.
@@ -123,7 +130,7 @@ export class BoxView {
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.userData.boxId = state.id;
-    this.inSlot = state.slotId !== null;
+    this.inSlot = this.onShelf(state);
     this.group.position.set(state.pos.x, this.restY(state), state.pos.z);
     this.phase = state.carried ? 'carried' : 'rest';
     // A level loaded (or restarted) with a box already locked shows it done at once: nothing replays.
@@ -165,7 +172,7 @@ export class BoxView {
     if (state.carried && (this.phase === 'rest' || this.phase === 'dropping')) this.beginPick();
     else if (!state.carried && (this.phase === 'picking' || this.phase === 'carried')) this.beginDrop(state);
 
-    if (!state.carried) this.inSlot = state.slotId !== null;
+    if (!state.carried) this.inSlot = this.onShelf(state);
 
     const g = this.group;
     switch (this.phase) {
@@ -219,9 +226,20 @@ export class BoxView {
     this.applyHighlight(state, isTarget, dt);
   }
 
-  /** Resting height: its stack level, or the floor of its rack slot. */
+  /** Resting height: its stack level, or the floor of its storage level (by its support). */
   private restY(state: BoxState): number {
-    return state.slotId !== null ? rackSlotY(state.level) : state.level * this.stackStep;
+    const support = this.supportOf(state);
+    return support ? support.levelY(state.level, this.stackStep) : state.level * this.stackStep;
+  }
+
+  /** The support of the storage slot the box rests in, or null (on the floor, or carried). */
+  private supportOf(state: BoxState): SupportLook | null {
+    return state.slotId !== null ? (this.slotSupport.get(state.slotId) ?? null) : null;
+  }
+
+  /** The box rests in a storage slot on a shelf of its own (a rack slot), not on a stack. */
+  private onShelf(state: BoxState): boolean {
+    return this.supportOf(state)?.shelf === true;
   }
 
   private beginPick(): void {
@@ -258,7 +276,7 @@ export class BoxView {
     }
   }
 
-  /** Levels with racks: ease to the locked tone once the box is locked (after LOCK_DELAY), back if it ever unlocks. */
+  /** Levels with storage: ease to the locked tone once the box is locked (after LOCK_DELAY), back if it unlocks. */
   private applyLock(state: BoxState, dt: number): void {
     if (!this.lockTint) return;
     const locked = state.locked;
@@ -302,7 +320,7 @@ export class BoxView {
 }
 
 /**
- * Levels with racks: the material tint (a colour multiplier, linear) that turns a box painted from `palette` into its
+ * Levels with storage: the material tint (a colour multiplier, linear) that turns a box painted from `palette` into its
  * locked tone: `locked / base` per channel, clamped to 0‥1, so the base becomes exactly `palette.locked` and the tape
  * and the symbol deepen by the same factor (their contrast with the base stays).
  */

@@ -215,6 +215,10 @@ export class ProgressStore {
       settings.showMoves = patch.showMoves;
       changed = true;
     }
+    if (typeof patch.showObjectives === 'boolean' && patch.showObjectives !== settings.showObjectives) {
+      settings.showObjectives = patch.showObjectives;
+      changed = true;
+    }
     if (typeof patch.testMode === 'boolean' && patch.testMode !== settings.testMode) {
       settings.testMode = patch.testMode;
       changed = true;

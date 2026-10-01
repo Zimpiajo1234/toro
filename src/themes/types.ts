@@ -16,7 +16,7 @@ export interface BoxPalette {
    */
   ink: string;
   /**
-   * Levels with storage racks: the box once it is done and fixed on its destined zone or slot (BoxState.locked). A
+   * Levels with storage: the box once it is done and fixed on its destined zone or slot (BoxState.locked). A
    * deeper tone of `base` (same hue, never black, never red): the whole box eases toward it (render scales every
    * painted tone by `locked / base`, so the tape and the symbol keep their contrast).
    */

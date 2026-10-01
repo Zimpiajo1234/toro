@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GameEvent } from '../core/types';
 import { GAME_CONFIG } from '../config';
-import { hasRacks } from '../core/racks';
+import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
+import { hasStorage } from '../core/storage';
 import { createUIStore } from '../ui/uiState';
 import { Game } from './Game';
 import { ZOOM_KEY_RATE, ZOOM_TAP_STOPS } from './Input';
@@ -21,19 +22,26 @@ const fakes = vi.hoisted(() => {
       inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[];
       /** Scripts GameSnapshot.moves (box moves so far; a fresh simulation starts at 0). */
       setMoves(moves: number): void;
+      /**
+       * Scripts the boxes still to place (logic/objectives reads `left` single-box zones, none done); a fresh simulation
+       * has one per zone of its level.
+       */
+      setObjectivesLeft(left: number): void;
     }[],
     /** Minimums a test overrides (by level id); every other id reads the real precomputed file. */
     minimums: new Map<string, { moves: number; exact: boolean } | null>(),
+    /** The level test mode's special button starts instead of the real Benchmark (null: the real one). */
+    special: null as unknown,
     /** Events the current simulation emits on its next update. */
     queue: [] as unknown[],
     /** Next GameRenderer construction throws (no WebGL context). */
     failRenderer: false,
     yaw: Math.PI / 4,
     /**
-     * `hint.rack` of every simulation's snapshot (null = not facing a rack column). A fork step input moves its level
-     * within the column, like the real one.
+     * `hint.storage` of every simulation's snapshot (null = not at a storage column). A fork step input moves its level
+     * within the column, like the real one at a rack.
      */
-    rack: null as { rackId: string; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
+    storage: null as { unitId: string; skin: 'rack' | 'truck'; column: number; levels: number; level: number; slotId: string; ready: boolean } | null,
     /**
      * Every renderer zoom (zoomBy steps and zoomTrack stops alike), oldest first; the zoomBy steps alone; and how many
      * times resetZoom ran.
@@ -47,20 +55,35 @@ const fakes = vi.hoisted(() => {
     hintCalls: [] as boolean[],
   };
 
+  /** `left` single-box zones with nothing on them: the objectives counter reads `left`. */
+  const targets = (left: number) => Array.from({ length: left }, () => ({ recipe: [null] }));
+
   class FakeGameState {
     readonly level: { id: string };
     readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
-    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { rack: sim.rack }, moves: 0 };
-    constructor(level: { id: string }) {
+    private readonly snapshot = {
+      forklift: { speed: 0, forkLift: 0 },
+      completed: false,
+      hint: { storage: sim.storage },
+      moves: 0,
+      zones: targets(0),
+      boxes: [] as { correct: boolean; zoneId: string | null }[],
+      storageSlots: [] as { accepts: unknown; satisfied: boolean }[],
+    };
+    constructor(level: { id: string; zones?: readonly unknown[] }) {
       this.level = level;
+      this.snapshot.zones = targets(level.zones?.length ?? 0);
       sim.states.push(this);
     }
     getSnapshot() {
-      this.snapshot.hint.rack = sim.rack;
+      this.snapshot.hint.storage = sim.storage;
       return this.snapshot;
     }
     setMoves(moves: number) {
       this.snapshot.moves = moves;
+    }
+    setObjectivesLeft(left: number) {
+      this.snapshot.zones = targets(left);
     }
     update(
       _dt: number,
@@ -74,8 +97,8 @@ const fakes = vi.hoisted(() => {
         action: input.actionPressed,
         forkStep: input.forkStep ?? 0,
       });
-      const rack = sim.rack;
-      if (rack && input.forkStep) rack.level = Math.max(0, Math.min(rack.levels - 1, rack.level + input.forkStep));
+      const at = sim.storage;
+      if (at && input.forkStep) at.level = Math.max(0, Math.min(at.levels - 1, at.level + input.forkStep));
       if (sim.states[sim.states.length - 1] !== this) return [];
       const events = sim.queue.splice(0) as { type: string }[];
       if (events.some((e) => e.type === 'levelComplete')) this.snapshot.completed = true;
@@ -133,6 +156,13 @@ const fakes = vi.hoisted(() => {
 vi.mock('../logic/GameState', () => ({ GameState: fakes.FakeGameState }));
 vi.mock('../render/GameRenderer', () => ({ GameRenderer: fakes.FakeRenderer }));
 vi.mock('../audio/AudioEngine', () => ({ AudioEngine: fakes.FakeAudio }));
+vi.mock('../data/levels', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../data/levels')>();
+  return {
+    ...real,
+    getSpecialLevel: (id: string) => (fakes.sim.special as ReturnType<typeof real.getSpecialLevel> | null) ?? real.getSpecialLevel(id),
+  };
+});
 vi.mock('../data/levels/minimums', async (importOriginal) => {
   const real = await importOriginal<typeof import('../data/levels/minimums')>();
   return {
@@ -198,8 +228,9 @@ beforeEach(() => {
   sim.queue.length = 0;
   sim.failRenderer = false;
   sim.yaw = Math.PI / 4;
-  sim.rack = null;
+  sim.storage = null;
   sim.minimums.clear();
+  sim.special = null;
   sim.zooms.length = 0;
   sim.zoomSteps.length = 0;
   sim.zoomResets = 0;
@@ -1068,7 +1099,7 @@ describe('Game: Benchmark (test mode special level)', () => {
       screen: 'playing',
       benchmark: true,
       levelName: benchmark.name,
-      racks: true,
+      storage: true,
       elapsedMs: 0,
       timerStarted: false,
     });
@@ -1205,7 +1236,7 @@ describe('Game: Benchmark (test mode special level)', () => {
 });
 
 describe('Game: control hint', () => {
-  const rackAt = (levels: number, level = 0) => ({ rackId: 'r1', column: 0, levels, level, slotId: `r1:0:${level}`, ready: false });
+  const rackAt = (levels: number, level = 0) => ({ unitId: 'r1', skin: 'rack' as const, column: 0, levels, level, slotId: `r1:0:${level}`, ready: false });
   const dropped: GameEvent = {
     type: 'boxDropped',
     boxId: 'b1',
@@ -1218,36 +1249,75 @@ describe('Game: control hint', () => {
     total: 1,
   };
 
-  it('publishes the level on screen having racks (the fork row) and nothing ever takes the hint away while playing', () => {
+  it('publishes the level on screen having storage (the fork row: the forks go by the keys at every unit); nothing takes the hint away while playing', () => {
     const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
     const { game, store } = setup();
     game.start(0);
     advance(0.2);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[0]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasStorage(LEVELS[0]) });
     game.toTitle();
     game.toggleTestMode();
     game.startBenchmark();
     advance(1 / 60);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
 
     // Not a fork step that takes effect, a drop, a restart or the next level of a session: the flag only follows
     // the level on screen (the hint itself shows whenever the screen is 'playing').
-    sim.rack = rackAt(3, 2);
+    sim.storage = rackAt(3, 2);
     advance(1 / 60);
     tap('KeyV', 'v');
     expect(click).toHaveBeenCalledExactlyOnceWith(1, -1);
+    // At a truck too (docs/STORAGE.md rule 9): its forks go by the keys, a step that takes effect clicks the same way.
+    sim.storage = { ...rackAt(2, 1), unitId: 't1', skin: 'truck', slotId: 't1:0:1' };
+    advance(1 / 60);
+    tap('KeyV', 'v');
+    expect(click).toHaveBeenLastCalledWith(0, -1);
+    expect(click).toHaveBeenCalledTimes(2);
     emit(dropped);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
-    sim.rack = null;
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
+    sim.storage = null;
     game.restart();
     advance(0.2);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
 
     // Esc keeps the Benchmark behind the title (still its level); another level brings its own flag.
     tap('Escape', 'Escape');
-    expect(store.get()).toMatchObject({ screen: 'title', racks: true });
+    expect(store.get()).toMatchObject({ screen: 'title', storage: true });
     game.start(1);
-    expect(store.get()).toMatchObject({ screen: 'playing', racks: hasRacks(LEVELS[1]) });
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: hasStorage(LEVELS[1]) });
+    click.mockRestore();
+  });
+
+  it('a level with trucks only has the fork row too: a step at its truck clicks, and it restarts a paused clock', () => {
+    // docs/STORAGE.md rule 9: the forks go by the keys at every unit, so storage of any skin brings the fork keys.
+    const TRUCK_ONLY = parseLevel(
+      ['# 101 · Solo camión', 'id: solo-camion', 'limit: 2', '', '  0123', '0 pTp.', '1 ....', '2 .a..', '3 .^..', '', 'a = caja azul', 'T = camión muelle norte: azul', ''].join(
+        '\n',
+      ),
+    ).level;
+    expect(hasStorage(TRUCK_ONLY)).toBe(true);
+    const click = vi.spyOn(fakes.FakeAudio.prototype, 'forkClick');
+    sim.special = TRUCK_ONLY;
+    const { game, store } = setup();
+    game.toggleTestMode();
+    game.startBenchmark();
+    advance(1 / 60);
+    expect(current().level).toBe(TRUCK_ONLY);
+    expect(store.get()).toMatchObject({ screen: 'playing', storage: true });
+    sim.storage = { unitId: 't1', skin: 'truck', column: 0, levels: 2, level: 0, slotId: 't1:0:0', ready: false };
+    advance(1 / 60);
+    tap('KeyF', 'f');
+    expect(click).toHaveBeenCalledExactlyOnceWith(1, 1);
+    // Paused behind the title and resumed: a fork step is an input that restarts the clock there.
+    emit({ type: 'firstInput' });
+    advance(0.5);
+    tap('Escape', 'Escape');
+    game.start();
+    const paused = store.get().elapsedMs;
+    tap('KeyV', 'v');
+    advance(1);
+    expect(store.get().elapsedMs).toBeGreaterThan(paused + 800);
+    expect(click).toHaveBeenLastCalledWith(0, -1);
     click.mockRestore();
   });
 });
@@ -1436,5 +1506,101 @@ describe('Game: move counter', () => {
     expect(store.get().result).toMatchObject({ moves: 4, bestMoves: 4, isNewBestMoves: false });
     // The old time is still there, next to the new one.
     expect((saved(items).rankings as Record<string, number[]>)[LEVELS[0].id]).toContain(40_000);
+  });
+});
+
+describe('Game: objectives counter', () => {
+  const KEY = 'toro.progress.v1';
+  const withStorage = () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    return items;
+  };
+  const savedSettings = (items: Map<string, string>) => (JSON.parse(items.get(KEY) ?? '{}').settings ?? {}) as Record<string, unknown>;
+  const drop: GameEvent = { type: 'boxDropped', boxId: 'b1', cell: { x: 1, z: 1 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0, total: 2 };
+
+  it('publishes the boxes still to place as a level loads, and again after a pick or a drop; a resumed level keeps them', () => {
+    const { game, store } = setup();
+    expect(store.get().objectivesLeft).toBe(LEVELS[0].zones.length); // the level behind the title
+    game.start(1);
+    expect(store.get().objectivesLeft).toBe(LEVELS[1].zones.length);
+    expect(LEVELS[1].zones.length).toBe(2);
+    // Only a pick or a drop changes the count: a quiet frame does not even read it.
+    current().setObjectivesLeft(1);
+    advance(0.5);
+    expect(store.get().objectivesLeft).toBe(2);
+    emit(drop);
+    expect(store.get().objectivesLeft).toBe(1);
+    current().setObjectivesLeft(2);
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    expect(store.get().objectivesLeft).toBe(2);
+    current().setObjectivesLeft(1);
+    emit(drop);
+
+    tap('Escape', 'Escape'); // suspended behind the title, as it was
+    expect(store.get().objectivesLeft).toBe(1);
+    game.start();
+    expect(store.get().objectivesLeft).toBe(1);
+    game.restart(); // a fresh attempt: every box to place again
+    expect(store.get().objectivesLeft).toBe(2);
+    game.toTitle();
+    game.start(2);
+    expect(store.get().objectivesLeft).toBe(LEVELS[2].zones.length);
+  });
+
+  it('reaches 0 with the final drop, through the celebration and the card', () => {
+    const { game, store } = setup();
+    game.start(0);
+    expect(store.get().objectivesLeft).toBe(1);
+    emit({ type: 'firstInput' });
+    current().setObjectivesLeft(0);
+    emit({ ...drop, correct: true, recipeLength: 1, satisfiedCount: 1, total: 1 }, { type: 'levelComplete' });
+    expect(store.get()).toMatchObject({ screen: 'playing', objectivesLeft: 0, finished: true });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(store.get()).toMatchObject({ screen: 'complete', objectivesLeft: 0 });
+  });
+
+  it('O shows / hides it (shown by default), on the title, while playing and on the card, persisted like the timer', () => {
+    const items = withStorage();
+    const first = setup();
+    expect(first.store.get().showObjectives).toBe(true);
+    tap('KeyO', 'o'); // on the title
+    expect(first.store.get().showObjectives).toBe(false);
+    expect(savedSettings(items).showObjectives).toBe(false);
+    first.game.start(0);
+    const loads = sim.states.length;
+    tap('KeyO', 'o'); // while playing: the level on screen is kept
+    expect(first.store.get()).toMatchObject({ screen: 'playing', showObjectives: true });
+    expect(sim.states).toHaveLength(loads);
+    expect(savedSettings(items).showObjectives).toBe(true);
+    // Its own setting: T and N leave it alone, and it leaves them alone.
+    tap('KeyT', 't');
+    tap('KeyN', 'n');
+    expect(first.store.get()).toMatchObject({ showObjectives: true, showTimer: false, showMoves: false });
+    tap('KeyO', 'o');
+    expect(first.store.get()).toMatchObject({ showObjectives: false, showTimer: false, showMoves: false });
+    // On the completion card too, like T / N.
+    emit({ type: 'firstInput' });
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(first.store.get().screen).toBe('complete');
+    tap('KeyO', 'o');
+    expect(first.store.get()).toMatchObject({ screen: 'complete', showObjectives: true });
+    first.game.toggleObjectives(); // the HUD pill's click
+    expect(first.store.get().showObjectives).toBe(false);
+    first.game.dispose();
+
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ showObjectives: false, showTimer: false, showMoves: false });
+  });
+
+  it('a save from before the objectives counter loads with it shown, everything else kept', () => {
+    savedGame({ rankings: {}, highestUnlocked: 0, lastLevel: 0, settings: { muted: true, showTimer: false, showMoves: false } });
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ showObjectives: true, muted: true, showTimer: false, showMoves: false });
   });
 });

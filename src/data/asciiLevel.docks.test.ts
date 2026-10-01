@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import docksDoc from '../../docs/DOCKS.md?raw';
-import type { LevelData } from '../core/types';
+import { storageOf } from '../core/storage';
+import type { LevelData, StorageSkin } from '../core/types';
 import { LevelFormatError, formatLevel, parseLevel, parseLevelDraft, renderLevel } from './asciiLevel';
 import { validateLevel } from './validateLevel';
 
@@ -17,6 +18,8 @@ import { validateLevel } from './validateLevel';
 
 const text = (lines: readonly string[]) => `${lines.join('\n')}\n`;
 const replace = (lines: readonly string[], line: number, content: string) => lines.map((l, i) => (i === line - 1 ? content : l));
+/** A level's storage units of one skin, as `level.storage` lists them. */
+const unitsOf = (level: Pick<LevelData, 'storage'>, skin: StorageSkin) => storageOf(level).filter((unit) => unit.skin === skin);
 
 /** The draft as validateLevel returns a level (its defaults filled in), to render it without validateLevel. */
 function asLevel(raw: Record<string, unknown>): LevelData {
@@ -78,7 +81,17 @@ const NORTH_LEVEL: LevelData = {
   ],
   zones: [],
   shelves: [],
-  trucks: [{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] }],
+  storage: [
+    {
+      id: 't1',
+      skin: 'truck',
+      x: 2,
+      z: 0,
+      w: 2,
+      access: { kind: 'door', wall: 'north' },
+      columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]],
+    },
+  ],
   decor: {
     plants: [
       { x: 1, z: 0, variant: 0 },
@@ -152,7 +165,9 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
 
   it('a west truck runs along column 0; a box loaded at the start has its bed cell (x = -1) and level, after the floor boxes', () => {
     const level = levelOf(WEST);
-    expect(level.trucks).toStrictEqual([{ id: 't1', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'blue' }], [{ symbol: 'triangle' }]] }]);
+    expect(unitsOf(level, 'truck')).toStrictEqual([
+      { id: 't1', skin: 'truck', x: 0, z: 1, w: 2, access: { kind: 'door', wall: 'west' }, columns: [[{ color: 'blue' }], [{ symbol: 'triangle' }]] },
+    ]);
     expect(level.boxes.map((b) => b.id)).toEqual(['b1', 'b2', 'b3']);
     expect(level.boxes[2]).toStrictEqual({ id: 'b3', color: 'mint', symbol: 'triangle', x: -1, z: 1, level: 0, kind: 'standard' });
     expect(level.boxes.slice(0, 2).every((b) => b.level === undefined)).toBe(true);
@@ -185,14 +200,14 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
       'T = camión muelle norte (grande): azul / ▲ | coral ◆ + caja menta ▲ (b9)',
     );
     const level = levelOf(lines);
-    expect(level.trucks![0].id).toBe('grande');
+    expect(unitsOf(level, 'truck')[0].id).toBe('grande');
     expect(level.boxes.at(-1)).toStrictEqual({ id: 'b9', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 0, kind: 'standard' });
     expect(renderLevel(level)).toBe(text(lines));
   });
 
   it('two trucks with one character are two trucks (reading order), rendered with a character each', () => {
     const level = levelOf(TWIN);
-    expect(level.trucks!.map((t) => [t.id, t.x])).toEqual([
+    expect(unitsOf(level, 'truck').map((t) => [t.id, t.x])).toEqual([
       ['t1', 1],
       ['t2', 5],
     ]);
@@ -201,13 +216,15 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
     expect(again).toContain('T C = camión muelle norte: azul ●');
   });
 
-  it('trucks mix with racks, zones, plants and windows (racks first); levels without trucks get no `trucks` key', () => {
+  it('trucks mix with racks, zones, plants and windows (racks first); levels without racks or trucks get no `storage` key', () => {
     const level = levelOf(MIXED);
-    expect(level.racks).toHaveLength(1);
-    expect(level.trucks).toStrictEqual([{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }], [{ color: 'yellow' }]] }]);
+    expect(unitsOf(level, 'rack')).toHaveLength(1);
+    expect(unitsOf(level, 'truck')).toStrictEqual([
+      { id: 't1', skin: 'truck', x: 2, z: 0, w: 2, access: { kind: 'door', wall: 'north' }, columns: [[{ color: 'blue' }], [{ color: 'yellow' }]] },
+    ]);
     const plain = ['# 5 · Sin', 'id: sin', '', '..1..', '.a...', '..^..', '', '1 = zona azul', 'a = caja azul'];
-    expect('trucks' in draftOf(plain).raw).toBe(false);
-    expect('trucks' in parseLevel(text(plain)).level).toBe(false);
+    expect('storage' in draftOf(plain).raw).toBe(false);
+    expect('storage' in parseLevel(text(plain)).level).toBe(false);
   });
 
   it('docs/DOCKS.md: its example parses and is canonical', () => {
@@ -215,7 +232,7 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
     const example = blocks.find((b) => b.startsWith('# '));
     expect(example).toBeDefined();
     const level = asLevel(parseLevelDraft(example!).raw);
-    expect(level.trucks?.length).toBeGreaterThan(0);
+    expect(unitsOf(level, 'truck').length).toBeGreaterThan(0);
     expect(renderLevel(level)).toBe(example);
   });
 });
@@ -231,10 +248,15 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
     expectError(legend('T = camión muelle norte: azul: ▲'), 12, 30, /los dos puntos van una sola vez, tras «camión muelle …»/);
   });
 
-  it('levels: at most two per column, none empty, every one with a cue (no «libre»)', () => {
+  it('levels: at most two per column, none empty, a cue or «libre» (alone)', () => {
     expectError(legend('T = camión muelle norte: azul / ▲ / menta | coral ◆'), 12, 37, /una columna del camión lleva como mucho 2 niveles \(2 cajas de alto\)/);
-    expectError(legend('T = camión muelle norte: azul // ▲ | coral ◆'), 12, 32, /falta un nivel/);
-    expectError(legend('T = camión muelle norte: libre / ▲ | coral ◆'), 12, 26, /no hay niveles «libre»/);
+    expectError(legend('T = camión muelle norte: azul // ▲ | coral ◆'), 12, 32, /falta un nivel: su pista \(color, símbolo, ambos o «libre»\)/);
+    expectError(legend('T = camión muelle norte: libre azul / ▲ | coral ◆'), 12, 32, /«libre» va solo: un nivel libre no pide nada/);
+    // «libre» is a level of its own (docs/STORAGE.md rule 7): the grammar reads it anywhere; validateLevel wants it on top.
+    expect(levelOf(legend('T = camión muelle norte: azul / ▲ | coral ◆ / libre')).storage![0].columns).toEqual([
+      [{ color: 'blue' }, { symbol: 'triangle' }],
+      [{ color: 'coral', symbol: 'diamond' }, null],
+    ]);
     expectError(legend('T = camión muelle norte: azull / ▲ | coral ◆'), 12, 26, /palabra desconocida «azull» en un nivel del camión.*«azul»/);
     expectError(legend('T = camión muelle norte: azul menta / ▲ | coral ◆'), 12, 31, /un nivel del camión pide un solo color/);
     expectError(legend('T = camión muelle norte: caja azul / ▲ | coral ◆'), 12, 26, /la caja va después de la pista/);
@@ -274,25 +296,66 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
 });
 
 describe('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
-  it('validateLevel keeps `trucks`', () => {
-    expect(validateLevel(draftOf(NORTH).raw).trucks).toHaveLength(1);
+  it('validateLevel keeps the truck', () => {
+    expect(unitsOf(validateLevel(draftOf(NORTH).raw), 'truck')).toHaveLength(1);
   });
 
   it('parse(render(level)) = level, render(parse(text)) = text', () => {
     for (const lines of [NORTH, WEST, MIXED]) {
       const parsed = parseLevel(text(lines));
-      expect(parsed.level.trucks?.length).toBeGreaterThan(0);
+      expect(unitsOf(parsed.level, 'truck').length).toBeGreaterThan(0);
       expect(renderLevel(parsed.level, parsed)).toBe(text(lines));
       expect(parseLevel(renderLevel(parsed.level)).level).toStrictEqual(parsed.level);
       expect(formatLevel(text(lines))).toBe(text(lines));
     }
-    expect(parseLevel(text(NORTH)).level).toStrictEqual(NORTH_LEVEL);
+    // validateLevel fills the second column up to limit 2 (its level on top «libre»); the canonical text leaves it out.
+    const [dock] = NORTH_LEVEL.storage!;
+    expect(parseLevel(text(NORTH)).level).toStrictEqual({ ...NORTH_LEVEL, storage: [{ ...dock, columns: [dock.columns[0], [...dock.columns[1], null]] }] });
     const twin = parseLevel(text(TWIN)).level;
     expect(parseLevel(renderLevel(twin)).level).toStrictEqual(twin);
   });
 
-  it('keeps the key order: `trucks` right after `racks`', () => {
-    expect(Object.keys(parseLevel(text(MIXED)).level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'racks', 'trucks', 'decor', 'stackLimit', 'theme']);
+  it('«libre» in a truck (docs/STORAGE.md rule 7): implicit up to the limit, left out of the canonical text unless it holds a box', () => {
+    const level = (lines: readonly string[]) => parseLevel(text(lines)).level;
+    // Written or implicit, the same level; the formatter leaves a «libre» on top without a box out (idempotent).
+    const written = replace(NORTH, 12, 'T = camión muelle norte: azul / ▲ | coral ◆ / libre');
+    expect(level(written)).toStrictEqual(level(NORTH));
+    expect(formatLevel(text(written))).toBe(text(NORTH));
+    expect(formatLevel(formatLevel(text(written)))).toBe(text(NORTH));
+    // With a box parked on it at the start it is written; a column all «libre» keeps one level written.
+    const parked = replace(
+      replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^...'), 11, 'a = caja azul ▲'),
+      12,
+      'T = camión muelle norte: azul / ▲ | coral ◆ + caja menta ▲ / libre + caja coral ◆',
+    );
+    expect(level(parked).storage![0].columns[1]).toEqual([{ color: 'coral', symbol: 'diamond' }, null]);
+    expect(level(parked).boxes.at(-1)).toMatchObject({ color: 'coral', x: 3, z: -1, level: 1 });
+    expect(formatLevel(text(parked))).toBe(text(parked));
+    const free = replace(replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^...'), 11, 'a = caja azul ▲'), 12, 'T = camión muelle norte: azul / ▲ | libre + caja menta ▲');
+    expect(level(free).storage![0].columns[1]).toEqual([null, null]);
+    expect(formatLevel(text(free))).toBe(text(free));
+    const bare = replace(replace(replace(NORTH, 8, '2 .a.....'), 9, '3 ...^.b.'), 11, 'a = caja azul ▲     b = caja menta ▲').map((l, i) =>
+      i === 11 ? 'T = camión muelle norte: azul / ▲ | libre' : l,
+    );
+    expect(level(bare).storage![0].columns[1]).toEqual([null, null]);
+    expect(formatLevel(text(bare))).toBe(text(bare));
+    // «libre» under a level with a cue: the level to fix, in Spanish, at the column.
+    const under = replace(NORTH, 12, 'T = camión muelle norte: azul / ▲ | libre / coral ◆');
+    let error: LevelFormatError | null = null;
+    try {
+      parseLevel(text(under), 'x.level');
+    } catch (e) {
+      error = e as LevelFormatError;
+    }
+    expect(error).toBeInstanceOf(LevelFormatError);
+    expect({ line: error!.line, column: error!.column }).toEqual({ line: 6, column: 6 });
+    expect(error!.reason).toMatch(/^en un camión las cajas van una sobre otra, así que los niveles «libre» van arriba.*el nivel de arriba de la columna 2 del camión «T» pide algo y el de debajo es libre$/);
+  });
+
+  it('keeps the key order: `storage` right after `shelves`, its trucks right after its racks', () => {
+    const level = parseLevel(text(MIXED)).level;
+    expect(Object.keys(level)).toEqual(['id', 'order', 'name', 'size', 'forklift', 'boxes', 'zones', 'shelves', 'storage', 'decor', 'stackLimit', 'theme']);
+    expect(storageOf(level).map((unit) => unit.skin)).toEqual(['rack', 'truck']);
   });
 
   it('docs/DOCKS.md: its example is a valid level', () => {

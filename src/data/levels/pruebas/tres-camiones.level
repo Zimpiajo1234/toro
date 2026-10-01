@@ -1,0 +1,31 @@
+# 900 · Tres camiones
+id: tres-camiones
+limit: 2
+ventanas: oeste 1-2
+dificultad: movimientos=9, extra=0, repartos=1, camion=8, huecos=5
+nota: Nivel de prueba (docs/STORAGE.md), fuera del juego: ni el registro ni npm run levels leen src/data/levels/pruebas/. Lo usan src/integration/storageFixture.test.ts y la caracterización del almacenaje.
+nota: Tres camiones sin nada escrito a mano: dos en el muro norte, T (casillas de puerta 1-2) y C (casilla 4), separados por la planta de (3,0), y U en el oeste (casilla (0,4)), cada puerta con su barandilla y una planta a cada lado.
+nota: Estanterías de 2 y 3 alturas: R (frente sur, contra el muro norte) y S (frente norte, en medio).
+nota: Único reparto, por deducción: 1) las pistas exactas: coral ● a la zona, coral ◆ a T (columna 2), amarillo ■ a U (ya cargado abajo, fijo) y lavanda ✚ abajo en R.
+nota: 2) El «✚» de U ya solo puede ser del amarillo ✚ y el «◆» de S del menta ◆. 3) El «menta» de C, del menta ●; el «lavanda» de S, del lavanda ▲.
+nota: 4) El «▲» de T, del azul ▲; el «azul» de debajo, del azul ■.
+nota: Carga equivocada: el menta ◆ empieza en C (encaja en «menta», pero es del «◆» de S): se descarga marcha atrás antes de cargar el menta ●.
+nota: El lavanda ▲ empieza aparcado arriba en R (hueco libre) y va arriba en S; el amarillo ✚ se carga encima de la caja fija de U; en T, el azul ■ antes que el azul ▲.
+nota: Cada columna de camión llega a 2 niveles (limit 2): la segunda de T y la de C llevan encima un nivel libre sin escribir (se aparca ahí; nunca es objetivo). La horquilla elige el nivel con F / V también en los camiones.
+
+  012345678
+0 pTTpCp.R.
+1 .........
+2 .a......b
+3 p.....c..
+4 U.......1
+5 p.d.S.e..
+6 ...f.^.g.
+
+1 = zona coral ●
+a = caja azul ■        b = caja azul ▲        c = caja coral ◆       d = caja menta ●
+e = caja amarillo ✚    f = caja coral ●       g = caja lavanda ✚
+R = estantería frente sur: lavanda ✚ / libre + caja lavanda ▲
+S = estantería frente norte: ◆ / libre / lavanda
+T = camión muelle norte: azul / ▲ | coral ◆   C = camión muelle norte: menta + caja menta ◆
+U = camión muelle oeste: amarillo ■ + caja amarillo ■ / ✚

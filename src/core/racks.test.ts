@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnFrame, frontCellOf, hasRacks, inwardHeading, rackCellOf, runsAlongX, slotIdOf, slotsOf } from './racks';
+import { columnFrame, frontCellOf, inwardHeading, rackCellOf, runsAlongX } from './racks';
 import {
   assignmentsOf,
   cueFits,
@@ -13,13 +13,28 @@ import {
   zoneMatchKinds,
   type Sortable,
 } from './sorting';
-import { forwardOf, type LevelData, type LevelRack } from './types';
+import { storageSlotsOf } from './storage';
+import { forwardOf, type Facing, type LevelData, type LevelStorage } from './types';
 
 const box = (color: Sortable['color'], symbol: Sortable['symbol']): Sortable => ({ color, symbol });
 
-describe('rack geometry (core/racks)', () => {
-  const south: LevelRack = { id: 'r1', x: 2, z: 0, w: 3, facing: 'south', columns: [[{}], [{}], [{}]] };
-  const west: LevelRack = { id: 'r2', x: 6, z: 1, w: 2, facing: 'west', columns: [[{}], [{}]] };
+/** A storage rack: a unit of skin `rack` (front access), its columns' cues bottom → top (null = «libre»). */
+const rack = (id: string, x: number, z: number, facing: Facing, columns: LevelStorage['columns']): LevelStorage => ({
+  id,
+  skin: 'rack',
+  x,
+  z,
+  w: columns.length,
+  access: { kind: 'front', facing },
+  columns,
+});
+
+/** A level whose storage is these racks. */
+const withRacks = (...racks: LevelStorage[]): Pick<LevelData, 'storage'> => ({ storage: racks });
+
+describe('front access geometry (core/racks)', () => {
+  const south = { x: 2, z: 0, facing: 'south' } as const;
+  const west = { x: 6, z: 1, facing: 'west' } as const;
 
   it('a rack facing north / south runs along x, one facing east / west along z; fronts are on the facing side', () => {
     expect(runsAlongX('south')).toBe(true);
@@ -57,13 +72,10 @@ describe('rack geometry (core/racks)', () => {
     expect(columnFrame({ x: 0, z: 0 }, 'east', 0.3, 0, out).depth).toBeCloseTo(0.2);
   });
 
-  it('flattens slots rack by rack, column by column, bottom → top, with stable ids', () => {
-    const level = { racks: [south, { ...west, columns: [[{}, { color: 'blue' as const }], [{}]] }] };
-    expect(slotsOf(level).map((s) => s.id)).toEqual(['r1:0:0', 'r1:1:0', 'r1:2:0', 'r2:0:0', 'r2:0:1', 'r2:1:0']);
-    expect(slotIdOf('r7', 2, 1)).toBe('r7:2:1');
-    expect(hasRacks(level)).toBe(true);
-    expect(hasRacks({})).toBe(false);
-    expect(slotsOf({})).toEqual([]);
+  it('a level\'s rack slots flatten rack by rack, column by column, bottom → top, with stable ids, on the rack cells', () => {
+    const level = withRacks(rack('r1', 2, 0, 'south', [[null], [null], [null]]), rack('r2', 6, 1, 'west', [[null, { color: 'blue' }], [null]]));
+    expect(storageSlotsOf(level).map((s) => s.id)).toEqual(['r1:0:0', 'r1:1:0', 'r1:2:0', 'r2:0:0', 'r2:0:1', 'r2:1:0']);
+    expect(storageSlotsOf(level).map((s) => s.cell)).toEqual([...[0, 1, 2].map((c) => rackCellOf(south, c)), ...[0, 0, 1].map((c) => rackCellOf(west, c))]);
   });
 });
 
@@ -108,14 +120,15 @@ describe('cues and destinies (core/sorting)', () => {
     expect(assignmentsOf([], []).count).toBe(1);
   });
 
-  const rackLevel: Pick<LevelData, 'boxes' | 'zones' | 'racks'> = {
+  const cued = rack('r1', 3, 0, 'south', [[{ symbol: 'triangle' }, { color: 'mint' }, null]]);
+  const rackLevel: Pick<LevelData, 'boxes' | 'zones' | 'storage'> = {
     boxes: [
       { id: 'b1', color: 'blue', symbol: 'triangle', x: 1, z: 1 },
       { id: 'b2', color: 'blue', symbol: 'circle', x: 2, z: 1 },
       { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: 1 },
     ],
     zones: [{ id: 'z1', color: 'blue', x: 1, z: 3 }],
-    racks: [{ id: 'r1', x: 3, z: 0, w: 1, facing: 'south', columns: [[{ symbol: 'triangle' }, { color: 'mint' }, {}]] }],
+    ...withRacks(cued),
   };
 
   it('targets are the zones, then the slots with a cue; destinies come from the unique assignment', () => {
@@ -128,16 +141,15 @@ describe('cues and destinies (core/sorting)', () => {
     expect(levelDestinies(rackLevel)).toEqual({
       zones: [box('blue', 'circle')],
       slots: [box('blue', 'triangle'), box('mint', 'triangle'), null],
-      trucks: [],
     });
-    expect(levelDestinies({ ...rackLevel, racks: undefined })).toBeNull();
+    expect(levelDestinies({ ...rackLevel, storage: undefined })).toBeNull();
     // Ambiguous (two blue boxes, two «blue» targets): no destinies.
-    const ambiguous = { ...rackLevel, racks: [{ ...rackLevel.racks![0], columns: [[{ color: 'blue' as const }, { color: 'mint' as const }, {}]] }] };
+    const ambiguous = { ...rackLevel, ...withRacks({ ...cued, columns: [[{ color: 'blue' }, { color: 'mint' }, null]] }) };
     expect(levelDestinies(ambiguous)).toBeNull();
   });
 
   it('rack cues count for symbols and match kinds', () => {
-    expect(usesSymbols({ boxes: [{ id: 'b', color: 'blue', x: 0, z: 0 }], zones: [{ id: 'z', color: 'blue', x: 1, z: 0 }], racks: rackLevel.racks })).toBe(true);
+    expect(usesSymbols({ boxes: [{ id: 'b', color: 'blue', x: 0, z: 0 }], zones: [{ id: 'z', color: 'blue', x: 1, z: 0 }], storage: rackLevel.storage })).toBe(true);
     expect(usesSymbols({ boxes: [{ id: 'b', color: 'blue', x: 0, z: 0 }], zones: [{ id: 'z', color: 'blue', x: 1, z: 0 }] })).toBe(false);
     expect(zoneMatchKinds(rackLevel)).toEqual(
       new Map([

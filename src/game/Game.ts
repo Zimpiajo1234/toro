@@ -1,14 +1,15 @@
 import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
-import { matchKind, zoneMatchKinds, type MatchKind } from '../core/sorting';
-import { hasRacks } from '../core/racks';
+import { zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { hasStorage } from '../core/storage';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
 import { forkRiseRate } from '../logic/forkRise';
+import { objectivesLeft } from '../logic/objectives';
 import { Timer } from '../logic/Timer';
 import { GameRenderer } from '../render/GameRenderer';
 import { AudioEngine } from '../audio/AudioEngine';
@@ -85,9 +86,12 @@ export class Game implements GameActions {
     actionPressed: false,
     forkStep: 0,
   };
-  /** The level on screen has storage racks: F / V, the wheel and pad X / B step the forks there (docs/RACKS.md). */
-  private levelHasRacks = false;
-  /** Levels with racks: each fork step that takes effect at a rack column gets a soft click. */
+  /**
+   * The level on screen has storage (core/storage hasStorage): F / V, the wheel and pad X / B step the forks at every
+   * one of its units (docs/STORAGE.md rule 9).
+   */
+  private levelStorage = false;
+  /** Those levels: each fork step that takes effect at a storage column gets a soft click. */
   private readonly forkSteps = new ForkStepWatcher();
 
   private rt: Runtime | null = null;
@@ -129,6 +133,7 @@ export class Game implements GameActions {
     this.toggleHints = this.toggleHints.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleMoves = this.toggleMoves.bind(this);
+    this.toggleObjectives = this.toggleObjectives.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
     this.startBenchmark = this.startBenchmark.bind(this);
     this.setViewInsets = this.setViewInsets.bind(this);
@@ -179,6 +184,7 @@ export class Game implements GameActions {
       result: null,
       showTimer: settings.showTimer,
       showMoves: settings.showMoves,
+      showObjectives: settings.showObjectives,
       muted: settings.muted,
       reverseBeep: settings.reverseBeep,
       targetHints: settings.targetHints,
@@ -396,6 +402,16 @@ export class Game implements GameActions {
     this.store.set({ showMoves });
   }
 
+  /** The optional objectives counter (the HUD pill «Quedan N»), persisted like the timer. */
+  toggleObjectives(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const showObjectives = !this.store.get().showObjectives;
+    rt.progress.setSettings({ showObjectives });
+    this.store.set({ showObjectives });
+  }
+
   /** "Modo prueba": every level dot opens; turning it off shows the real (untouched) unlock state again. */
   toggleTestMode(): void {
     const rt = this.rt;
@@ -495,7 +511,7 @@ export class Game implements GameActions {
       if (wasPlaying && input.zoomStep !== 0) rt.renderer.zoomBy(input.zoomStep);
       if (wasPlaying && input.zoom !== 0) rt.renderer.zoomTrack(input.zoom);
       const driving = Math.abs(frame.drive.throttle) > MOVE_EPSILON || Math.abs(frame.drive.steer) > MOVE_EPSILON;
-      const forking = frame.forkStep !== 0 && this.levelHasRacks;
+      const forking = frame.forkStep !== 0 && this.levelStorage;
       if (this.resumeTimerOnInput && (frame.actionPressed || driving || forking || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
         // A resumed level's clock picks up on the first input, like a fresh level's.
         this.resumeTimerOnInput = false;
@@ -524,12 +540,18 @@ export class Game implements GameActions {
     }
     // The move counter follows the simulation (a count changes on a drop only: a store write a few times a level).
     if (snapshot.moves !== this.store.get().moves) this.store.set({ moves: snapshot.moves });
+    // So do the objectives left, which only a pick or a drop changes: recounted on a frame with events, written on a
+    // change.
+    if (events.length > 0) {
+      const left = objectivesLeft(snapshot);
+      if (left !== this.store.get().objectivesLeft) this.store.set({ objectivesLeft: left });
+    }
 
-    if (this.levelHasRacks) {
-      // One soft click per fork step that took effect at a rack column (none at the top / bottom, none off a rack).
-      const rack = snapshot.hint.rack;
-      const forkStep = this.forkSteps.observe(rack, frame.forkStep);
-      if (rack && forkStep !== 0) rt.audio.forkClick(rack.level, forkStep);
+    if (this.levelStorage) {
+      // One soft click per fork step that took effect at a storage column (none at the top / bottom, none off a unit).
+      const at = snapshot.hint.storage;
+      const forkStep = this.forkSteps.observe(at, frame.forkStep);
+      if (at && forkStep !== 0) rt.audio.forkClick(at.level, forkStep);
     }
 
     const forklift = snapshot.forklift;
@@ -562,6 +584,7 @@ export class Game implements GameActions {
     if (input.hintsPressed) this.toggleHints();
     if (input.timerPressed) this.toggleTimer();
     if (input.movesPressed) this.toggleMoves();
+    if (input.objectivesPressed) this.toggleObjectives();
     const testMode = this.store.get().testMode;
     if (input.rotateCamera !== 0) rt.renderer.rotateCamera(input.rotateCamera);
     switch (this.store.get().screen) {
@@ -635,7 +658,7 @@ export class Game implements GameActions {
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
     rt.renderer.handleEvent(event, snapshot);
-    rt.audio.handleEvent(event, this.matchOf(event, snapshot));
+    rt.audio.handleEvent(event, this.matchOf(event));
     switch (event.type) {
       case 'firstInput':
         this.timer.start();
@@ -711,18 +734,12 @@ export class Game implements GameActions {
   /* ---------------------------------------------------------------- */
 
   /**
-   * Kind of match of the zone (or rack slot, or truck slot) a drop / restore event is about (the classic color bell for
-   * anything else). A truck slot's comes from its cue in the snapshot when the level's match table does not list it.
+   * Kind of match of the zone or storage slot (any skin) a drop / restore event is about, by its id (core/sorting
+   * zoneMatchKinds lists every zone and every storage slot with a cue); the classic color bell for anything else (a
+   * «libre» slot, plain floor).
    */
-  private matchOf(event: GameEvent, snapshot: GameSnapshot): MatchKind {
+  private matchOf(event: GameEvent): MatchKind {
     if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
-    if (event.type === 'boxDropped' && event.truckSlotId !== undefined) {
-      const id = event.truckSlotId;
-      const known = this.zoneMatch.get(id);
-      if (known) return known;
-      const slot = snapshot.truckSlots?.find((s) => s.id === id);
-      return slot ? matchKind(slot.accepts) : 'color';
-    }
     const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
     return (target !== null && this.zoneMatch.get(target)) || 'color';
   }
@@ -747,7 +764,7 @@ export class Game implements GameActions {
   private loadScene(rt: Runtime, level: LevelData): LevelData {
     this.level = level;
     this.zoneMatch = zoneMatchKinds(level);
-    this.levelHasRacks = hasRacks(level);
+    this.levelStorage = hasStorage(level);
     this.forkSteps.reset();
     this.state = new GameState(level);
     rt.renderer.loadLevel(this.state.getSnapshot(), getTheme(level.theme));
@@ -762,8 +779,14 @@ export class Game implements GameActions {
     this.suspended = false;
     this.resumeTimerOnInput = false;
     // The control hint's fork row goes with the level on screen; the move counter starts over, against this level's
-    // minimum.
-    this.store.set({ racks: this.levelHasRacks, moves: 0, minMoves: shownMinimum(level.id), finished: false });
+    // minimum; the objectives counter starts at every box this level still needs put in its place.
+    this.store.set({
+      storage: this.levelStorage,
+      moves: 0,
+      minMoves: shownMinimum(level.id),
+      objectivesLeft: objectivesLeft(this.state.getSnapshot()),
+      finished: false,
+    });
     return level;
   }
 

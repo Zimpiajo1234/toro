@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
+import { storageOf } from '../core/storage';
 import { LevelFormatError, parseLevel } from './asciiLevel';
 import { validateLevel } from './validateLevel';
 
 /*
  * validateLevel with loading docks (docs/DOCKS.md «Validación»): a truck parked outside a north / west dock door, its
- * door cells a run along that wall inside the map (row 0 / column 0), 1 to 3 columns of 1 to 2 levels; the door cells
- * are floor free of furniture and other doors, and nothing starts on them; beside each end of the run (its side cell,
+ * door cells a run along that wall inside the map (row 0 / column 0), 1 to 3 columns of 1 to 2 levels, filled up to
+ * min(2, limit) levels with «libre» ones on top (docs/STORAGE.md rule 7: a «libre» level only ever above the ones with a
+ * cue); the door cells are floor free of furniture and other doors, and nothing starts on them; beside each end of the
+ * run (its side cell,
  * behind the door's guard rail) a static obstacle, unless the run reaches a corner of the room; boxes loaded at the
  * start rest on their bed cell, just outside the map; heights within the stack limit, the unique assignment including
  * the truck levels, never starting solved. Raw objects (as a JSON level would give), and the Spanish placement of a few
@@ -61,26 +64,41 @@ const fails = (raw: Raw) => {
 };
 
 describe('validateLevel: trucks', () => {
-  it('fills defaults (id t1, w = columns) and keeps `trucks` right after `racks`; zones are optional with a truck', () => {
+  it('fills defaults (id t1, w = columns, every column min(2, limit) levels) and keeps `storage` right after `shelves`; zones are optional with a truck', () => {
     const level = validateLevel(base(), 'x');
-    expect(level.trucks).toEqual([
-      { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] },
+    // The second column is written with one level: with `limit: 2` it holds two, the one on top «libre» (null).
+    expect(level.storage).toStrictEqual([
+      {
+        id: 't1',
+        skin: 'truck',
+        x: 2,
+        z: 0,
+        w: 2,
+        access: { kind: 'door', wall: 'north' },
+        columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }, null]],
+      },
     ]);
-    expect(Object.keys(level).indexOf('trucks')).toBe(Object.keys(level).indexOf('shelves') + 1);
+    expect(Object.keys(level).indexOf('storage')).toBe(Object.keys(level).indexOf('shelves') + 1);
     expect(level.zones).toEqual([]);
     // A column of 2 levels loads like a floor stack: without `limit`, the level stacks up to the global maximum.
     const raw = base();
     delete raw.stackLimit;
-    expect(validateLevel(raw, 'x').stackLimit).toBe(GAME_CONFIG.stack.maxHeight);
-    // One level per column and no `limit`: a classic stack limit of 1.
+    const stacked = validateLevel(raw, 'x');
+    expect(stacked.stackLimit).toBe(GAME_CONFIG.stack.maxHeight);
+    expect(stacked.storage![0].columns.map((c) => c.length)).toEqual([2, 2]);
+    // One level per column and no `limit`: a classic stack limit of 1, and one level per column.
     const flat = base();
     delete flat.stackLimit;
     truck(flat).columns = [[{ color: 'blue' }], [{ color: 'coral', symbol: 'diamond' }]];
     boxes(flat).pop();
-    expect(validateLevel(flat, 'x').stackLimit).toBe(1);
+    const classic = validateLevel(flat, 'x');
+    expect(classic.stackLimit).toBe(1);
+    expect(classic.storage![0].columns).toEqual([[{ color: 'blue' }], [{ color: 'coral', symbol: 'diamond' }]]);
+    // Given back as it is: its implicit levels are already there.
+    expect(validateLevel(structuredClone(level), 'x')).toStrictEqual(level);
   });
 
-  it('a dock door is in the north or west wall, its door cells along it inside the map, 1 to 3 columns, each level with a cue', () => {
+  it('a dock door is in the north or west wall, its door cells along it inside the map, 1 to 3 columns, «libre» only on top', () => {
     const wall = base();
     truck(wall).wall = 'south';
     expect(fails(wall)).toBe('trucks[0].wall must be "north" or "west"');
@@ -93,9 +111,23 @@ describe('validateLevel: trucks', () => {
     const out = base();
     truck(out).x = 6;
     expect(fails(out)).toBe('trucks[0] leaves the warehouse at 7,0');
-    const empty = base();
-    truck(empty).columns = [[{ color: 'blue' }, {}], [{ color: 'coral', symbol: 'diamond' }]];
-    expect(fails(empty)).toBe('trucks[0].columns[0][1] must ask for something: a truck level has a color, a symbol or both');
+    // A level that asks for nothing is «libre» (null, or `{}` in this legacy form): any box, never a target; in a stack
+    // only on top of the levels with a cue (a level is right only on right levels: none stands on a «libre» one).
+    const under = base();
+    truck(under).columns = [[{}, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]];
+    expect(fails(under)).toBe('trucks[0].columns[0][1] has a cue above a free level: in a stack the free levels go on top of the ones with a cue');
+    const top = base();
+    truck(top).columns = [[{ color: 'blue' }, {}], [{ color: 'coral', symbol: 'diamond' }]];
+    boxes(top).pop();
+    expect(fails(top)).toBeNull();
+    const parking = base();
+    truck(parking).columns = [[{ color: 'blue' }, { symbol: 'triangle' }], [null, null]];
+    boxes(parking).splice(1, 1);
+    expect(validateLevel(parking, 'x').storage![0].columns[1]).toEqual([null, null]);
+    // A «libre» level still counts as a level for the height: two, at most.
+    const allFree = base();
+    truck(allFree).columns = [[{ color: 'blue' }, { symbol: 'triangle' }], [null, null, null]];
+    expect(fails(allFree)).toBe('trucks[0].columns[1] must have 1 to 2 levels');
     // At most 2 levels per column («solo hasta 2 alturas»).
     const tall = base();
     truck(tall).columns = [[{ color: 'blue' }, { color: 'blue' }, { color: 'blue' }], [{ color: 'coral', symbol: 'diamond' }]];
@@ -268,8 +300,21 @@ describe('validateLevel: trucks', () => {
     boxes(noLevel)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1 };
     expect(fails(noLevel)).toBe('box "b3" is on a truck bed cell: give it its truck level');
     const high = base();
-    boxes(high)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 1 };
-    expect(fails(high)).toBe('box "b3" is on level 1 of trucks[0] column 1, which has 1 levels');
+    boxes(high)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 2 };
+    expect(fails(high)).toBe('box "b3" is on level 2 of trucks[0] column 1, which has 2 levels');
+    // Its implicit «libre» level counts (a column written with one level holds two with `limit: 2`), never past the limit.
+    const implicit = base();
+    boxes(implicit)[1] = { id: 'b2', color: 'coral', symbol: 'diamond', x: 3, z: -1, level: 0 };
+    boxes(implicit)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: 3, z: -1, level: 1 };
+    expect(validateLevel(implicit, 'x').boxes[2]).toMatchObject({ x: 3, z: -1, level: 1 });
+    const low = base();
+    low.stackLimit = 1;
+    truck(low).columns = [[{ color: 'blue' }], [{ color: 'coral', symbol: 'diamond' }]];
+    low.boxes = [
+      { id: 'b2', color: 'coral', symbol: 'diamond', x: 3, z: -1, level: 0 },
+      { id: 'b3', color: 'blue', symbol: 'triangle', x: 3, z: -1, level: 1 },
+    ];
+    expect(fails(low)).toBe('box "b3" is on level 1 of trucks[0] column 1, which has 1 levels');
     const floating = base();
     boxes(floating)[2] = { id: 'b3', color: 'mint', symbol: 'triangle', x: 2, z: -1, level: 1 };
     expect(fails(floating)).toBe('box "b3" is on trucks[0] column 0 at level 1 with no box below it');
@@ -387,9 +432,9 @@ describe('parseLevel: truck validation errors in Spanish, where to fix them', ()
       column: 8,
       reason: expect.stringMatching(/^el camión «T» tiene 4 columnas y lleva como mucho 3: su puerta mide de 1 a 3 casillas/),
     });
-    expect(parseLevel(text(replace(7, '0 TTp....')), 'x.level').level.trucks![0]).toMatchObject({ x: 0, z: 0, w: 2 });
+    expect(storageOf(parseLevel(text(replace(7, '0 TTp....')), 'x.level').level)[0]).toMatchObject({ skin: 'truck', x: 0, z: 0, w: 2 });
     const right = replace(7, '0 ....pTT').map((l, i) => (i === 3 ? 'ventanas: oeste 1-2' : l));
-    expect(parseLevel(text(right), 'x.level').level.trucks![0]).toMatchObject({ x: 5, z: 0, w: 2 });
+    expect(storageOf(parseLevel(text(right), 'x.level').level)[0]).toMatchObject({ skin: 'truck', x: 5, z: 0, w: 2 });
   });
 
   it('beside the door: a missing obstacle, two doors side by side and a rack facing the door point at the cell to fix', () => {

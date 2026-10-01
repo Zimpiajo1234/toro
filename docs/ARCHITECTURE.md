@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, the doors' guard rails `dockRailsOf`, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `storage.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`, from `storageSlotsOf`); `storage.ts` = the shared storage model (docs/STORAGE.md: `STORAGE_SKINS` and `STORAGE_WORDS`, one row per skin; `storageOf`, `hasStorage` = the gate of every «target rule»; one geometry for every unit: `slotIdOf`, `cellOf`, `frontOf`, `facingOf`, `storageColumnsOf`, `storageSlotsOf`), on the geometry of each access: `racks.ts` = `front` (a rack's cells and front cells, `inwardHeading`, `columnFrame`), `docks.ts` = `door` (the cells beyond the wall, the door cells, the doors' guard rails `dockRailsOf`) |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -25,12 +25,12 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/data/levels/*.level`, `src/data/levels/especiales/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md); `especiales/` = special levels outside the game's order (today the «Benchmark» of test mode) |
 | `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/data/levels/minimums.ts`, `minimumsBuild.ts`, `src/data/levelMinimums.json` | **levels** | The move counter's minimums: `levelMinimum(id)` → `{ moves, exact }` or null, read from the precomputed JSON (never solved at runtime); `minimumsBuild.ts` computes / formats / diffs it for `npm run levels -- --minimos` and `minimums.test.ts` (docs/LEVELS.md, «Mínimos del contador de movimientos») |
-| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions, tests |
-| `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation |
+| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), the objectives counter (`objectives.ts`: `objectivesLeft`), tests |
+| `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation; storage units through the skins registry `render/storage/` (`STORAGE_RENDER`, one entry per skin, one interface per unit, heights by support: docs/STORAGE.md) |
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
 | `src/game/**` | **game** | Frame loop, input, wiring, flow between screens |
-| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves, the vehicle reverse gear and the rack fork steps; `benchmarkPlayable` / `docksPlayable` also load and unload trucks) |
+| `src/integration/**` | integration | Cross-module tests (e.g. every level played by the autopilot of `autopilot.ts` on the real `GameState`, with the real controls: world-space moves, the vehicle reverse gear and the fork steps at every storage unit; `benchmarkPlayable` / `docksPlayable` also load and unload trucks) |
 | `src/App.tsx`, `src/main.tsx`, `src/styles/base.css` | shared shell | Canvas host + overlay; sets `themeCssVars(theme)` (background gradient + `--ui-*` tokens) from the theme of the level on screen, the same one Game hands the renderer |
 
 Data flow (one direction):
@@ -145,68 +145,74 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   A level uses symbols iff a box or zone names one (`usesSymbols`); validateLevel then requires stackLimit 1 (no
   recipes, no stacked starts), one box per zone and a complete sorting (`assignBoxes`, augmenting paths). Events keep
   their shape (`boxDropped.correct` = accepted); Game passes the zone's `matchKind` to audio with each event.
-- **Storage racks** (spec: `docs/RACKS.md`; no level of the game uses them yet, only the «Benchmark» special level). `LevelData.racks?` (`LevelRack { id, x, z, w, facing,
-  columns: RackSlot[][] }`, slots bottom → top, cue `{ color?, symbol? }`, none = «libre»; a box starting in a slot is a
-  `LevelBox` with `level`). Rack cells are solid for the body and for floor boxes; loading / unloading only from the
-  front (`facing`), the cues are visible from both faces. Targets = zones + slots with a cue; validateLevel needs one box
-  per target and exactly one complete assignment (up to identical boxes, `core/sorting` `assignmentsOf`), and every
-  target is satisfied only by its destined kind (`ZoneState.destined`, `SlotState.destined`; levels without racks keep
-  `destined: null` and the old rules). `GameSnapshot.slots`, `BoxState.slotId`, `hint.rack` (column faced + selected
-  level, `ready`). `InputFrame.forkStep` (F / V, wheel, pad X / B) steps the selected slot level while at a rack
-  column; `forkHeight` eases to it (`forkRiseRate`); elsewhere the forks stay automatic. The faced column opens for the
-  carried load once the forks stand at the selected level and its slot is empty (walls: back panel + side uprights),
-  and stays open while the load is inside; meanwhile the heading is locked (`ForkliftController.setHeadingLock`) and
-  the level cannot change. Pick / drop act on the selected slot only with the forks at its level; facing a column never
-  drops on the floor. Events keep their shape plus `boxPicked.fromSlotId`, `boxDropped.slotId` (`zoneId: null`),
-  `zoneReleased { zoneId: null, slotId }`. Rack levels only (2026-09-30): a box resting on its destined zone or slot
-  is locked (`BoxState.locked`; never a pick, drop or stack target, picking at it gives the gentle `actionIdle`), and
-  `boxDropped.wrongTarget` is true when a box lands on a floor zone or a cued slot that is not its destiny («libre»
-  slots and plain floor never); levels without racks keep `locked: false` and no `wrongTarget`. Every «rack level»
-  rule here also holds in a level with trucks (below), with or without racks: the gate is `usesTargetRules(level)`.
-- **Loading docks** (spec: `docs/DOCKS.md`, 2026-09-30; only the «Benchmark» has one). `LevelData.trucks?`
-  (`LevelTruck { id, wall, x, z, w, columns: TruckCue[][] }`: a truck parked OUTSIDE a door of the north or west wall,
-  its rear against the wall's outer face; (x, z) and `w` are its door cells, a straight run of plain floor cells along
-  that wall, row z = 0 or column x = 0, each with one bed column just beyond the wall, outside the map (`core/docks`
-  `truckCellOf`: z = -1 / x = -1; `truckFrontOf` = the door cell); 1‥`MAX_TRUCK_COLUMNS` (3) columns, cues bottom →
-  top, colour and / or symbol, never «libre», 1‥`MAX_TRUCK_LEVELS` (2) levels and never more than `stackLimit`). Door
-  cells start empty (no furniture, zone, box or forklift); a box loaded at the start sits on its bed cell. `LevelGrid`
-  keeps each bed column's stack apart (`truckColumnAt` finds it by its outside cell). The forklift body meets the whole
-  wall (`bounds`), so it stops at the wall line; the carried load and the fork point meet the walls as slabs open at
-  each door between 0.02 jambs onto a 1-cell pocket, the bed column (`CollisionWorld` `loadWalls`, `doorWalls`; only
-  in levels with trucks), and for the load each column's span of the door stays shut like the wall until the rig faces
-  that column (`doorCells`, `setDoorOpen`, `GameState.refreshDoorPassage`: like a rack column; open while the load is
-  in it), so a load turned on a door cell meets it like the wall until the rig faces that column, and never slides
-  along a wide door into the next one. A bed column loads like a floor stack, only from its door cell facing the wall
-  (the body in line with that door cell; `TRUCK_FACING`: south for a north dock, east for a west one; ≤ 30°, held to
-  45°) with the fork point at least `TRUCK_REACH` (0.3) past the wall line; forks automatic, F / V do nothing; while
-  the load is in the door the heading is locked (straight in, straight out, like a rack slot) and nothing drops short
-  of the bed (`RackAim.doorway`). Each door has a low guard rail at each end of its run, placed by itself
-  (`core/docks` `dockRailsOf`, never in the `.level`): on the door's jamb line (`DOOR_JAMB`, flush with the opening, one
-  straight chute), from the wall's inner face one cell in (never into the row behind), `DOCK_RAIL.thickness` thick
-  outward, a static obstacle for the body, the load and the fork point (`CollisionWorld` statics, `railRect`; none
-  without trucks, so those levels are unchanged). The map cell behind each rail along the wall (its side cell) must hold
-  a static obstacle, usually a potted plant (validateLevel; not at a room corner, never another door, a rack there never
-  faces the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°,
-  past the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design
-  decision; `GameState.docksDriving.test.ts` measures it).
-  Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
-  `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
-  occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
-  next level of its column with everything below satisfied (the only one that pulses, with the target hints on). A box
-  on a satisfied level is locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
-  (`wrongTarget`) and stays pickable. A full column faced up close drops nothing (`actionIdle`, never the floor beside
-  it). Optional fields only in truck levels: `BoxState.truckSlotId`, `hint.dropTruckSlotId`,
-  `boxPicked.fromTruckSlotId`, `boxDropped.truckSlotId` (`zoneId: null`, `recipeLength` 1), `zoneReleased.truckSlotId`
-  (never fires today); events and snapshots of levels without trucks are exactly as before.
+- **Storage units** (spec: `docs/STORAGE.md`, done: phases 1–7): racks and trucks are skins of one unit,
+  `LevelData.storage?: LevelStorage[]` (`{ id, skin, x, z, w, access, columns }`: racks first, then trucks; the one
+  source of storage in level data, read as it is by every layer; a `null` cue = a «libre» level; a JSON level may still
+  list `racks` / `trucks`, which validateLevel turns into it). Each skin is a row of `core/storage` `STORAGE_SKINS`
+  (support `shelves` / `stack`, levels, columns, access `front` / `door`, id prefix, letters, fill, sound) and of
+  `STORAGE_WORDS` (how the texts name it). One storage path for every skin: `LevelGrid.columns` (one `StorageColumn`
+  list, its cell inside the map or beyond a wall; boxes on shelves or in a stack by the support), one engagement
+  (`GameState.refreshStorageAim` over `logic/storageAccess` `STORAGE_ACCESS`, a row per access: face / hold margins,
+  body in line, pick / drop reach, doorway), one opening per column in `CollisionWorld` (`setOpen` / `isOpen` /
+  `opening` / `soften`: a rack slot or a door span), one measure of «the load is inside» (`loadInOpening`: the heading
+  holds), one pick / drop path (`Interaction` over `StorageAim`, `GameState.pick` / `dropInStorage`) and
+  `refreshColumn` by support. The forks go by the keys at every unit (`InputFrame.forkStep`: F / V, wheel, pad X / B
+  choose the level; pick and drop only with the forks at it; in a stack a drop only at the next free level and a pick
+  only of the top box, and the load never goes down into its boxes); off storage they stay automatic. State:
+  `GameSnapshot.storageSlots` (`StorageSlotState { id, unitId, skin, column, level, cell, front, facing, pos, accepts,
+  destined, occupiedBy, satisfied, loadable }`, `storageSlotsOf` order), one `BoxState.slotId`, `hint.storage`
+  (`StorageHint { unitId, skin, column, levels, level, slotId, ready }`), events with `fromSlotId` / `slotId` plus the
+  unit's `skin`. Targets = zones + storage levels with a cue (`LevelTarget { kind: 'zone' | 'slot', skin }`,
+  `LevelDestinies { zones, slots }`): validateLevel needs one box per target and exactly one complete assignment (up to
+  identical boxes, `core/sorting` `assignmentsOf`), and every target is satisfied only by its destined kind
+  (`ZoneState.destined`, `StorageSlotState.destined`; in a stack also on satisfied levels below). A box on its destined
+  target is locked (`BoxState.locked`: never picked, picking at it gives the gentle `actionIdle`; nothing is dropped on
+  it, except the next level of a stack), and `boxDropped.wrongTarget` flags a box left on a floor zone or a cued level it
+  does not satisfy (the soft buzz). A «libre» level takes any box and is never a target, lit, locked or buzzing; a truck
+  column holds min(2, `stackLimit`) levels, the ones past its cues «libre». All of this only where `hasStorage(level)`:
+  a level without storage has an empty `storageSlots`, `hint.storage` null, every `slotId` null, `destined: null`,
+  `locked: false` and no `wrongTarget`, exactly as before.
+- **Storage racks** (spec: `docs/RACKS.md`; only the «Benchmark» special level has them): skin `rack`, access `front`,
+  support `shelves`: 1 cell deep, 1–3 slots per column, cells solid for the body and for floor boxes, loaded and
+  unloaded only from the front (`facing`), the cues visible from both faces and on the end plates. The faced column
+  opens for the carried load once the forks stand at the selected level and its slot is empty (walls: back panel + side
+  uprights, `RACK_WALL`) and stays open while the load is inside, which locks the heading and the level; facing a column
+  never drops on the floor.
+- **Loading docks** (spec: `docs/DOCKS.md`; only the «Benchmark» has one): skin `truck`, access `door`, support
+  `stack`: a truck parked OUTSIDE a door of the north or west wall, its rear against the wall's outer face; (x, z) and
+  `w` are its door cells, a straight run of plain floor cells along that wall (row z = 0 or column x = 0), each with one
+  bed column just beyond the wall, outside the map (`cellOf`: z = -1 / x = -1); 1–3 columns of up to 2 levels, the cues
+  on a sign over the door. Door cells start empty (no furniture, zone, box or forklift); a box loaded at the start sits
+  on its bed cell. The forklift body meets the whole wall (`bounds`), so it stops at the wall line; the carried load and
+  the fork point meet the walls as slabs open at each door between 0.02 jambs onto a 1-cell pocket (`CollisionWorld`
+  `loadWalls`, `doorWalls`; only in levels with trucks), and each column's span of the door stays shut like the wall
+  for the load until the rig faces that column in line with its body (`doorCells`), so a load never slides along a
+  wide door into the next column. A bed column loads as a stack from its door cell facing the wall (`TRUCK_FACING`:
+  south for a north dock, east for a west one) with the fork point at least 0.3 past the wall line; a load carried
+  lower than the next free level meets the box on the bed, and nothing drops short of the bed (the doorway:
+  `StorageAim.blocked`). Each door has a low guard rail at each end of its run (`core/docks` `dockRailsOf`, by
+  `unitId`, never in the `.level`): on the door's jamb line (`DOOR_JAMB`, flush with the opening, one straight chute),
+  from the wall's inner face one cell in, `DOCK_RAIL.thickness` thick outward, a static obstacle for the body, the load
+  and the fork point (`railRect`); the map cell behind each rail along the wall (its side cell) holds a static
+  obstacle, usually a potted plant (validateLevel; not at a room corner, never another door, a rack there never faces
+  the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°, past
+  the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design decision;
+  `GameState.docksDriving.test.ts` measures it).
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
-- Level completes when every target is satisfied (every zone; also every cued rack slot and every truck level) and
+- Level completes when every target is satisfied (every zone; also every cued rack slot and truck level) and
   nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
 - `firstInput` exactly once, on the first frame with non-zero move, non-zero drive (throttle / steer) or an action press (Game starts the timer).
 - `GameSnapshot.moves`: box moves so far this attempt, the solver's «movimientos» criterion (one pick + one drop
-  somewhere else = 1). A drop exactly where the box was picked up (same cell and height, same rack slot) counts
+  somewhere else = 1). A drop exactly where the box was picked up (same cell and height, same storage slot) counts
   nothing. Counted on the drop, before its `boxDropped` (so a `levelComplete` snapshot already has the final count);
   0 on a fresh GameState (load, restart).
+- Objectives left (`logic/objectives` `objectivesLeft(snapshot)`, the HUD's «Quedan N»; pure, allocates nothing): the
+  boxes still to be put in their place, on the targets completion reads. A zone counts the steps of its recipe its
+  stack does not hold correctly yet (`BoxState.correct`: 1 for a classic zone until its box is on it); a storage slot
+  with a cue counts 1 until it is satisfied (in a stack, on satisfied levels). «Libre» slots and wrong boxes never
+  count; a box lifted off its place counts again. One box per place (validateLevel), so it is 0 exactly when the level
+  completes; with storage it is `progress.total − progress.satisfied` (a placed box locks there: it never goes back up).
 
 ## Level data (levels)
 
@@ -232,10 +238,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `b1…` / `z1…` in legend order unless written `(id)`; nothing outside the level depends on them.
 - `src/data/levels/solver.ts` is the only grid model (conservative carrying model with the reverse gear, greedy
   search, exact A* for the fewest box moves with a consistent bound — swap cycles, dead-end corridors, fixed sorting
-  destinations —, the dead-end check `deadEnds`, and storage rack slots as positions after the floor cells, then one
-  stack position per truck bed column (outside the map), loaded with one step forward from the cell behind its door
-  cell and emptied only in reverse; in levels with racks or trucks the exact search adds the destination-cycle bound
-  `MoveSearch.destTerm`).
+  destinations —, the dead-end check `deadEnds`, and the storage positions after the floor cells, in storage column
+  order: one per rack slot, one stack position per truck bed column (outside the map), each loaded with one step
+  forward from the cell behind its front or door cell and emptied only in reverse; in levels with storage the exact
+  search adds the destination-cycle bound `MoveSearch.destTerm`).
   `levels.test.ts`, the autopilot (`src/integration/autopilot.ts`, run by `levelsPlayable.test.ts`,
   `racksPlayable.test.ts`, `benchmarkPlayable.test.ts` and `docksPlayable.test.ts`) and the metrics (`metrics.ts`:
   movimientos, obligadas, extra, bloqueos, estrechas, libre, ambiguas, trampas, repartos, callejones, huecos, camion)
@@ -369,7 +375,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
-- Storage racks (docs/RACKS.md, «Render»): their own furniture (`builders/rack.ts`, `views/RackView.ts`): plain
+- Storage units (docs/STORAGE.md, «Contratos por capa», render): LevelView builds every unit of `level.storage` through
+  the skins registry (`render/storage/`: `STORAGE_RENDER`, one adapter per skin over its builders and view; the
+  `StorageUnitView` interface: group, a `SlotLight` per level, the chosen-level marker's place, static `fitBox`, ghosting
+  pieces, burst place) and walks one `snapshot.storageSlots` list; heights go by the skin's support (`SUPPORT_LOOK`:
+  shelves at `rackSlotY`, a stack at floor stack heights), never by the skin.
+- Storage racks (docs/RACKS.md, «Dibujo»): their own furniture (`builders/rack.ts`, `views/RackView.ts`): plain
   low-poly slate metal (no diagonal braces), cream beams, open slots, a faint see-through plate at each end (no solid side wall: `END_PLATE`, opacity 0.2, no depth write, so the end column's boxes show through), a back panel per slot, and a
   loading line painted on the floor in front (`Theme.rack`). The cue is an unlit, opaque sticker (`createCueMaterial`)
   in the exact box colour (or the neutral cue fill) with a bold `rack.cueInk` glyph, on both faces of the back panel
@@ -378,10 +389,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried, with the target hints on (≈ ⅓ swap
   hint on an occupied, unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35
   over the forklift or its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
-  in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
-  brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
-  slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
-- Loading docks (docs/DOCKS.md, «Render»): the dock door is an opening in its wall over the door cells
+  in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.storage`, at every unit,
+  brighter when `ready`; one marker per skin that has one, placed by its unit); the drop outline floats on the slot
+  floor. At a rack the forks ride just over the selected slot floor (`ForkliftView.sync(…, support)`, support
+  `shelves`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
+- Loading docks (docs/DOCKS.md, «Dibujo»): the dock door is an opening in its wall over the door cells
   (`builders/walls.ts`, `dims.ts` `DOCK`: up to `doorTop` 1.70, over a level-1 load's ≈ 1.62; slate frame on both
   faces, the shutter's bottom rail at the head and its roll outside above the door, rubber seals and bumpers outside,
   baseboard broken). The truck (`builders/truck.ts`, `views/TruckView.ts`, `Theme.truck`: soft cream and slate, never
@@ -396,8 +408,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state positions) and it is always framed
   (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
   on the wall's inner face above the door (`DOCK_SIGN`, `buildSignFrame`, `buildSignPanel`, `buildSignCue`,
-  `SIGN_CUE`): one cell per bed column, right above its door cell, and per level, bottom row = level 0 (the upper cell
-  of a shorter column is a plain panel; with 2 levels the sign rises ≈ 0.3 over the wall cap), each with its unlit rack
+  `SIGN_CUE`): one cell per bed column, right above its door cell, and per level, bottom row = level 0 (the cell of a
+  «libre» level is a plain panel; with 2 levels the sign rises ≈ 0.3 over the wall cap), each with its unlit rack
   sticker (`buildCueFace`) on both faces, upright and unmirrored, never faded (its two brackets hide behind the frame's
   end bars, clear of every sticker). The sign's frame and panels are a rack bay (`RackBay` kind `'sign'`,
   `TruckView.occluder`) that ghosts over the forklift, a resting box or a zone (never for the boxes on its bed) and
@@ -406,12 +418,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   exactly like a rack slot (`SlotLight` on its sign cell: flash, soft glow, glow band round its sticker, `SIGN_GLOW`),
   with the success burst and the locked box tone on its box on the bed; while carrying (target hints on), only a
   `loadable` level whose cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there
-  (hints or not). Levels with trucks and no racks switch on the same target feedback (`usesTargetRules`); without
-  trucks nothing changes.
+  (hints or not); the chosen-level marker frames the level's sign cell (`SIGN_MARKER`). A level with trucks and no
+  racks switches on the same target feedback (`hasStorage`); without storage nothing changes.
 - Target hints (`Settings.targetHints`, persisted, additive, default off; P on the title and while playing,
   `Game.toggleHints` → `GameRenderer.setTargetHints` → `LevelView.setTargetHints`, set at mount and on every toggle,
   handed to each level built afterwards): the one switch for the light that answers a carried box. On, the zones that
-  would take it breathe (the strong pulse and halo in levels with racks or trucks), the recipe step it would fill
+  would take it breathe (the strong pulse and halo in levels with storage), the recipe step it would fill
   breathes, the empty rack slots and the `loadable` truck levels whose cue fits pulse (band and cue with them), and the
   faint swap hint shows (`LevelView.update`: `hinted` = the carried box only with the hints on). Off, nothing lights up
   on a pick-up: pure deduction from the cues. Toggled mid-carry, the light eases in or out with the views' own
@@ -444,15 +456,16 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
     the fork pump rise per level too; a completed stack zone plays `recipeLength` soft pentatonic notes climbing into its
     chime (the lower notes skip avoid notes over the sounding chord). `zoneRestored`: the zone's chime (and stack
     climb) 0.12 s after the pickup knock, no final flourish.
-  - storage racks (docs/RACKS.md, «Audio»): `boxDropped.slotId` → `slotDrop`, a soft metal "toc" (no floor bass,
-    rises per level) whose chime (by the cue's `matchKind`) plays only when `correct` (the destined box); a box that
-    merely fits, or any box in a «libre» slot, just settles. `boxPicked.fromSlotId` → `slotLift` (lighter knock, faint
-    metal; the lift is the pump whir). `AudioEngine.forkClick(level, direction)`: a soft detent click per fork step that
-    took effect at a rack column (Game decides with `audio/forkSteps.ts` `ForkStepWatcher`). `boxDropped.wrongTarget`
-    (levels with racks or trucks) → `wrongBuzz`, a soft muffled "no" after the landing (docs/RACKS.md).
-  - loading docks (docs/DOCKS.md, «Audio»): `boxDropped.truckSlotId` → `truckDrop`, a hollow wooden "thunk" of the
+  - storage (docs/STORAGE.md «Lo que se ve y se oye»): a pick or a drop sounds as its unit's skin
+    (`STORAGE_SKINS[skin].sound`); its chime (by the cue's `matchKind`) plays only when `correct` (the destined box); a
+    box that merely fits, or any box in a «libre» level, just settles; `boxDropped.wrongTarget` → `wrongBuzz`, a soft
+    muffled "no" after the landing. `AudioEngine.forkClick(level, direction)`: a soft detent click per fork step that
+    took effect at a storage column, any unit (Game decides with `audio/forkSteps.ts` `ForkStepWatcher`).
+  - storage racks (docs/RACKS.md, «Sonido»; sound `metal`): a drop → `slotDrop`, a soft metal "toc" (no floor bass,
+    rises per level); a pick → `slotLift` (lighter knock, faint metal; the lift is the pump whir).
+  - loading docks (docs/DOCKS.md, «Sonido»; sound `wood`): a drop → `truckDrop`, a hollow wooden "thunk" of the
     trailer's planks (`TRUCK_BED_MODES` + a cavity resonance, no sub), a little higher and with a fainter bed per level;
-    chime only when `correct`, the buzz when `wrongTarget`. `boxPicked.fromTruckSlotId` → the plain `pickup`.
+    a pick → the plain `pickup`.
   - zoneReleased / actionIdle: barely audible soft tick (never a buzzer, never "wrong"). A release caused by
     stacking onto a satisfied zone ticks when that box lands (0.03 s after its knock); a pick-up releases at once.
   - levelComplete: gentle ascending arpeggio (on the 8th-note grid, after the final landing chime and a completed
@@ -493,27 +506,34 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 
 - DOM overlay, Nunito (loaded in `index.html`), warm gray text (`--ui-text`), frosted cream panels
   (`--ui-panel`, `backdrop-filter: blur`), radius 16–20 px, soft shadows, no pure black/white contrast.
-- HUD while playing — only four things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
+- HUD while playing — only five things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
   clicking it or T toggles hide/show — hidden shows a small faint clock glyph), the optional move counter (left of
   the time, same pill family: a small box glyph, the count, then the level's minimum smaller and softer, "12 · mín.
   10", or "mín. ≥ 10" for a lower bound; clicking it or N toggles it — hidden shows a faint box glyph; each new count
   settles in with a gentle tick, `.ui-tick`; once the level is finished (`UIState.finished`) at or under the minimum
-  the pill takes a soft accent wash and edge and a sparkle replaces the box, never red), restart button (round, icon
-  ↺, `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing else. Fades in
-  gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners reserve the top
-  band (the camera frames the level below them); under 480 px wide the end corner stacks the counter under the time.
+  the pill takes a soft accent wash and edge and a sparkle replaces the box, never red), the optional objectives
+  counter (left of the move counter, same family: «Quedan 9», the verb smaller and softer, «Queda 1», and «Todo en su
+  sitio» at 0, i.e. from the completing drop through the card; `UIState.objectivesLeft`; a count that drops settles in
+  with the tick, one that rises only eases in; clicking it or O toggles it — hidden shows a faint flag glyph), restart
+  button (round, icon ↺, `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing
+  else. Fades in gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners
+  reserve the top band (the camera frames the level below them); under 480 px wide the end corner puts the time on
+  top and the two counters side by side under it (two rows, as before), and under 1024 px the brief notice pill drops
+  just below the top row.
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar · + − zoom" (zoom last, so the row stays
-  one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage racks
-  (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
-  horquilla · rueda" (the pad's X / B also step the forks but are not listed). Trucks add nothing to it (their forks are automatic, no new keys).
+  one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage (`UIState.storage`:
+  core/storage `hasStorage`, racks or trucks: the forks go by the keys at every unit; published by Game when a level
+  loads), a second row in the same panel: "F V subir / bajar horquilla · rueda" (the pad's X / B also step the forks
+  but are not listed).
 - Title screen: game name "Toro", subtitle "Un pequeño almacén, a tu ritmo.", primary button "Empezar" or
   "Continuar", discreet level dots in centred rows of up to twelve (3 levels today = one short row; 22 px dots on
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
   muted) · B pitido (B activar pitido when off) · P activar pistas (the default, with a crossed bulb like the other
-  "activar" wordings; P pistas when on) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  "activar" wordings; P pistas when on) · T tiempo · N movimientos · O objetivos · Esc inicio · [Modo prueba]" (one
+  line at 1280 px by default and in test mode). Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -557,8 +577,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
   additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
   highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
-  `showMoves` additive default true, `reverseBeep` additive default true, `targetHints` additive default false,
-  `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
+  `showMoves` additive default true, `showObjectives` additive default true, `reverseBeep` additive default true,
+  `targetHints` additive default false, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
@@ -575,6 +595,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Move counter: every frame Game copies `snapshot.moves` to `UIState.moves` (a store write only when it changes); on
   load it publishes the level's minimum (`levelMinimum(id)`; a lower bound only if `moves.showLowerBound`, else null)
   as `UIState.minMoves` and clears `finished`. `toggleMoves()` (N, the pill) persists `showMoves` like the timer.
+- Objectives counter: on load, and after a frame with events (only a pick or a drop changes it), Game publishes
+  `objectivesLeft(snapshot)` as `UIState.objectivesLeft` (a store write only when it changes; a resumed level keeps
+  it). `toggleObjectives()` (O, the pill) persists `showObjectives` like the timer.
 - On `levelComplete`: stop timer, record time and moves (ProgressStore `record` / `recordMoves`, both skipped for
   the Benchmark and a level only test mode opened), set `UIState.finished`, unlock next, wait `flow.completeDelaySec` (1.6 s;
   R / Esc / HUD restart are ignored meanwhile), then screen `complete` with a random positive message from:
@@ -592,7 +615,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one level up / down at a storage column, a rack's or a truck's (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), O objectives counter (title and playing; no pad button), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,
@@ -601,4 +624,4 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Push `elapsedMs` to the store at ≤ 10 Hz. Pass the signed speed (`sign(speed) · |speed| / maxSpeed`: negative =
   reverse, which beeps), the signed fork motion (the faster of the carry lift and the stack / slot climb normalised by
   `forkRiseRate`, + up / − down) and `forkHeight` to `audio.setMotor` every frame. With each event Game passes the
-  match kind of its zone, rack slot or truck slot (`matchOf`). Resize handled by the renderer (ResizeObserver on its container).
+  match kind of its zone or storage level (`matchOf`, by slot id). Resize handled by the renderer (ResizeObserver on its container).

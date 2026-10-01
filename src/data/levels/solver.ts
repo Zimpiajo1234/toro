@@ -18,40 +18,40 @@
  *
  * With the reverse gear every move can be undone (drive the same poses backwards and put the box back), so no state
  * the forklift can reach is a dead end; `deadEnds` checks that on the states around a shortest plan. In a level with
- * racks, a box placed on its destiny is locked (see below): those moves cannot be undone, so they are checked in full.
+ * storage, a box placed on its destiny is locked (see below): those moves cannot be undone, so they are checked in full.
  *
- * Storage racks (docs/RACKS.md): rack cells are solid; every slot is one more position after the floor cells
- * (`cellCount + slot`, core/racks `slotsOf` order) holding at most one box. A slot is loaded only from its column's
- * front cell, facing the rack: a forward step from the cell behind it onto the front cell puts the box in (any empty
- * slot of the column: the forks choose the level), and a box lifted out of a slot starts inside the rack, where the
- * only way out is straight back. In a level with racks every zone and every slot with a cue takes exactly its
- * destined kind of box (the level's unique assignment), so the goal is fixed and there are no traps; and a box resting
- * alone on its destined zone or slot is locked, as in the game (BoxState.locked): it is never lifted again and nothing
- * is dropped on it (`lockedAt`). A move there can no longer be undone, so the dead-end check fully checks it.
- *
- * Loading docks (docs/DOCKS.md): the truck waits outside the building, so each bed column is one more position after
- * the rack slots (`cellCount + slotCount + column`, core/docks `truckColumnsOf` order), off the map beyond the wall;
- * its door cell is plain floor. It holds a stack, like a stack zone whose steps are the destined kinds of its levels
- * bottom → top (its capacity is its column's levels, not the level's stack limit). It is reached only from its door
- * cell facing the wall, as a rack column from its front cell: one step on from the cell behind the door cell loads the
- * box on top (the box goes through the door), and a box lifted off it backs straight out. The boxes of its correct
- * prefix (satisfied levels) are locked: the top one is never lifted, but a box may still be loaded on top of it.
- * Levels with trucks follow the rules of levels with racks (fixed destinies, no traps, locks).
+ * Storage (docs/STORAGE.md), one model for every skin: a unit is a run of columns, each loaded from one floor cell
+ * facing into it (its access: a rack's front cell, a truck's door cell); a column's own cell is solid when it lies
+ * inside the map (a rack) and off the map beyond the wall otherwise (a truck: its door cell is plain floor). Its boxes
+ * rest on positions after the floor cells, unit by unit (rule 12: racks, then trucks), column by column, by the unit's
+ * support: on shelves one position per level, holding at most one box (core/storage `storageSlotsOf` order); on a
+ * stack one position per column, holding a stack whose steps are the destined kinds of its levels with a cue bottom →
+ * top (its capacity is all its levels, not the level's stack limit: the «libre» ones on top are parking, never placed
+ * nor locked, docs/STORAGE.md rule 7). A column is loaded only by one step on from the cell behind its
+ * front cell, facing into it (into any empty level of a shelves column: the forks choose the level; on top of a stack
+ * column with room), and a box lifted out of it starts inside it, where the only way out is straight back. In a level
+ * with storage every zone and every storage level with a cue takes exactly its destined kind of box (the level's
+ * unique assignment), so the goal is fixed and there are no traps; and a box on its destiny is locked, as in the game
+ * (BoxState.locked): on a zone or a shelf its destined box alone, on a stack every box of its correct prefix
+ * (`lockedAt`). A locked box is never lifted again; nothing is dropped on a locked zone or shelf box, while a stack
+ * column still takes its next level on top (`validDrop`). A move that locks a box can no longer be undone, so the
+ * dead-end check fully checks it.
  */
 import {
   COLOR_IDS,
   SYMBOL_IDS,
   cellToWorld,
   type CellPos,
+  type Facing,
   type LevelBox,
   type LevelData,
   type LevelZone,
+  type StorageSupport,
   type Vec2,
   type ZoneCriteria,
 } from '../../core/types';
-import { assignBoxes, criteriaOf, cueOf, levelDestinies, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
-import { racksOf, rackCellOf, slotsOf } from '../../core/racks';
-import { truckColumnsOf, usesTargetRules } from '../../core/docks';
+import { assignBoxes, criteriaOf, levelDestinies, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
+import { STORAGE_SKINS, hasStorage, slotIdOf, storageColumnsOf, type StorageColumnRef } from '../../core/storage';
 
 /* ------------------------------------------------------------------ */
 /* Grid model                                                          */
@@ -70,13 +70,37 @@ export interface GridOptions {
   reverse?: boolean;
 }
 
-/** Grid direction (DIR_X / DIR_Z index) that points into a rack (or a truck bed) from its front (door) cell. */
-const INWARD_DIR = { north: 1, east: 2, south: 3, west: 0 } as const;
+/** Grid direction (DIR_X / DIR_Z index) into a storage column from its front cell, by the side it is loaded from. */
+const INWARD_DIR: { readonly [F in Facing]: number } = { north: 1, east: 2, south: 3, west: 0 };
+
+/**
+ * What a position holds (LevelGrid.kind; docs/STORAGE.md «Soporte»): a floor cell (a stack up to the level's limit),
+ * one level of a shelves column (a slot of its own, one box) or a whole stack column (its levels, bottom → top).
+ */
+export const POS_FLOOR = 0;
+export const POS_SHELF = 1;
+export const POS_STACK = 2;
+
+/** The kind of the positions of a storage column, by its unit's support. */
+const KIND_OF: { readonly [S in StorageSupport]: number } = { shelves: POS_SHELF, stack: POS_STACK };
+
+/** One storage column of the model (docs/STORAGE.md) and the positions its boxes rest on. */
+export interface GridColumn {
+  /**
+   * The column as core/storage lists it (storageColumnsOf): its unit (id, skin, access), column, cell (inside the map,
+   * or beyond a wall), front cell, facing, cues bottom → top and first slot (its index in storageSlotsOf).
+   */
+  readonly ref: StorageColumnRef;
+  /** Its unit's support (its skin's row of STORAGE_SKINS). */
+  readonly support: StorageSupport;
+  /** Its positions: one per level bottom → top on shelves, its one position on a stack. */
+  readonly positions: readonly number[];
+}
 
 /**
  * Static view of a level on its grid. Cells are indexed `z * width + x`; positions (where boxes rest) are the cells,
- * then one per storage rack slot (`cellCount + slot`), then one per truck bed column (`bedBase + column`, outside the
- * map).
+ * then the storage positions (docs/STORAGE.md): every storage column in core/storage `storageColumnsOf` order (unit by
+ * unit, rule 12), one position per level on shelves, one per column on a stack.
  */
 export class LevelGrid {
   /** Carrying may back up in a straight line (see GridOptions). */
@@ -84,49 +108,46 @@ export class LevelGrid {
   readonly width: number;
   readonly depth: number;
   readonly cellCount: number;
-  /** Rack slots (0 without racks). */
-  readonly slotCount: number;
-  /** First truck bed position: cellCount + slotCount. */
-  readonly bedBase: number;
-  /** Positions: cellCount + slotCount + truck bed columns. Stacks arrays have this length. */
+  /** Positions: the cells, then the storage positions (cellCount ‥ posCount − 1). Stacks arrays have this length. */
   readonly posCount: number;
   readonly size: { width: number; depth: number };
-  /** 1 where a shelf, a plant or a storage rack stands (a dock's door cells are floor). */
+  /** 1 where a shelf, a plant or a storage column inside the map stands (a truck's door cells are floor). */
   readonly solid: Uint8Array;
   /**
    * Per position, what each box of its stack must meet, bottom → top: on a zone cell the zone's own criteria (color
-   * and / or symbol) for the bottom box, then the colors of its recipe; on a rack slot its cue. In a level with racks
-   * or trucks every zone and slot with a cue asks for exactly its destined kind instead, and a truck bed column the
-   * destined kind of each of its levels, bottom → top. null off targets.
+   * and / or symbol) for the bottom box, then the colors of its recipe; on a shelf its cue. In a level with storage
+   * every zone and storage level with a cue asks for exactly its destined kind instead: a shelf its level's, a stack
+   * column each of its levels with a cue, bottom → top (its «libre» levels above them are parking: its `capacity`
+   * counts them, its steps never). null off targets (a «libre» shelf, a stack column with no cue).
    */
   readonly steps: (ZoneCriteria[] | null)[];
   readonly stackLimit: number;
   /** The level sorts by symbol (docs/SORTING.md): the search also looks for a complete sorting (see misplacedCount). */
   readonly sorting: boolean;
-  /** The level has storage racks (docs/RACKS.md). */
-  readonly racks: boolean;
-  /** The level has racks or trucks (docs/RACKS.md, docs/DOCKS.md): fixed destinies, locks, no traps. */
+  /** The level has storage (core/storage hasStorage): fixed destinies, locks, no traps (docs/STORAGE.md rules 4–6). */
   readonly targets: boolean;
-  /** Per position: the levels of a truck bed column (docs/DOCKS.md), 0 on every other position. */
-  readonly bedLevels: Uint8Array;
-  /** Per truck bed position: its door cell and the direction into the truck from there, toward the wall (-1 elsewhere). */
-  readonly bedFront: Int32Array;
-  readonly bedDir: Int8Array;
-  /** Per truck bed column (position − bedBase): its bed cell, outside the map. */
-  readonly bedCells: readonly CellPos[];
-  /** Per pose (cell * 4 + dir): the truck bed position right ahead of it (on its door cell facing the wall), or -1. */
-  readonly bedAtPose: Int32Array;
+  /** The storage columns, unit by unit (rule 12), column by column: core/storage storageColumnsOf order. */
+  readonly columns: readonly GridColumn[];
+  /** Per position: POS_FLOOR, POS_SHELF or POS_STACK. */
+  readonly kind: Uint8Array;
+  /** Per position: the most boxes it holds (the stack limit on a floor cell, 1 on a shelf, its levels on a stack). */
+  readonly capacity: Uint8Array;
+  /**
+   * Per position: the floor cell its column is loaded from (a rack's front cell, a truck's door cell) and the grid
+   * direction into the column from there; -1 on a floor cell.
+   */
+  readonly front: Int32Array;
+  readonly inward: Int8Array;
+  /** Per pose (cell * 4 + dir): the storage column (in `columns`) it loads, on its front cell facing in; else -1. */
+  readonly columnAtPose: Int32Array;
   /** Neighbour of each cell in each direction, indexed like a pose (cell * 4 + dir); -1 outside the warehouse. */
   readonly links: Int32Array;
-  /** Rack column on each cell, or -1. */
-  readonly columnAt: Int32Array;
-  /** Per rack column: the direction into the rack (a pose facing it from the front cell) and its slot positions, bottom → top. */
-  readonly columnDir: Int8Array;
-  readonly columnSlots: readonly (readonly number[])[];
-  /** Per slot (position − cellCount): its rack cell, front cell and direction into the rack. */
-  readonly slotCell: Int32Array;
-  readonly slotFront: Int32Array;
-  readonly slotDir: Int8Array;
+  /** Per position: its storage column (index in `columns`), -1 on a floor cell. */
+  private readonly columnIndex: Int32Array;
+  /** Storage column by its cell (`x,z`, inside or outside the map). */
+  private readonly columnAtCell = new Map<string, number>();
+  /** Position of every storage slot by id (core/storage slotIdOf): its shelf, or its stack column (every level). */
+  private readonly slotPos = new Map<string, number>();
 
   constructor(level: LevelData, options: GridOptions = {}) {
     this.reverse = options.reverse ?? true;
@@ -134,73 +155,75 @@ export class LevelGrid {
     this.depth = level.size.depth;
     this.size = { width: this.width, depth: this.depth };
     this.cellCount = this.width * this.depth;
-    const slots = slotsOf(level);
-    const beds = truckColumnsOf(level);
-    this.slotCount = slots.length;
-    this.bedBase = this.cellCount + this.slotCount;
-    this.posCount = this.bedBase + beds.length;
+    this.stackLimit = level.stackLimit ?? 1;
+    this.targets = hasStorage(level);
+    this.sorting = usesSymbols(level) && !this.targets;
+    // The position table: every storage column's positions after the cells, in storageColumnsOf order.
+    const columns: GridColumn[] = [];
+    let posCount = this.cellCount;
+    for (const ref of storageColumnsOf(level)) {
+      const support = STORAGE_SKINS[ref.unit.skin].support;
+      const count = support === 'shelves' ? ref.cues.length : 1;
+      columns.push({ ref, support, positions: Array.from({ length: count }, (_, i) => posCount + i) });
+      posCount += count;
+    }
+    this.columns = columns;
+    this.posCount = posCount;
     this.solid = new Uint8Array(this.cellCount);
     this.steps = new Array<ZoneCriteria[] | null>(this.posCount).fill(null);
-    this.stackLimit = level.stackLimit ?? 1;
-    this.racks = slots.length > 0;
-    this.targets = this.racks || usesTargetRules(level);
-    this.sorting = usesSymbols(level) && !this.targets;
+    this.kind = new Uint8Array(this.posCount).fill(POS_FLOOR);
+    this.capacity = new Uint8Array(this.posCount).fill(this.stackLimit);
+    this.front = new Int32Array(this.posCount).fill(-1);
+    this.inward = new Int8Array(this.posCount).fill(-1);
+    this.columnIndex = new Int32Array(this.posCount).fill(-1);
+    this.columnAtPose = new Int32Array(this.cellCount * 4).fill(-1);
     for (const s of level.shelves)
       for (let x = s.x; x < s.x + s.w; x++) for (let z = s.z; z < s.z + s.d; z++) this.solid[this.index(x, z)] = 1;
     for (const p of level.decor.plants) this.solid[this.index(p.x, p.z)] = 1;
-    this.columnAt = new Int32Array(this.cellCount).fill(-1);
-    const columnDir: number[] = [];
-    const columnSlots: number[][] = [];
-    this.slotCell = new Int32Array(this.slotCount);
-    this.slotFront = new Int32Array(this.slotCount);
-    this.slotDir = new Int8Array(this.slotCount);
-    for (const rack of racksOf(level)) {
-      rack.columns.forEach((_, column) => {
-        const cell = rackCellOf(rack, column);
-        this.solid[this.index(cell.x, cell.z)] = 1;
-        this.columnAt[this.index(cell.x, cell.z)] = columnSlots.length;
-        columnDir.push(INWARD_DIR[rack.facing]);
-        columnSlots.push([]);
-      });
-    }
-    slots.forEach((slot, i) => {
-      const column = this.columnAt[this.index(slot.cell.x, slot.cell.z)];
-      columnSlots[column].push(this.cellCount + i);
-      this.slotCell[i] = this.index(slot.cell.x, slot.cell.z);
-      this.slotFront[i] = this.index(slot.front.x, slot.front.z);
-      this.slotDir[i] = columnDir[column];
-    });
-    this.columnDir = Int8Array.from(columnDir);
-    this.columnSlots = columnSlots;
-    this.bedLevels = new Uint8Array(this.posCount);
-    this.bedFront = new Int32Array(this.posCount).fill(-1);
-    this.bedDir = new Int8Array(this.posCount).fill(-1);
-    this.bedCells = beds.map((bed) => ({ x: bed.cell.x, z: bed.cell.z }));
-    this.bedAtPose = new Int32Array(this.cellCount * 4).fill(-1);
-    beds.forEach((bed, i) => {
-      const pos = this.bedBase + i;
-      const door = this.index(bed.front.x, bed.front.z);
-      this.bedLevels[pos] = bed.cues.length;
-      this.bedFront[pos] = door;
-      this.bedDir[pos] = INWARD_DIR[bed.facing];
-      this.bedAtPose[door * 4 + INWARD_DIR[bed.facing]] = pos;
-    });
     const destinies = levelDestinies(level);
+    // Every storage level asks for its destined kind (core/sorting LevelDestinies.slots, by its index in storageSlotsOf),
+    // or its cue if the level has no unique assignment (a hand-built one).
+    const stepOf = (slot: number, cue: ZoneCriteria | null): ZoneCriteria | null => {
+      const destined = destinies?.slots[slot];
+      return destined ? { color: destined.color, symbol: destined.symbol } : cue && criteriaOf(cue);
+    };
+    columns.forEach(({ ref, support, positions }, c) => {
+      const front = this.index(ref.front.x, ref.front.z);
+      const inward = INWARD_DIR[ref.facing];
+      // A column inside the map is solid for the body and the floor boxes; one beyond a wall lies off the map.
+      if (this.inMap(ref.cell.x, ref.cell.z)) this.solid[this.index(ref.cell.x, ref.cell.z)] = 1;
+      this.columnAtCell.set(`${ref.cell.x},${ref.cell.z}`, c);
+      this.columnAtPose[front * 4 + inward] = c;
+      for (const pos of positions) {
+        this.kind[pos] = KIND_OF[support];
+        this.front[pos] = front;
+        this.inward[pos] = inward;
+        this.columnIndex[pos] = c;
+      }
+      const slotId = (lvl: number) => slotIdOf(ref.unit.id, ref.column, lvl);
+      if (support === 'shelves') {
+        // One box per level, each a target of its own (a «libre» one, none).
+        positions.forEach((pos, lvl) => {
+          const step = stepOf(ref.firstSlot + lvl, ref.cues[lvl]);
+          this.capacity[pos] = 1;
+          this.steps[pos] = step ? [step] : null;
+          this.slotPos.set(slotId(lvl), pos);
+        });
+      } else {
+        // A stack of all its levels (its capacity), whose steps are its levels with a cue, bottom → top: the «libre»
+        // ones sit above them (validateLevel) and take any box as parking, never part of the stack's correct prefix, so
+        // a box there is never locked and always still has to move (docs/STORAGE.md rule 7). None with a cue: no steps.
+        const [pos] = positions;
+        this.capacity[pos] = ref.cues.length;
+        const free = ref.cues.indexOf(null);
+        const cued = ref.cues.slice(0, free < 0 ? ref.cues.length : free);
+        this.steps[pos] = cued.length > 0 ? cued.map((cue, lvl) => stepOf(ref.firstSlot + lvl, cue)!) : null;
+        ref.cues.forEach((_, lvl) => this.slotPos.set(slotId(lvl), pos));
+      }
+    });
     level.zones.forEach((zone, i) => {
       const destined = destinies?.zones[i];
       this.steps[this.index(zone.x, zone.z)] = destined ? [{ color: destined.color, symbol: destined.symbol }] : zoneSteps(zone);
-    });
-    slots.forEach((slot, i) => {
-      const destined = destinies?.slots[i];
-      const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
-      this.steps[this.cellCount + i] = destined ? [{ color: destined.color, symbol: destined.symbol }] : cue ? [cue] : null;
-    });
-    beds.forEach((bed, i) => {
-      // Each level asks for its destined kind (its cue if the level has no unique assignment, as a hand-built one).
-      this.steps[this.bedBase + i] = bed.cues.map((cue, lvl) => {
-        const destined = destinies?.trucks[bed.firstSlot + lvl];
-        return destined ? { color: destined.color, symbol: destined.symbol } : { ...cue };
-      });
     });
     this.links = new Int32Array(this.cellCount * 4);
     for (let cell = 0; cell < this.cellCount; cell++) {
@@ -220,56 +243,70 @@ export class LevelGrid {
     return { x: cell % this.width, z: Math.floor(cell / this.width) };
   }
 
+  /** (x, z) is a cell of the warehouse (a storage column beyond a wall is not). */
+  inMap(x: number, z: number): boolean {
+    return x >= 0 && z >= 0 && x < this.width && z < this.depth;
+  }
+
   /** World position of a cell centre. */
   center(cell: number): Vec2 {
     return cellToWorld(this.cellOf(cell), this.size);
   }
 
-  /** Neighbour of `cell` in direction `dir`, or -1 outside the warehouse (also for cell -1 and for a slot position). */
+  /** Neighbour of `cell` in direction `dir`, or -1 outside the warehouse (also for cell -1 and for a storage position). */
   step(cell: number, dir: number): number {
     return cell < 0 || cell >= this.cellCount ? -1 : this.links[cell * 4 + dir];
   }
 
+  /** A storage position (docs/STORAGE.md: a shelf or a stack column), not a floor cell. */
+  isStorage(pos: number): boolean {
+    return pos >= this.cellCount && pos < this.posCount;
+  }
+
+  /** The storage column of a position, or undefined for a floor cell. */
+  columnOfPos(pos: number): GridColumn | undefined {
+    return this.isStorage(pos) ? this.columns[this.columnIndex[pos]] : undefined;
+  }
+
   /**
-   * Position of a box resting on (x, z): its rack slot when (x, z) is a rack cell and `level` names the slot, its truck
-   * bed column when (x, z) is a bed cell (outside the map), else the cell (-1 outside the map anywhere else).
+   * Position of a box resting on (x, z) at `level` (LevelBox.level): on a storage column's cell (inside the map or
+   * beyond a wall), its level's position on shelves (when `level` names one) or its column's on a stack (whatever the
+   * level); else the cell (-1 outside the map anywhere else).
    */
   posOf(x: number, z: number, level?: number): number {
-    if (x < 0 || z < 0 || x >= this.width || z >= this.depth) {
-      const bed = this.bedCells.findIndex((c) => c.x === x && c.z === z);
-      return bed >= 0 ? this.bedBase + bed : -1;
+    const c = this.columnAtCell.get(`${x},${z}`);
+    if (c !== undefined) {
+      const { support, positions } = this.columns[c];
+      const pos = support === 'stack' ? positions[0] : level === undefined ? undefined : positions[level];
+      if (pos !== undefined) return pos;
     }
-    const cell = this.index(x, z);
-    const column = this.columnAt[cell];
-    return column >= 0 && level !== undefined ? (this.columnSlots[column][level] ?? cell) : cell;
+    return this.inMap(x, z) ? this.index(x, z) : -1;
   }
 
-  /** The cell of a position: a floor cell itself, a slot's rack cell, a truck bed column's bed cell (outside the map). */
+  /** The position a box in slot `slotId` (core/storage slotIdOf) rests on: its shelf or its stack column; else -1. */
+  positionOfSlot(slotId: string): number {
+    return this.slotPos.get(slotId) ?? -1;
+  }
+
+  /** The level (0 = bottom) of the box `height` boxes up on storage position `pos`: a shelf's own, a stack's `height`. */
+  levelAt(pos: number, height = 0): number {
+    const { support, positions } = this.columns[this.columnIndex[pos]];
+    return support === 'stack' ? height : pos - positions[0];
+  }
+
+  /** The storage slot (index in core/storage storageSlotsOf) of the box `height` boxes up on storage position `pos`. */
+  slotAt(pos: number, height = 0): number {
+    return this.columns[this.columnIndex[pos]].ref.firstSlot + this.levelAt(pos, height);
+  }
+
+  /** The cell of a position: a floor cell itself; a storage position its column's (a rack's own, a truck's bed cell). */
   cellOfPos(pos: number): CellPos {
-    if (this.isBed(pos)) return { ...this.bedCells[pos - this.bedBase] };
-    return this.cellOf(this.isSlot(pos) ? this.slotCell[pos - this.cellCount] : pos);
+    return this.isStorage(pos) ? { ...this.columns[this.columnIndex[pos]].ref.cell } : this.cellOf(pos);
   }
 
-  /** A rack slot position (not a floor cell, not a truck bed). */
-  isSlot(pos: number): boolean {
-    return pos >= this.cellCount && pos < this.bedBase;
-  }
-
-  /** A truck bed column (docs/DOCKS.md): a stack outside the map, reached only from its door cell. */
-  isBed(pos: number): boolean {
-    return pos >= this.bedBase && pos < this.posCount;
-  }
-
-  /** The floor cell a position is reached at: the cell itself, a slot's front cell or a truck bed's door cell. */
+  /** The floor cell a position is reached at: the cell itself, a storage position its column's front cell. */
   accessOf(pos: number): number {
-    if (this.isBed(pos)) return this.bedFront[pos];
-    return this.isSlot(pos) ? this.slotFront[pos - this.cellCount] : pos;
-  }
-
-  /** Most boxes a position holds: 1 in a rack slot, its levels on a truck bed, else the level's stack limit. */
-  capacity(pos: number): number {
-    if (this.isBed(pos)) return this.bedLevels[pos];
-    return this.isSlot(pos) ? 1 : this.stackLimit;
+    return this.isStorage(pos) ? this.front[pos] : pos;
   }
 }
 
@@ -296,15 +333,15 @@ export function boxOfCode(code: string): Sortable {
 export type Stacks = string[];
 
 /**
- * The level's starting stacks (boxes listed on one cell are stacked in list order, bottom first; boxes loaded on a truck
- * bed by their level), one entry per position (rack slots after the floor cells, then the truck bed columns).
+ * The level's starting stacks (boxes listed on one cell are stacked in list order, bottom first; boxes stored on a stack
+ * column by their level), one entry per position (the storage positions after the floor cells).
  */
 export function stacksOf(grid: LevelGrid, level: LevelData): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
-  const onBed = (b: LevelBox) => grid.isBed(grid.posOf(b.x, b.z, b.level));
-  for (const b of level.boxes) if (!onBed(b)) stacks[grid.posOf(b.x, b.z, b.level)] += boxCode(sortableOf(b));
-  const loaded = level.boxes.filter(onBed).sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
-  for (const b of loaded) stacks[grid.posOf(b.x, b.z, b.level)] += boxCode(sortableOf(b));
+  const onStack = (b: LevelBox) => grid.kind[grid.posOf(b.x, b.z, b.level)] === POS_STACK;
+  for (const b of level.boxes) if (!onStack(b)) stacks[grid.posOf(b.x, b.z, b.level)] += boxCode(sortableOf(b));
+  const stored = level.boxes.filter(onStack).sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+  for (const b of stored) stacks[grid.posOf(b.x, b.z, b.level)] += boxCode(sortableOf(b));
   return stacks;
 }
 
@@ -316,16 +353,16 @@ export function occupancyOf(grid: LevelGrid, stacks: Stacks): Int16Array {
 }
 
 /**
- * Levels with racks or trucks: the position's top box is locked, its destined box alone on its zone or in its slot (the
- * game's BoxState.locked), or on a truck bed a satisfied level (every box of the stack in its correct prefix). It is
- * never lifted again; nothing is dropped on a locked zone or slot box, while a truck bed still takes the next level on
- * top (validDrop). Always false in levels without racks or trucks.
+ * Levels with storage: the position's top box is locked (the game's BoxState.locked), by its support (docs/STORAGE.md
+ * rule 5): on a zone or a shelf its destined box alone; on a stack column a satisfied level, every box of the stack in
+ * its correct prefix. It is never lifted again; nothing is dropped on a locked zone or shelf box, while a stack column
+ * still takes its next level on top (validDrop). Always false in levels without storage.
  */
 export function lockedAt(grid: LevelGrid, stacks: Stacks, pos: number): boolean {
   if (!grid.targets || pos < 0 || pos >= grid.posCount) return false;
   const steps = grid.steps[pos];
   if (steps === null) return false;
-  if (grid.isBed(pos)) return stacks[pos].length > 0 && correctPrefix(grid, stacks, pos) === stacks[pos].length;
+  if (grid.kind[pos] === POS_STACK) return stacks[pos].length > 0 && correctPrefix(grid, stacks, pos) === stacks[pos].length;
   return stacks[pos].length === 1 && meets(steps[0], boxOfCode(stacks[pos]));
 }
 
@@ -382,8 +419,8 @@ export function misplacedCount(grid: LevelGrid, stacks: Stacks, total: number): 
 }
 
 /**
- * A stack (not empty) on the floor that still has room for one more box (never a locked box: lockedAt; never a truck
- * bed, off the floor and loaded through its door only).
+ * A stack (not empty) on the floor that still has room for one more box (never a locked box: lockedAt; never a storage
+ * position, off the floor and loaded from its column's front cell only).
  */
 export function canStackOn(grid: LevelGrid, stacks: Stacks, cell: number): boolean {
   return (
@@ -436,11 +473,11 @@ const RING = [
  * region in the easy case, or -1 when the caller must search it (reachableFrom). `occupancy` is the one after the lift.
  */
 export function regionShift(grid: LevelGrid, occupancy: Int16Array, region: Uint8Array, lowest: number, from: number) {
-  // Rack slots and truck beds are off the floor: lifting from or dropping into one changes no region.
+  // Storage positions are off the floor: lifting from or dropping into one changes no region.
   const free = (c: number) => c >= 0 && c < grid.cellCount && grid.solid[c] === 0 && occupancy[c] === -1;
   // Lifting may open `from` onto floor the forklift could not reach before: then everything needs a search.
   let joins = false;
-  for (let d = 0; d < 4 && !grid.isBed(from); d++) {
+  for (let d = 0; d < 4 && !grid.isStorage(from); d++) {
     const n = grid.step(from, d);
     if (free(n) && region[n] === 0) joins = true;
   }
@@ -480,20 +517,14 @@ export function regionShift(grid: LevelGrid, occupancy: Int16Array, region: Uint
 }
 
 /**
- * Pick-up poses for the top box at `from` (cell * 4 + dir): facing it from a reachable orthogonal neighbour; for a rack
- * slot, facing the rack from its column's front cell; for a truck bed, facing the wall from its door cell.
+ * Pick-up poses for the top box at `from` (cell * 4 + dir): facing it from a reachable orthogonal neighbour; for a
+ * storage position, facing into its column from the column's front cell (a rack's front cell, a truck's door cell).
  */
 export function pickupStarts(grid: LevelGrid, region: Uint8Array, from: number): number[] {
   const starts: number[] = [];
-  if (grid.isSlot(from)) {
-    const slot = from - grid.cellCount;
-    const front = grid.slotFront[slot];
-    if (region[front] === 1) starts.push(front * 4 + grid.slotDir[slot]);
-    return starts;
-  }
-  if (grid.isBed(from)) {
-    const front = grid.bedFront[from];
-    if (region[front] === 1) starts.push(front * 4 + grid.bedDir[from]);
+  if (grid.isStorage(from)) {
+    const front = grid.front[from];
+    if (region[front] === 1) starts.push(front * 4 + grid.inward[from]);
     return starts;
   }
   for (let dir = 0; dir < 4; dir++) {
@@ -519,13 +550,12 @@ export interface CarryDrops {
 
 /**
  * Search over carry poses from `starts` (`occupancy` / `stacks` already without the carried box: a lifted stack's cell
- * stays occupied while boxes remain under it). The box can be dropped on the free cell ahead in any reached pose, or
- * on a stack with room (not a locked box) that a forward step or a turn brings ahead, into an empty rack slot that a
- * forward step onto its front cell (facing the rack) brings ahead, or on top of a truck bed column with room (a locked
- * box included) that a forward step onto its door cell (facing the wall) brings ahead, through the door. A turn never
- * puts the box in a rack or a truck. A start pose with the box inside a rack or on a truck bed (just lifted off it) can
- * only back straight out. Chains are the cheapest ones, a step back (grid.reverse) counting double, so a chain only
- * backs up when that saves driving.
+ * stays occupied while boxes remain under it). The box can be dropped on the free cell ahead in any reached pose, on a
+ * stack with room (not a locked box) that a forward step or a turn brings ahead, or into a storage column that a
+ * forward step onto its front cell (facing into it) brings ahead: into any empty level of a shelves column, on top of a
+ * stack column with room (a locked box included; through the door of a truck). A turn never puts the box into storage.
+ * A start pose with the box inside a storage column (just lifted out of it) can only back straight out. Chains are the
+ * cheapest ones, a step back (grid.reverse) counting double, so a chain only backs up when that saves driving.
  */
 export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stacks, starts: readonly number[]): CarryDrops {
   const links = grid.links;
@@ -557,18 +587,15 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
   const targets = grid.targets;
   const stackable = (cell: number) =>
     cell >= 0 && solid[cell] === 0 && stacks[cell].length > 0 && stacks[cell].length < limit && !(targets && lockedAt(grid, stacks, cell));
-  const columnAt = grid.columnAt;
-  const bedLevels = grid.bedLevels;
-  const bedAtPose = grid.bedAtPose;
-  /** The pose's box is inside a rack column or on a truck bed beyond a door (only a start pose: just lifted off it). */
-  const inside = (pose: number) => {
-    const front = links[pose];
-    return (front >= 0 && columnAt[front] >= 0) || bedAtPose[pose] >= 0;
-  };
+  const capacity = grid.capacity;
+  const columns = grid.columns;
+  const columnAtPose = grid.columnAtPose;
+  /** The pose's box is inside a storage column: on its front cell facing in (only a start pose: just lifted out of it). */
+  const inside = (pose: number) => columnAtPose[pose] >= 0;
   const drops = new Map<number, number[]>();
   /** Per drop position: its forklift cells (the arrays stored in `drops`, in first-found order). */
   const cellsAt: number[][] = [];
-  /** First way found to each drop: the pose facing it, plus the extra pose of a drop on a stack or into a slot (-1 = none). */
+  /** First way found to each drop: the pose facing it, plus the extra pose of a drop on a stack or into storage (-1 = none). */
   const firstPose = new Int32Array(grid.posCount);
   const firstExtra = new Int32Array(grid.posCount);
   // Every recorded drop is a cell of the warehouse: the front of a reached pose is its own box's cell or free floor.
@@ -594,7 +621,7 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
       const dir = pose & 3;
       const front = links[pose];
       if (inside(pose)) {
-        // The box is inside a rack or on a truck bed (just lifted off it): only straight back out.
+        // The box is inside a storage column (just lifted out of it): only straight back out.
         if (reverse) {
           const back = links[pose - dir + ((dir + 2) & 3)];
           if (free(back)) reach(back * 4 + dir, pose, c + 2);
@@ -606,13 +633,11 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
         const ahead = links[front * 4 + dir];
         if (free(ahead)) reach(front * 4 + dir, pose, c + 1);
         else if (stackable(ahead)) record(ahead, front, pose, front * 4 + dir);
-        else if (ahead >= 0 && columnAt[ahead] >= 0 && grid.columnDir[columnAt[ahead]] === dir) {
-          // Facing a rack column from behind its front cell: one step on puts the box into any empty slot.
-          for (const slot of grid.columnSlots[columnAt[ahead]]) if (stacks[slot].length === 0) record(slot, front, pose, front * 4 + dir);
-        } else {
-          // Facing the wall from behind a door cell: one step on takes the box through the door, on top of the bed.
-          const bed = bedAtPose[front * 4 + dir];
-          if (bed >= 0 && stacks[bed].length < bedLevels[bed]) record(bed, front, pose, front * 4 + dir);
+        else {
+          // Facing a storage column from behind its front cell: one step on loads it, into any empty level of a shelves
+          // column (the forks choose the level) or on top of a stack column with room.
+          const column = columnAtPose[front * 4 + dir];
+          if (column >= 0) for (const pos of columns[column].positions) if (stacks[pos].length < capacity[pos]) record(pos, front, pose, front * 4 + dir);
         }
       }
       for (let turn = 1; turn < 4; turn += 2) {
@@ -641,26 +666,17 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
       return chainOf(firstPose[drop], firstExtra[drop]);
     },
     chainTo(drop: number, cell: number) {
-      if (grid.isSlot(drop)) {
-        // A slot: from the cell behind its front cell, one step on (the forklift ends on the front cell).
-        const slot = drop - grid.cellCount;
-        const front = grid.slotFront[slot];
-        const dir = grid.slotDir[slot];
-        if (cell !== front || !cellsAt[drop]) return undefined;
-        for (const pose of queue) if ((pose & 3) === dir && links[pose] === front && columnAt[pose >> 2] < 0) return chainOf(pose, front * 4 + dir);
-        return undefined;
-      }
-      if (grid.isBed(drop)) {
-        // A truck bed: from the cell behind its door cell, one step on (the forklift ends on the door cell).
-        const front = grid.bedFront[drop];
-        const dir = grid.bedDir[drop];
+      if (grid.isStorage(drop)) {
+        // Into storage: from the cell behind its column's front cell, one step on (the forklift ends on the front cell).
+        const front = grid.front[drop];
+        const dir = grid.inward[drop];
         if (cell !== front || !cellsAt[drop]) return undefined;
         for (const pose of queue) if ((pose & 3) === dir && links[pose] === front && !inside(pose)) return chainOf(pose, front * 4 + dir);
         return undefined;
       }
       // The first settled pose (cheapest first) that makes this drop from this cell, as `record` saw it.
       for (const pose of queue) {
-        if (inside(pose)) continue; // a pose with the box still inside a rack or on a truck bed drops nothing
+        if (inside(pose)) continue; // a pose with the box still inside a storage column drops nothing
         const at = pose >> 2;
         const dir = pose & 3;
         const front = links[pose];
@@ -694,23 +710,15 @@ export function carryBackTo(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
     }
   };
   const stackable = canStackOn(grid, stacks, target);
-  if (grid.isSlot(target)) {
-    // Into a slot: the last pose stands behind the column's front cell facing the rack (the box on the front cell);
-    // one step on leaves the forklift on the front cell.
-    const slot = target - grid.cellCount;
-    const front = grid.slotFront[slot];
-    const dir = grid.slotDir[slot];
+  if (grid.isStorage(target)) {
+    // Into storage, while it has room (an empty shelf, a stack column not yet full): the last pose stands behind the
+    // column's front cell facing into it (the box on the front cell); one step on leaves the forklift on the front cell.
+    const front = grid.front[target];
+    const dir = grid.inward[target];
     const behind = grid.step(front, (dir + 2) % 4);
-    if (stacks[target].length === 0 && free(front) && end[front] === 1 && free(behind)) add(behind * 4 + dir);
+    if (stacks[target].length < grid.capacity[target] && free(front) && end[front] === 1 && free(behind)) add(behind * 4 + dir);
   }
-  if (grid.isBed(target)) {
-    // Onto a truck bed: the same, from behind its door cell facing the wall, while the column has room.
-    const front = grid.bedFront[target];
-    const dir = grid.bedDir[target];
-    const behind = grid.step(front, (dir + 2) % 4);
-    if (stacks[target].length < grid.bedLevels[target] && free(front) && end[front] === 1 && free(behind)) add(behind * 4 + dir);
-  }
-  for (let dir = 0; dir < 4 && !grid.isSlot(target) && !grid.isBed(target); dir++) {
+  for (let dir = 0; dir < 4 && !grid.isStorage(target); dir++) {
     // `before` is the cell next to the target on the side the forklift comes from, facing `dir`.
     const before = grid.step(target, (dir + 2) % 4);
     if (!free(before) || end[before] !== 1) continue;
@@ -763,14 +771,13 @@ export interface Move {
 }
 
 /**
- * A drop the rules allow: not back where it was, not into a shelf / plant / rack cell, not onto a full stack, slot or
- * truck bed column, nor onto a locked zone or slot box (a truck bed column takes its next level on a locked box).
+ * A drop the rules allow: not back where it was, nowhere full (a floor stack, a shelf, a stack column: capacity), not
+ * into a shelf / plant / storage cell of the map, nor onto a locked zone box (by support: a shelf holds one box, and a
+ * stack column takes its next level on a locked box).
  */
 function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: number): boolean {
-  if (drop === from || drop < 0 || drop >= grid.posCount) return false;
-  if (grid.isSlot(drop)) return lifted[drop].length === 0;
-  if (grid.isBed(drop)) return lifted[drop].length < grid.bedLevels[drop];
-  return grid.solid[drop] === 0 && lifted[drop].length < grid.stackLimit && !lockedAt(grid, lifted, drop);
+  if (drop === from || drop < 0 || drop >= grid.posCount || lifted[drop].length >= grid.capacity[drop]) return false;
+  return grid.isStorage(drop) || (grid.solid[drop] === 0 && !lockedAt(grid, lifted, drop));
 }
 
 /** Compact, unique text of a state: the non-empty stacks by cell, then the reachable region (its lowest cell). */
@@ -817,7 +824,7 @@ function topOfLayout(layout: string, cell: number): string {
   return layout[end - 1];
 }
 
-/** Occupancy (as occupancyOf) of a layout: every floor cell with a stack is occupied (rack slots are off the floor). */
+/** Occupancy (as occupancyOf) of a layout: every floor cell with a stack is occupied (storage is off the floor). */
 function occupancyOfLayout(layout: string, cellCount: number): Int16Array {
   const occupancy = new Int16Array(cellCount).fill(-1);
   for (let i = 0; i < layout.length; i++) {
@@ -1156,9 +1163,9 @@ function uniqueDestinations(grid: LevelGrid, stacks: Stacks): Int16Array | null 
 }
 
 /**
- * Levels with racks or trucks: every target asks for its destined kind, so a kind with a single target has a fixed
- * destination. Per kind (code − 65): that target when it is a one-box target (a zone or a slot), else -1 (kinds with
- * several targets, and those whose target is a truck level: truck beds are stacks, never a node of destinationCycles).
+ * Levels with storage: every target asks for its destined kind, so a kind with a single target has a fixed
+ * destination. Per kind (code − 65): that target when it is a one-box target (a zone or a shelf), else -1 (kinds with
+ * several targets, and those whose target is a level of a stack column: stacks are never a node of destinationCycles).
  * null when some target does not name an exact kind (a hand-built level with no unique assignment).
  */
 function targetDestinations(grid: LevelGrid): Int16Array | null {
@@ -1171,7 +1178,7 @@ function targetDestinations(grid: LevelGrid): Int16Array | null {
       if (step.color === undefined || step.symbol === undefined) return null;
       const kind = COLOR_IDS.indexOf(step.color) * SYMBOL_IDS.length + SYMBOL_IDS.indexOf(step.symbol);
       count[kind]++;
-      at[kind] = grid.isBed(c) ? -1 : c;
+      at[kind] = grid.kind[c] === POS_STACK ? -1 : c;
     }
   }
   for (let kind = 0; kind < at.length; kind++) if (count[kind] !== 1) at[kind] = -1;
@@ -1207,8 +1214,8 @@ class MoveSearch {
   private readonly onlyIn: Uint8Array;
   /**
    * Sorting levels whose boxes are all different and have one complete sorting: the zone cell each kind of box ends on
-   * (by code − 65, -1 for kinds not in the level). Levels with racks or trucks: the one-box target of each kind that
-   * has a single one (targetDestinations). null otherwise.
+   * (by code − 65, -1 for kinds not in the level). Levels with storage: the one-box target of each kind that has a
+   * single one (targetDestinations). null otherwise.
    */
   private readonly destOf: Int16Array | null;
   /** Set by destinationCycles: how many of the cycles it counted keep clear of every corridor. */
@@ -1222,8 +1229,8 @@ class MoveSearch {
   ) {
     for (let c = 0; c < grid.posCount; c++) if (grid.steps[c]) this.zoneCells.push(c);
     this.costs = slotCosts(grid);
-    // The swap-cycle and corridor bounds reason about floor zones only: off in levels with racks or trucks (whose slots
-    // and beds are reached from their front and door cells), where the plain bounds stay admissible and consistent.
+    // The swap-cycle and corridor bounds reason about floor zones only: off in levels with storage (whose positions are
+    // reached from their columns' front cells), where the plain bounds stay admissible and consistent.
     const classic = !grid.sorting && !grid.targets && grid.stackLimit === 1 && this.zoneCells.every((c) => grid.steps[c]!.length === 1);
     this.zoneColor = classic ? new Int8Array(grid.cellCount).fill(-1) : null;
     if (this.zoneColor) for (const c of this.zoneCells) this.zoneColor[c] = COLOR_IDS.indexOf(grid.steps[c]![0].color!);
@@ -1250,8 +1257,8 @@ class MoveSearch {
    * one move that does not bring a box home, whether it parks the box or puts it in a trap: a bound on top of the boxes
    * not yet home (never on top of the accepted-based count, since a trap move is «accepted» and breaks a cycle at once).
    * Also leaves in `lastDestApart` the cycles with no cell in a dead-end corridor (their boxes are not the ones the
-   * corridor bound counts). 0 when destinations are not fixed. Levels with racks or trucks: the same on their one-box
-   * targets (zones and slots, their bottom box; truck beds are left out), where it adds to the plain slot costs (see
+   * corridor bound counts). 0 when destinations are not fixed. Levels with storage: the same on their one-box targets
+   * (zones and shelves, their bottom box; stack columns are left out), where it adds to the plain slot costs (see
    * heuristic).
    */
   private destinationCycles(stacks: Stacks): number {
@@ -1261,7 +1268,7 @@ class MoveSearch {
     const next = new Map<number, number>();
     for (const c of this.zoneCells) {
       const stack = stacks[c];
-      if (stack.length === 0 || this.grid.isBed(c)) continue;
+      if (stack.length === 0 || this.grid.kind[c] === POS_STACK) continue;
       const d = destOf[stack.charCodeAt(0) - 65];
       if (d >= 0 && d !== c) next.set(c, d);
     }
@@ -1445,7 +1452,7 @@ class MoveSearch {
    * the next move ("blocked", e.g. two boxes on each other's zones) — not both, one move may cure both; plus, in
    * classic levels, one per closed swap cycle (closedCycles, which covers «blocked» when there is one); and a loose box
    * whose only fitting slots are in its own stack moves at least twice (Σ slotCosts). Never below misplacedCount.
-   * Levels with racks or trucks: Σ slotCosts plus one per cycle of boxes resting on each other's one-box destinations
+   * Levels with storage: Σ slotCosts plus one per cycle of boxes resting on each other's one-box destinations
    * (destinationCycles: such a box has a destination elsewhere, so it costs 1, and some box of the cycle must move once
    * without being placed; a move places a box, breaks one cycle or sets a box on its own destination, never two of
    * these, so the bound stays consistent).
@@ -1798,7 +1805,7 @@ function applyMove(grid: LevelGrid, stacks: Stacks, forklift: number, move: Move
  * carryBackTo) leads to a state as good as the one it left; any other move gets a full solvability check (greedy,
  * then the exact search within `checkWork`). With the reverse gear every move can be undone, so `found` should
  * always be 0: the check guards that property (and any future rule that breaks it) on real levels. In a level with
- * racks a box placed on its destiny is locked (lockedAt), so every such move gets the full check: a destiny that
+ * storage a box placed on its destiny is locked (lockedAt), so every such move gets the full check: a destiny that
  * walls off what is still to do would be a dead end.
  */
 export function deadEnds(level: LevelData, options: DeadEndOptions = {}): DeadEndResult {
@@ -1910,8 +1917,8 @@ export function misplacedBoxes(level: LevelData): LevelBox[] {
   const seen = new Array<number>(grid.posCount).fill(0);
   return level.boxes.filter((b) => {
     const cell = grid.posOf(b.x, b.z, b.level);
-    // List order is bottom → top, so the count so far is this box's level in its stack (on a truck bed: its level).
-    const index = grid.isBed(cell) ? (b.level ?? 0) : seen[cell]++;
+    // List order is bottom → top, so the count so far is this box's level in its stack (on a stack column: its level).
+    const index = grid.kind[cell] === POS_STACK ? (b.level ?? 0) : seen[cell]++;
     return grid.steps[cell] !== null && index >= correctPrefix(grid, stacks, cell);
   });
 }

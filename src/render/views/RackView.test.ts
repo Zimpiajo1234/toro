@@ -1,8 +1,9 @@
 import { Box3, Color, Matrix4, Mesh, Vector3, type BufferGeometry, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
+import { storageOf } from '../../core/storage';
 import { isDestined } from '../../core/sorting';
-import type { BoxState, GameSnapshot, LevelData, RackHint, SlotState } from '../../core/types';
+import type { BoxState, GameSnapshot, LevelData, StorageHint, StorageSlotState } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { GameState } from '../../logic/GameState';
 import { forkRiseRate } from '../../logic/forkRise';
@@ -122,7 +123,7 @@ const colorDistance = (a: Color, b: Color) => Math.abs(a.r - b.r) + Math.abs(a.g
 const boxGroup = (view: LevelView, id: string) => view.root.children.find((c) => c.userData.boxId === id)!;
 const boxMesh = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Mesh<BufferGeometry, MeshStandardMaterial>;
 const tagged = (view: LevelView, tag: string) => view.root.children.find((c) => c.userData[tag]) as Mesh<BufferGeometry, MeshBasicMaterial>;
-const slotOf = (snap: GameSnapshot, id: string) => snap.slots.find((s) => s.id === id)!;
+const slotOf = (snap: GameSnapshot, id: string) => snap.storageSlots.find((s) => s.id === id)!;
 const boxOf = (snap: GameSnapshot, color: string, symbol: string) => snap.boxes.find((b) => b.color === color && b.symbol === symbol)!;
 
 /** The geometry vertex `i` is painted `hex` (vertex colors are linear, like three's Color). */
@@ -153,13 +154,13 @@ function paintedVertices(mesh: Mesh, hex: string): { p: Vector3; n: Vector3 }[] 
 }
 
 /** Hand-driven snapshot edits (the view only reads it): rest `box` in `slot`, or lift it onto the forks. */
-function rest(box: BoxState, slot: SlotState): void {
+function rest(box: BoxState, slot: StorageSlotState): void {
   const destined = isDestined(slot, box);
   Object.assign(box, { carried: false, cell: { ...slot.cell }, pos: { ...slot.pos }, level: slot.level, slotId: slot.id, zoneId: null, correct: destined, locked: destined });
   Object.assign(slot, { occupiedBy: box.id, satisfied: destined });
 }
 function carry(snap: GameSnapshot, box: BoxState): void {
-  for (const s of snap.slots) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
+  for (const s of snap.storageSlots) if (s.occupiedBy === box.id) Object.assign(s, { occupiedBy: null, satisfied: false });
   Object.assign(box, { carried: true, cell: null, level: 0, slotId: null, zoneId: null, correct: false, locked: false });
   snap.forklift.carrying = box.id;
   snap.forklift.forkLift = 1;
@@ -169,11 +170,11 @@ function floor(snap: GameSnapshot, box: BoxState, cell: { x: number; z: number }
   Object.assign(box, { carried: false, cell, pos: { x: cell.x + 0.5 - width / 2, z: cell.z + 0.5 - depth / 2 }, level: 0, slotId: null, locked: false });
   if (snap.forklift.carrying === box.id) snap.forklift.carrying = null;
 }
-function atRack(snap: GameSnapshot, slotId: string, ready: boolean): RackHint {
+function atRack(snap: GameSnapshot, slotId: string, ready: boolean): StorageHint {
   const slot = slotOf(snap, slotId);
-  const levels = snap.slots.filter((s) => s.rackId === slot.rackId && s.column === slot.column).length;
-  const hint: RackHint = { rackId: slot.rackId, column: slot.column, levels, level: slot.level, slotId, ready };
-  snap.hint.rack = hint;
+  const levels = snap.storageSlots.filter((s) => s.unitId === slot.unitId && s.column === slot.column).length;
+  const hint: StorageHint = { unitId: slot.unitId, skin: 'rack', column: slot.column, levels, level: slot.level, slotId, ready };
+  snap.hint.storage = hint;
   return hint;
 }
 /** Highest panel glow of each slot with a cue over `seconds` (breathing peaks); the cue glows along (never dims). */
@@ -181,7 +182,7 @@ function peakGlow(view: LevelView, snap: GameSnapshot, seconds: number): Map<str
   const peak = new Map<string, number>();
   for (let i = 0; i < Math.round(seconds * 60); i++) {
     view.update(snap, 1 / 60, i / 60, YAW, 0);
-    for (const s of snap.slots) {
+    for (const s of snap.storageSlots) {
       const mesh = panel(view, s.id);
       if (!mesh) continue;
       const glow = mesh.material.emissiveIntensity;
@@ -384,7 +385,7 @@ describe('rack builder + view: a different piece of furniture', () => {
         const depth = -p.z;
         const column = Math.round(p.x);
         const lateral = Math.abs(p.x - column);
-        const levels = SOUTH.racks![0].columns[column]?.length ?? 0;
+        const levels = storageOf(SOUTH)[0].columns[column]?.length ?? 0;
         const e = 1e-6;
         for (let k = 0; k < levels; k++) {
           const floor = rackSlotY(k);
@@ -724,7 +725,7 @@ describe('rack slots: boxes, forks, preview and marker at slot heights', () => {
     expect(top).toBeLessThan(rackSlotY(3) - RACK.beam);
 
     // Leaving the rack: back to automatic heights, smoothly (no jump in one frame).
-    snap.hint.rack = null;
+    snap.hint.storage = null;
     let last = boxGroup(view, box.id).position.y;
     let maxStep = 0;
     for (let i = 0; i < 240; i++) {
@@ -779,7 +780,7 @@ describe('rack slots: boxes, forks, preview and marker at slot heights', () => {
     expect(Math.abs(tone.r - blueBorder.r) + Math.abs(tone.g - blueBorder.g) + Math.abs(tone.b - blueBorder.b)).toBeGreaterThan(1e-2);
 
     // Away from the rack: gone.
-    snap.hint.rack = null;
+    snap.hint.storage = null;
     snap.hint.dropCell = null;
     step(view, snap, 1);
     expect(marker.visible).toBe(false);

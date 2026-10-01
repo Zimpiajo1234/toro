@@ -1,6 +1,6 @@
 /**
- * Time (and move minimum) formatting for the UI. Values are floored (a time is never shown as more than was played).
- * Minutes are not padded and keep growing past 59 ("75:02"): a relaxed session never needs hours.
+ * Time (and move minimum, objectives) formatting for the UI. Values are floored (a time is never shown as more than
+ * was played). Minutes are not padded and keep growing past 59 ("75:02"): a relaxed session never needs hours.
  */
 
 /** Guards against float noise from summed frame deltas (4299.9999… ms must read as 4.3 s). */
@@ -39,6 +39,17 @@ export function formatMinimum(min: { moves: number; exact: boolean }): string {
  */
 export function reachedMinimum(moves: number, min: { moves: number; exact: boolean } | null): boolean {
   return min !== null && moves <= min.moves;
+}
+
+/** The objectives counter once nothing is left to place (the level complete). */
+export const OBJECTIVES_DONE = 'Todo en su sitio';
+
+/**
+ * The objectives counter's verb for `left` boxes still to place: «Quedan 9», «Queda 1» (Spanish agrees it with the
+ * count). Shown only while `left` > 0; at 0 the pill reads OBJECTIVES_DONE.
+ */
+export function objectivesVerb(left: number): string {
+  return left === 1 ? 'Queda' : 'Quedan';
 }
 
 /** Tooltip of the "Modo prueba" switch and HUD tag: what it opens and how to jump levels while playing. */
