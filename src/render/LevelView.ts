@@ -52,7 +52,7 @@ import { ForkliftView } from './views/ForkliftView';
 import type { SlotTone } from './views/RackView';
 import { ShelfView, hidesBehind } from './views/ShelfView';
 import { SlotMarker } from './views/SlotMarker';
-import { RACK_SWAP_INVITE, SuccessBurst } from './views/success';
+import { TARGET_SWAP_INVITE, SuccessBurst } from './views/success';
 import { WallView } from './views/WallView';
 import { ZoneView } from './views/ZoneView';
 
@@ -325,7 +325,7 @@ export class LevelView {
     }
     const swapHint = (this.sorting || this.targetRules) && !anyTakes;
     // With storage the invitation is a strong pulse (views/success); the swap hint keeps its quiet strength.
-    const swapInvite = this.targetRules ? RACK_SWAP_INVITE : SWAP_INVITE;
+    const swapInvite = this.targetRules ? TARGET_SWAP_INVITE : SWAP_INVITE;
     const glowTint = carried ? (this.glows.get(carried.color) ?? null) : null;
     const slotTone = carried ? (this.slotTones.get(carried.color) ?? null) : null;
     for (let i = 0; i < zones.length; i++) {

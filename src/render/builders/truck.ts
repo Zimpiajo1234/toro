@@ -1,7 +1,7 @@
 import { CylinderGeometry, ShapeGeometry, type BufferGeometry, type Vector3 } from 'three';
 import type { DockRail } from '../../core/docks';
 import { clamp } from '../../core/math';
-import type { LevelData, LevelTruck, TruckCue, WallSide } from '../../core/types';
+import type { DoorUnit, LevelData, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { DIORAMA, DOCK } from '../dims';
 import { PartList, type Placement } from '../paint';
@@ -128,13 +128,6 @@ export const SIGN_MARKER = { halfW: 0.5, halfH: DOCK_SIGN.row / 2 + 0.012, width
 export const TRUCK_BURST = { halfW: 0.44 } as const;
 
 /**
- * What the dock builders read of a unit loaded through a dock door (render/storage truck: a LevelStorage of skin
- * `truck`; a LevelTruck reads the same): its wall, its first door cell and, per bed column, its levels' cues bottom
- * → top (null = «libre»: its sign cell stays a plain panel).
- */
-export type DockShape = Pick<LevelTruck, 'wall' | 'x' | 'z'> & { readonly columns: readonly (readonly (TruckCue | null)[])[] };
-
-/**
  * Guard rail of a dock door (buildDockRails), dock-local, inside the footprint the logic gives it (core/docks DockRail:
  * DOCK_RAIL.thickness from the door's jamb line outward, from the wall's inner face to one cell in): two posts `post`
  * deep, one against the door frame (which stands DOOR.proud off the wall) and one at the inner end, up to `top`, each
@@ -157,18 +150,22 @@ export function dockToWorld(wall: WallSide, level: Pick<LevelData, 'size'>, x: n
   return wall === 'north' ? out.set(x - w / 2, y, z - d / 2) : out.set(z - w / 2, y, d / 2 - x);
 }
 
-/** Dock-local x of the centre of bed column `column` (a west dock's columns run toward −x: see dockSpan). */
-export function dockColumnX(truck: Pick<LevelTruck, 'wall' | 'x' | 'z'>, level: Pick<LevelData, 'size'>, column: number): number {
-  return truck.wall === 'north' ? truck.x + column + 0.5 : level.size.depth - truck.z - column - 0.5;
+/**
+ * Dock-local x of the centre of bed column `column` (a west dock's columns run toward −x: see dockSpan). The builders
+ * read the truck's unit as it is (a LevelStorage of the `door` access: its wall, its first door cell and, per bed
+ * column, its levels' cues bottom → top, null = «libre»: its sign cell stays a plain panel).
+ */
+export function dockColumnX(truck: Pick<DoorUnit, 'access' | 'x' | 'z'>, level: Pick<LevelData, 'size'>, column: number): number {
+  return truck.access.wall === 'north' ? truck.x + column + 0.5 : level.size.depth - truck.z - column - 0.5;
 }
 
 /** Place of bed column `column` along the door run, from its start (dockSpan a): a west dock's columns run backward. */
-function runIndex(truck: Pick<DockShape, 'wall' | 'columns'>, column: number): number {
-  return truck.wall === 'north' ? column : truck.columns.length - 1 - column;
+function runIndex(truck: Pick<DoorUnit, 'access' | 'columns'>, column: number): number {
+  return truck.access.wall === 'north' ? column : truck.columns.length - 1 - column;
 }
 
 /** Rows of the truck's sign: the levels of its tallest bed column. */
-export function signRows(truck: Pick<DockShape, 'columns'>): number {
+export function signRows(truck: Pick<DoorUnit, 'columns'>): number {
   let rows = 1;
   for (const column of truck.columns) rows = Math.max(rows, column.length);
   return rows;
@@ -207,7 +204,7 @@ export interface SignCell {
  * door cell along the wall and at signRowY(level); x along the wall like dock-local x): the outer border at the ends
  * of the sign, half a divider toward a neighbouring cell.
  */
-export function signCell(truck: Pick<DockShape, 'wall' | 'columns'>, column: number, level: number): SignCell {
+export function signCell(truck: Pick<DoorUnit, 'access' | 'columns'>, column: number, level: number): SignCell {
   const S = DOCK_SIGN;
   const n = truck.columns.length;
   const rows = signRows(truck);
@@ -248,7 +245,7 @@ function addWheel(parts: PartList, theme: Theme, x: number, y: number, z: number
  * lap onto the truck's bed out past the wall's outer face (between the drop sides), the hinge bar where they meet and
  * three flat treads.
  */
-export function buildDockPlate(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
+export function buildDockPlate(truck: DoorUnit, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
   const c = theme.truck;
   const P = DOCK_PLATE;
   const T = DIORAMA.wallThickness;
@@ -267,7 +264,7 @@ export function buildDockPlate(truck: DockShape, level: Pick<LevelData, 'size'>,
     const z = (-T * k) / 4;
     local.block(c.trim, d0 + 0.05, d1 - 0.05, P.top, P.top + P.tread, z - 0.008, z + 0.008);
   }
-  return new PartList().append(local, dockPlacement(truck.wall, level)).build();
+  return new PartList().append(local, dockPlacement(truck.access.wall, level)).build();
 }
 
 /**
@@ -313,7 +310,7 @@ export function buildDockRails(rails: readonly DockRail[], level: Pick<LevelData
  * pit and two soft guide lines. Nothing of it stands over or between the bed columns. `index` (the truck's place in the
  * level) sets each driveway a hair lower than the one before, so two docks side by side never z-fight.
  */
-export function buildTruckBody(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme, index = 0): BufferGeometry {
+export function buildTruckBody(truck: DoorUnit, level: Pick<LevelData, 'size'>, theme: Theme, index = 0): BufferGeometry {
   const c = theme.truck;
   const T = DIORAMA.wallThickness;
   const { a, b } = dockSpan(truck, level);
@@ -409,7 +406,7 @@ export function buildTruckBody(truck: DockShape, level: Pick<LevelData, 'size'>,
   p.block(c.apron, ax0, ax1, y - A.thickness, y, az0, -T);
   p.block(c.apronEdge, ax0, ax1, y, -DIORAMA.slabThickness, -T - 0.03 - shift, -T);
   for (const x of [a - A.lineGap - A.line, b + A.lineGap]) p.block(c.apronLine, x, x + A.line, y, y + 0.003, az0 + 0.15, -T - 0.08);
-  return new PartList().append(p, dockPlacement(truck.wall, level)).build();
+  return new PartList().append(p, dockPlacement(truck.access.wall, level)).build();
 }
 
 /**
@@ -420,7 +417,7 @@ export function buildTruckBody(truck: DockShape, level: Pick<LevelData, 'size'>,
  * end bars from inside (and beside the stickers, never over them, from outside). A cell with a cue gets its own panel
  * (buildSignPanel).
  */
-export function buildSignFrame(truck: DockShape, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
+export function buildSignFrame(truck: DoorUnit, level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
   const c = theme.truck;
   const S = DOCK_SIGN;
   const { a, b } = dockSpan(truck, level);
@@ -454,7 +451,7 @@ export function buildSignFrame(truck: DockShape, level: Pick<LevelData, 'size'>,
   // The brackets reach from the wall into the end bars, centred behind them (clear of every cell and its sticker).
   const B = S.bracket;
   for (const u of [a + (S.border - B.w) / 2, b - (S.border + B.w) / 2]) local.block(c.doorFrame, u, u + B.w, y0 + B.y0, y0 + B.y1, 0, z0 + B.grip);
-  return new PartList().append(local, dockPlacement(truck.wall, level)).build();
+  return new PartList().append(local, dockPlacement(truck.access.wall, level)).build();
 }
 
 /**

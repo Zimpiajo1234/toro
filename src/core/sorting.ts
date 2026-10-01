@@ -9,7 +9,6 @@ import {
   type LevelBox,
   type LevelData,
   type LevelZone,
-  type RackSlot,
   type StorageSkin,
   type SymbolId,
   type ZoneCriteria,
@@ -133,7 +132,7 @@ export function assignBoxes(boxes: readonly Sortable[], zones: readonly ZoneCrit
 }
 
 /* ------------------------------------------------------------------ */
-/* Storage racks: cues, destined boxes, unique complete assignment      */
+/* Storage (docs/STORAGE.md): cues, destined boxes, the one assignment  */
 /* ------------------------------------------------------------------ */
 
 /** Same colour and symbol (identical boxes are interchangeable). */
@@ -141,28 +140,28 @@ export function sameKind(a: Sortable, b: Sortable): boolean {
   return a.color === b.color && a.symbol === b.symbol;
 }
 
-/** A rack slot's cue as criteria, or null for a «libre» slot (it asks for nothing: plain storage). */
-export function cueOf(slot: RackSlot): ZoneCriteria | null {
-  const cue = criteriaOf(slot);
-  return cue.color === undefined && cue.symbol === undefined ? null : cue;
+/** A storage level's cue as fresh criteria, or null for a «libre» one (it asks for nothing: plain storage). */
+export function cueOf(cue: ZoneCriteria): ZoneCriteria | null {
+  const criteria = criteriaOf(cue);
+  return criteria.color === undefined && criteria.symbol === undefined ? null : criteria;
 }
 
 /**
  * The box fits the target's cue (a zone's criteria, a slot's cue; never a «libre» slot): what breathes while it is
- * carried and what the zone magnet pulls toward. In a level with racks it does not mean the box is the right one.
+ * carried and what the zone magnet pulls toward. In a level with storage it does not mean the box is the right one.
  */
 export function cueFits(target: { readonly accepts: ZoneCriteria | null }, box: Sortable): boolean {
   return target.accepts !== null && meets(target.accepts, box);
 }
 
-/** The box is the target's destined one (levels with racks: the only box that lights a zone or a slot). */
+/** The box is the target's destined one (levels with storage: the only box that lights a zone or a slot). */
 export function isDestined(target: { readonly destined: Sortable | null }, box: Sortable): boolean {
   return target.destined !== null && sameKind(target.destined, box);
 }
 
 /**
- * What satisfies a target as its (bottom) box: its destined kind when it has one (levels with racks), else any box its
- * criteria accept (every level without racks, unchanged).
+ * What satisfies a target as its (bottom) box: its destined kind when it has one (levels with storage), else any box
+ * its criteria accept (every level without storage, unchanged).
  */
 export function satisfiesTarget(
   target: { readonly accepts: ZoneCriteria | null; readonly destined: Sortable | null },
@@ -183,7 +182,7 @@ export interface Assignments {
  * Complete assignments of `boxes` to `targets`: every target gets one box that meets its criteria and every box is
  * used, counted up to identical boxes (two assignments differ when some target gets a box of another colour or
  * symbol). Backtracking over the targets with a matching check at every step, so it only walks branches that end in
- * an assignment; stops at `limit`. validateLevel needs exactly one in a level with racks.
+ * an assignment; stops at `limit`. validateLevel needs exactly one in a level with storage.
  */
 export function assignmentsOf(boxes: readonly Sortable[], targets: readonly ZoneCriteria[], limit = 2): Assignments {
   const found: Sortable[][] = [];

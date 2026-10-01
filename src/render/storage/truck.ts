@@ -1,6 +1,6 @@
 import { Box3, Mesh, Vector3, type BufferGeometry, type Group } from 'three';
 import { dockRailsOf } from '../../core/docks';
-import type { LevelStorage, StorageSlotState, WallSide } from '../../core/types';
+import { isDoorUnit, type DoorUnit, type LevelStorage, type StorageSlotState, type WallSide } from '../../core/types';
 import {
   TRUCK_BURST,
   buildDockPlate,
@@ -17,7 +17,6 @@ import {
   signCell,
   signMidZ,
   signRowY,
-  type DockShape,
 } from '../builders/truck';
 import type { FitBox } from '../CameraRig';
 import { DIORAMA } from '../dims';
@@ -37,10 +36,10 @@ import type { BeyondWall, BurstPlace, MarkerPlace, Occluder, StorageSkinRender, 
  * (core/docks dockRailsOf) stand in its group, low static props like the plants.
  */
 
-/** A truck as its builders read it (builders/truck DockShape): its wall, its first door cell, its bed columns' cues. */
-function dockShapeOf(unit: LevelStorage): DockShape {
-  if (unit.access.kind !== 'door') throw new Error(`storage unit ${unit.id}: a truck is loaded through a dock door`);
-  return { wall: unit.access.wall, x: unit.x, z: unit.z, columns: unit.columns };
+/** The unit as the dock builders read it, as it is: a truck is loaded through a dock door (validateLevel checks it). */
+function truckOf(unit: LevelStorage): DoorUnit {
+  if (!isDoorUnit(unit)) throw new Error(`storage unit ${unit.id}: a truck is loaded through a dock door`);
+  return unit;
 }
 
 /** One dock on screen: its sign lights its levels and ghosts, and the marker frames the cell of the chosen level. */
@@ -131,14 +130,15 @@ export const TRUCK_RENDER: StorageSkinRender = {
     let index = 0;
     return {
       build(unit, slots) {
-        const truck = dockShapeOf(unit);
-        const wall = ctx.wall(truck.wall);
+        const truck = truckOf(unit);
+        const side = truck.access.wall;
+        const wall = ctx.wall(side);
         // The bed columns' volume beyond the wall (dock-local −1 < z < −T over the door run): boxes there never make the
         // sign ghost.
         const holds = new Box3();
         const ends = [dockColumnX(truck, level, 0), dockColumnX(truck, level, truck.columns.length - 1)];
-        holds.expandByPoint(dockToWorld(truck.wall, level, Math.min(...ends) - 0.5, 0, -1, origin));
-        holds.expandByPoint(dockToWorld(truck.wall, level, Math.max(...ends) + 0.5, DIORAMA.wallHeight, -DIORAMA.wallThickness, origin));
+        holds.expandByPoint(dockToWorld(side, level, Math.min(...ends) - 0.5, 0, -1, origin));
+        holds.expandByPoint(dockToWorld(side, level, Math.max(...ends) + 0.5, DIORAMA.wallHeight, -DIORAMA.wallThickness, origin));
         const view = new TruckView(
           unit.id,
           bag.track(buildDockPlate(truck, level, theme)),
@@ -160,10 +160,10 @@ export const TRUCK_RENDER: StorageSkinRender = {
           view.group.add(mesh);
         }
         // Sign cells face the warehouse: their local +z is their wall's inward side (dock-local +z).
-        const yaw = dockPlacement(truck.wall, level).ry ?? 0;
+        const yaw = dockPlacement(side, level).ry ?? 0;
         const signCells = new Map<string, MarkerPlace>();
         for (const slot of slots) {
-          const at = dockToWorld(truck.wall, level, dockColumnX(truck, level, slot.column), signRowY(slot.level), signMidZ(), origin);
+          const at = dockToWorld(side, level, dockColumnX(truck, level, slot.column), signRowY(slot.level), signMidZ(), origin);
           signCells.set(slot.id, { x: at.x, y: at.y, z: at.z, yaw });
           const cue = slot.accepts;
           if (!cue) continue; // «libre»: its cell stays a plain panel of the frame (buildSignFrame)
@@ -186,7 +186,7 @@ export const TRUCK_RENDER: StorageSkinRender = {
           view.addLevel(
             slot.id,
             slot.satisfied,
-            dockToWorld(truck.wall, level, x, signRowY(slot.level), signMidZ(), origin),
+            dockToWorld(side, level, x, signRowY(slot.level), signMidZ(), origin),
             yaw,
             panel,
             light.panel,
@@ -198,7 +198,7 @@ export const TRUCK_RENDER: StorageSkinRender = {
           );
         }
         view.followWall(wall.heightScale);
-        return new TruckUnit(view, truck.wall, ctx.boxHeight, signCells);
+        return new TruckUnit(view, side, ctx.boxHeight, signCells);
       },
     };
   },

@@ -141,9 +141,9 @@ export class ForkliftController {
   }
 
   /**
-   * Storage (docs/STORAGE.md «Rumbo fijo»): while the carried load is inside a storage opening (a rack slot, a dock door)
-   * the heading holds, so the rig goes in and out straight; steering does nothing and a move vector drives along the
-   * heading (pulling away from the unit backs out, like S). GameState sets it every frame.
+   * Storage (docs/STORAGE.md «Acceso», rumbo fijo): while the carried load is inside a storage opening (a rack slot, a
+   * dock door) the heading holds, so the rig goes in and out straight; steering does nothing and a move vector drives
+   * along the heading (pulling away from the unit backs out, like S). GameState sets it every frame.
    */
   setHeadingLock(locked: boolean): void {
     if (locked && !this.headingLocked) {

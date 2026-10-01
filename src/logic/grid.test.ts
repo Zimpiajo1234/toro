@@ -5,7 +5,7 @@ import { LevelGrid } from './grid';
 import text from '../data/levels/pruebas/tres-camiones.level?raw';
 
 /*
- * The storage of a level in LevelGrid (docs/STORAGE.md «Contratos», logic): one list of storage columns for every unit,
+ * The storage of a level in LevelGrid (docs/STORAGE.md «Contratos por capa», logic): one list of storage columns for every unit,
  * inside the map (a rack) or beyond a wall (a truck), in storage order; the boxes of each by its support. The
  * three-truck fixture has both: R and S (racks of 2 and 3 levels), T (two columns), C and U (one each); every truck
  * column holds 2 levels (`limit: 2`, docs/STORAGE.md rule 7: T's second and C's written with one, a «libre» one on top).

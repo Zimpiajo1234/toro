@@ -2,7 +2,7 @@
  * Characterization of the storage units (docs/STORAGE.md, «Red de seguridad»): what the storage racks and the dock
  * trucks of a level are and do today, frozen in ./storageCharacterization.json so that the phases of the shared storage
  * model that must not change the game (1–5, and 7) can prove it; phase 6, which changed the rules (keyed forks at the
- * truck, «libre» truck levels), regenerated it on purpose (docs/STORAGE.md «Fase 6: lo entregado»).
+ * truck, «libre» truck levels), regenerated it on purpose (docs/STORAGE.md «Historia de la migración»).
  *
  * Everything is written in terms that survive the refactor: unit ids, slot ids (`unit:column:level`), map cells
  * (`x,z`, floor stacks `x,z@height`, a zone's id in brackets) and box kinds (`colour/symbol`; a cue that asks nothing of

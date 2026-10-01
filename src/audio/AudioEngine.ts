@@ -33,7 +33,7 @@ export const DROP_LAND_SEC = GAME_CONFIG.box.dropLandSec;
  */
 export const COMPLETE_AFTER_LAND_SEC = 0.2;
 /**
- * Levels with racks: a box set down on a target that is not its destiny buzzes softly this long after it lands (its
+ * Levels with storage: a box set down on a target that is not its destiny buzzes softly this long after it lands (its
  * thump / toc first, where a destined box's chime would ring).
  */
 export const WRONG_AFTER_LAND_SEC = 0.05;
@@ -135,7 +135,7 @@ export class AudioEngine {
                 : null;
             rt.sfx.drop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, stack, match);
           }
-          // Levels with racks or trucks: on a floor zone, a cued slot or a truck slot it does not satisfy (trap boxes
+          // Levels with storage: on a floor zone, a cued slot or a truck slot it does not satisfy (trap boxes
           // included), the soft "no" follows the landing. A «libre» slot, plain floor and every other level never set it.
           if (isWrongTarget(event)) rt.sfx.wrongBuzz(now + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC);
           break;
@@ -477,7 +477,7 @@ export class AudioEngine {
 const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'] as const;
 
 /**
- * Whether a drop earns the soft wrong-target buzz: only a `boxDropped` flagged `wrongTarget` (levels with racks), and
+ * Whether a drop earns the soft wrong-target buzz: only a `boxDropped` flagged `wrongTarget` (levels with storage), and
  * never one that is also `correct` (the destined box keeps its chime alone, whatever the flag says).
  */
 export function isWrongTarget(event: GameEvent): boolean {
@@ -485,7 +485,7 @@ export function isWrongTarget(event: GameEvent): boolean {
 }
 
 /**
- * How a pick or a drop in storage sounds (docs/STORAGE.md «Contratos», audio): the event's slot names its unit's skin,
+ * How a pick or a drop in storage sounds (docs/STORAGE.md «Contratos por capa», audio): the event's slot names its unit's skin,
  * whose row says the sound (core/storage STORAGE_SKINS: `metal` = a rack's slotLift / slotDrop, `wood` = pickup /
  * truckDrop); null off storage (the floor's own sounds).
  */

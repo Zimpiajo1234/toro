@@ -272,7 +272,7 @@ export class Interaction {
     return true;
   }
 
-  /** Levels with racks: the cell holds a locked box (nothing can be dropped or stacked on it). */
+  /** Levels with storage: the cell holds a locked box (nothing can be dropped or stacked on it). */
   private lockedAt(x: number, z: number): boolean {
     const top = this.grid.boxAt(x, z);
     return top >= 0 && this.boxes[top].locked;

@@ -59,7 +59,7 @@ export const BEAM_MODES: readonly (readonly [number, number, number])[] = [
 /** Low-pass over the beam modes: warm, never a clang. */
 export const BEAM_LOWPASS_HZ = 2400;
 /**
- * The wrong-target buzz (levels with racks): its hum starts here and sags to WRONG_BUZZ_SAG of it. Low, yet still in
+ * The wrong-target buzz (levels with storage): its hum starts here and sags to WRONG_BUZZ_SAG of it. Low, yet still in
  * the range laptop speakers reproduce (a sub-only "no" would vanish on them).
  */
 export const WRONG_BUZZ_HZ = 185;
@@ -89,7 +89,7 @@ export const TRUCK_LEVEL_DAMP = 0.55;
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
  * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh; the only "no" is
- * the soft, muffled wrong-target buzz of the levels with racks (wrongBuzz).
+ * the soft, muffled wrong-target buzz of the levels with storage (wrongBuzz).
  */
 export class SfxPlayer {
   private readonly pool: VoicePool;
@@ -223,7 +223,7 @@ export class SfxPlayer {
   }
 
   /**
-   * Levels with racks: a box set down on a target that is not its destiny (a floor zone, or a slot with a cue, even
+   * Levels with storage: a box set down on a target that is not its destiny (a floor zone, or a slot with a cue, even
    * one it fits), at `t` (just after its landing thump / toc). A soft, low, muffled "nuh": a warm triangle hum and a
    * quieter sawtooth a few hertz above it beating against it (the gentle buzz), both sagging a little in pitch under
    * a warm low-pass, ≈ 0.2 s. Says "not here" without alarm: no bright partials, no second hit, far softer than the

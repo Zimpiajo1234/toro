@@ -8,9 +8,8 @@
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
  */
 import { describe, expect, it } from 'vitest';
-import { racksOf, slotsOf } from '../core/racks';
 import { cueFits, isDestined } from '../core/sorting';
-import { storageSlotsOf } from '../core/storage';
+import { storageOf, storageSlotsOf } from '../core/storage';
 import type { GameEvent, GameSnapshot } from '../core/types';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
 import { LevelGrid, misplacedCount } from '../data/levels/solver';
@@ -19,7 +18,6 @@ import { autopilot, liveStacks } from './autopilot';
 
 const level = getSpecialLevel(BENCHMARK_ID)!;
 const grid = new LevelGrid(level);
-const slotIndex = (id: string) => slotsOf(level).findIndex((s) => s.id === id);
 /** Every target: 3 zones, 6 slots with a cue, 3 truck levels. */
 const TARGETS = 12;
 
@@ -47,7 +45,9 @@ describe('the Benchmark is playable with the real controls', () => {
     expect(out.controls.reverseFrames).toBeGreaterThan(0);
     // Both racks loaded, the top slots too; boxes taken out of slots, the one parked high in the back rack included.
     const inSlots = drops(out.events).filter((d) => d.skin === 'rack');
-    for (const rack of racksOf(level)) expect(inSlots.some((d) => d.slotId!.startsWith(`${rack.id}:`)), rack.id).toBe(true);
+    const racks = storageOf(level).filter((unit) => unit.skin === 'rack');
+    expect(racks).toHaveLength(2);
+    for (const rack of racks) expect(inSlots.some((d) => d.slotId!.startsWith(`${rack.id}:`)), rack.id).toBe(true);
     expect(inSlots.some((d) => d.level === 2)).toBe(true);
     expect(inSlots.every((d) => d.zoneId === null)).toBe(true);
     const fromSlots = picks(out.events).filter((p) => p.skin === 'rack');
@@ -113,7 +113,7 @@ describe('the Benchmark in the live game state', () => {
     const snap = new GameState(level).getSnapshot();
     const [mintSlot, diamondSlot, top] = rackSlots(snap).filter((s) => s.unitId === 'r1' && s.column === 0);
     expect([mintSlot.accepts, diamondSlot.accepts, top.accepts]).toEqual([{ color: 'mint' }, { symbol: 'diamond' }, null]);
-    const at = (id: string) => grid.cellCount + slotIndex(id);
+    const at = (id: string) => grid.positionOfSlot(id);
     const swap = [
       { from: at(diamondSlot.id), drop: at(top.id) },
       { from: at(mintSlot.id), drop: at(diamondSlot.id) },
@@ -159,7 +159,7 @@ describe('the Benchmark in the live game state', () => {
     const circle = rackSlots(snap).find((s) => s.accepts?.symbol === 'circle' && s.accepts.color === undefined)!;
     expect(cueFits(circle, yellow)).toBe(true);
     expect(isDestined(circle, yellow)).toBe(false);
-    const out = autopilot(level, 1 / 60, [{ from: grid.index(yellow.cell!.x, yellow.cell!.z), drop: grid.cellCount + slotIndex(circle.id) }]);
+    const out = autopilot(level, 1 / 60, [{ from: grid.index(yellow.cell!.x, yellow.cell!.z), drop: grid.positionOfSlot(circle.id) }]);
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     const all = drops(out.events);

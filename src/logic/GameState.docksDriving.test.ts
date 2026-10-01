@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { trucksOf } from '../core/docks';
 import { angleDelta, degToRad } from '../core/math';
+import { storageColumnsOf } from '../core/storage';
 import type { GameEvent, InputFrame } from '../core/types';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
@@ -36,7 +36,9 @@ const wallZ = -depth / 2;
 const NORTH = Math.PI;
 
 /** The door cell of each bed column: (1,0) and (2,0). */
-const DOORS = trucksOf(level)[0].columns.map((_, column) => trucksOf(level)[0].x + column);
+const DOORS = storageColumnsOf(level)
+  .filter((c) => c.unit.skin === 'truck')
+  .map((c) => c.front.x);
 /** Lateral offsets (u, + = east) and heading errors (degrees, + = turned east) of the approach. */
 const OFFSETS = [0, 0.05, -0.05, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
 const ERRORS = [0, 5, -5, 10, -10, 15, -15, 25, -25];

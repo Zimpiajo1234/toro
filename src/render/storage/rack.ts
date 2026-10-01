@@ -1,5 +1,5 @@
 import type { Box3, BufferGeometry, Group } from 'three';
-import type { LevelStorage, StorageSlotState } from '../../core/types';
+import { isFrontUnit, type FrontUnit, type LevelStorage, type StorageSlotState } from '../../core/types';
 import {
   PANEL_HEIGHT,
   SLOT_GLOW,
@@ -11,7 +11,6 @@ import {
   buildSlotPanel,
   cueEndSides,
   outwardYaw,
-  type RackShape,
 } from '../builders/rack';
 import type { FitBox } from '../CameraRig';
 import { rackSlotY } from '../dims';
@@ -27,10 +26,10 @@ import type { BurstPlace, MarkerPlace, Occluder, StorageSkinRender, StorageUnitV
  * the shelf the forks are set to.
  */
 
-/** A rack as its builders read it (builders/rack RackShape): its first cell, its front's facing, its columns of cues. */
-function rackShapeOf(unit: LevelStorage): RackShape {
-  if (unit.access.kind !== 'front') throw new Error(`storage unit ${unit.id}: a rack is loaded from its front`);
-  return { x: unit.x, z: unit.z, facing: unit.access.facing, columns: unit.columns };
+/** The unit as the rack builders read it, as it is: a rack is loaded from its front (validateLevel checks it). */
+function rackOf(unit: LevelStorage): FrontUnit {
+  if (!isFrontUnit(unit)) throw new Error(`storage unit ${unit.id}: a rack is loaded from its front`);
+  return unit;
 }
 
 /** One rack on screen: its bays ghost (a box on one of its shelves with its bay), its slots light, the marker frames. */
@@ -96,7 +95,7 @@ class RackUnit implements StorageUnitView {
 export const RACK_RENDER: StorageSkinRender = {
   /** The loading line in front of every column is paint on the floor. */
   paintFloor(floor, unit, level, theme) {
-    addRackLines(floor, rackShapeOf(unit), level, theme);
+    addRackLines(floor, rackOf(unit), level, theme);
   },
   markerGeometry: buildSlotMarkerGeometry,
   builder(ctx) {
@@ -108,7 +107,7 @@ export const RACK_RENDER: StorageSkinRender = {
     const frameMaterial = () => metalMaterial(ctx);
     return {
       build(unit, slots) {
-        const rack = rackShapeOf(unit);
+        const rack = rackOf(unit);
         const bays = buildRackBays(rack, ctx.level, ctx.theme).map((g) => ctx.bag.track(g));
         const view = new RackView(unit.id, bays, frameMaterial, ctx.depthOnly, ctx.landDelay);
         for (const slot of slots) {

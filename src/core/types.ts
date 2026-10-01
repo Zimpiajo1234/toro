@@ -85,45 +85,11 @@ export interface LevelBox {
 }
 
 /**
- * Which way a storage rack's open front looks: its slots are loaded and unloaded only from that side (its cues are
- * visible from both faces).
+ * A side of a cell, and so which way a storage unit is loaded from (docs/STORAGE.md «Acceso»): a rack's open front
+ * looks that way, a truck is loaded from the room side of its wall (TRUCK_FACING).
  */
 export const FACINGS = ['north', 'east', 'south', 'west'] as const;
 export type Facing = (typeof FACINGS)[number];
-
-/** Most slots a storage rack column holds (floor slot + 2): core/storage `STORAGE_SKINS.rack.maxLevels`. */
-export const MAX_RACK_SLOTS = 3;
-
-/**
- * One slot of a storage rack column: its cue (docs/RACKS.md), shown on the slot's back panel and visible from both
- * faces of the rack. A colour, a symbol or both (like a zone); neither = «libre», plain storage with no destination.
- * A box starting in it is a LevelBox with `level`.
- */
-export interface RackSlot {
-  color?: ColorId;
-  symbol?: SymbolId;
-}
-
-/**
- * A storage rack (docs/RACKS.md): 1 cell deep, `w` cells wide, 1–3 slots high per column. Access from `facing` only:
- * it is loaded and unloaded from its front (the floor cell next to each column on the `facing` side); its cues are
- * visible from both faces. Its cells are solid for the forklift body and for floor boxes; the carried load enters a
- * column's cell only from the front, at the selected slot level, into an empty slot. A rack facing north / south runs
- * along x from (x, z); one facing east / west runs along z.
- * The view of a LevelStorage of skin `rack` that core/racks `racksOf` derives (docs/STORAGE.md: until phase 7); a JSON
- * level may still list its racks this way (`racks`, turned into `storage` by validateLevel).
- */
-export interface LevelRack {
-  id: string;
-  /** First cell: the west-most of a rack facing north / south, the north-most of one facing east / west. */
-  x: number;
-  z: number;
-  /** Cells along the rack (= columns.length). */
-  w: number;
-  facing: Facing;
-  /** Per column (first cell first), its slots bottom → top. */
-  columns: RackSlot[][];
-}
 
 /**
  * A delivery zone. It declares what it accepts, at least one criterion: `color` only = any box of that colour (the
@@ -178,59 +144,13 @@ export interface LevelPlant {
 }
 
 /**
- * Most levels a truck bed column holds (docs/DOCKS.md): the bed + 1 («solo hasta 2 alturas»). Nothing stands over or
- * between the bed columns: the cues are on the framed sign above the dock door. core/storage
- * `STORAGE_SKINS.truck.maxLevels`.
- */
-export const MAX_TRUCK_LEVELS = 2;
-
-/**
- * Most bed columns a truck has (docs/DOCKS.md): its door is 1 to 3 cells wide; the sign above it grows with it.
- * core/storage `STORAGE_SKINS.truck.maxColumns`.
- */
-export const MAX_TRUCK_COLUMNS = 3;
-
-/**
- * The side a truck is loaded from, by the wall its dock is in (docs/DOCKS.md): a truck in the north wall is loaded
- * from the south (its door cells, row 0, facing north through the door), one in the west wall from the east (column
- * 0, facing west). With it the core/racks geometry reads a truck like a rack whose cells lie one step beyond the wall:
- * core/docks `truckCellOf` (the bed cell, outside the map), `truckFrontOf` (the door cell), `inwardHeading`,
- * `columnFrame` (depth 0 = the wall line).
+ * The side a unit of the `door` access is loaded from, by the wall its door is in (docs/STORAGE.md «Acceso»; the
+ * truck, docs/DOCKS.md): a door in the north wall is worked from the south (its door cells, row 0, facing north through
+ * it), one in the west wall from the east (column 0, facing west). With it a door column reads like a front column
+ * whose cell lies one step beyond the wall (core/docks `truckCellOf`, outside the map; `truckFrontOf`, the door cell;
+ * core/racks `inwardHeading` and `columnFrame`, depth 0 = the wall line): core/storage `facingOf`.
  */
 export const TRUCK_FACING: Readonly<Record<WallSide, Facing>> = { north: 'south', west: 'east' };
-
-/**
- * What one level of a truck bed column asks for (docs/DOCKS.md), shown as a cell of the framed sign above the dock
- * door (one cell per bed column and level): a colour, a symbol or both, like a zone; neither = «libre» (any box, never
- * a target: docs/STORAGE.md rule 7), which only sits above the levels with a cue.
- */
-export type TruckCue = ZoneCriteria;
-
-/**
- * A loading dock (docs/DOCKS.md): a door in the north or west wall with a truck parked OUTSIDE the building, its rear
- * right against the outer face of the wall at the door. The door is a straight run of `w` map cells along that wall
- * (row z = 0 for a north dock, column x = 0 for a west one): the **door cells**, ordinary floor in front of the door.
- * Each door cell has one **bed column** of the truck just beyond the wall (core/docks `truckCellOf`: z = -1 / x = -1,
- * outside the map). The forklift stands on a door cell facing the wall and loads its bed column through the door as a
- * stack, bottom → top, up to its number of levels, with the forks set by the keys (F / V: docs/STORAGE.md rule 9); its
- * body never passes the wall line. 1‥MAX_TRUCK_COLUMNS columns of min(MAX_TRUCK_LEVELS, stackLimit) levels each (the
- * written cues bottom → top, the rest «libre»: docs/STORAGE.md rule 7). A box that starts loaded is a LevelBox with
- * (x, z) = its bed cell (outside) and `level` = its truck level.
- * The view of a LevelStorage of skin `truck` that core/docks `trucksOf` derives (docs/STORAGE.md: until phase 7); a
- * JSON level may still list its trucks this way (`trucks`, turned into `storage` by validateLevel).
- */
-export interface LevelTruck {
-  id: string;
-  /** Wall the dock door is in. */
-  wall: WallSide;
-  /** First door cell (a map cell): the west-most of a north dock (z = 0), the north-most of a west dock (x = 0). */
-  x: number;
-  z: number;
-  /** Door cells along the wall = bed columns (= columns.length, 1‥MAX_TRUCK_COLUMNS). */
-  w: number;
-  /** Per bed column (first cell first), the cue of each level bottom → top (min(MAX_TRUCK_LEVELS, stackLimit); `{}` = «libre»). */
-  columns: TruckCue[][];
-}
 
 /* ------------------------------------------------------------------ */
 /* Storage units (docs/STORAGE.md): one model, a skin per look          */
@@ -261,8 +181,8 @@ export type StorageAccess = { kind: 'front'; facing: Facing } | { kind: 'door'; 
  * cell, each of 1‥maxLevels levels (its skin's row in core/storage `STORAGE_SKINS`; a stack never taller than
  * `stackLimit`; a skin with `fillToMax` gets min(maxLevels, stackLimit) levels in every column, the ones past its
  * written cues «libre», and in a stack the «libre» levels only sit above the ones with a cue: validateLevel). Level
- * data's one source of truth for storage: core/racks `racksOf` and core/docks `trucksOf` derive the old per-skin views
- * from it until phase 7. The geometry of every unit: core/storage (`cellOf`, `frontOf`, `facingOf`, `storageSlotsOf`).
+ * data's one source of truth for storage, read as it is by every layer. The geometry of every unit: core/storage
+ * (`cellOf`, `frontOf`, `facingOf`, `storageColumnsOf`, `storageSlotsOf`).
  */
 export interface LevelStorage {
   /** Unique among all the level's units; generated: `idPrefix` + its number within its skin (r1, r2… / t1, t2…). */
@@ -283,6 +203,14 @@ export interface LevelStorage {
    */
   columns: (ZoneCriteria | null)[][];
 }
+
+/**
+ * A storage unit of the `front` access (a rack: its own map cells, loaded from the floor cell in front of each column)
+ * or of the `door` access (a truck: its door cells, each column's cell beyond the wall), as the geometry and the
+ * builders of that access read it (isFrontUnit / isDoorUnit).
+ */
+export type FrontUnit = LevelStorage & { readonly access: Extract<StorageAccess, { kind: 'front' }> };
+export type DoorUnit = LevelStorage & { readonly access: Extract<StorageAccess, { kind: 'door' }> };
 
 export interface LevelData {
   id: string;
@@ -415,7 +343,7 @@ export interface ZoneState {
   occupiedBy: string | null;
   /**
    * True when the zone holds exactly what it asks for: an accepted bottom box and, above it, the recipe's colours.
-   * Levels with racks: exactly one box, of the `destined` kind (a box that merely fits `accepts` leaves it neutral).
+   * Levels with storage: exactly one box, of the `destined` kind (a box that merely fits `accepts` leaves it neutral).
    */
   satisfied: boolean;
   /**
@@ -424,8 +352,8 @@ export interface ZoneState {
    */
   next: ColorId | null;
   /**
-   * Levels with racks or trucks: the kind of box the level's unique solution puts here (docs/RACKS.md); only that one
-   * satisfies it. null in levels without racks or trucks (satisfied by `accepts`, as always).
+   * Levels with storage: the kind of box the level's unique solution puts here (docs/STORAGE.md rule 4); only that one
+   * satisfies it. null in levels without storage (satisfied by `accepts`, as always).
    */
   destined: ColorSymbol | null;
 }
@@ -666,4 +594,13 @@ export function cellKey(c: CellPos): string {
 
 export function forwardOf(heading: number): Vec2 {
   return { x: Math.sin(heading), z: Math.cos(heading) };
+}
+
+/** A storage unit of the `front` access (a rack) / of the `door` access (a truck): see FrontUnit, DoorUnit. */
+export function isFrontUnit(unit: LevelStorage): unit is FrontUnit {
+  return unit.access.kind === 'front';
+}
+
+export function isDoorUnit(unit: LevelStorage): unit is DoorUnit {
+  return unit.access.kind === 'door';
 }

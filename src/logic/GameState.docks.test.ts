@@ -24,8 +24,8 @@ import { DT, IDLE, forkPoint, press, run, runUntil } from './testUtils';
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
 const input = (throttle = 0, steer = 0, forkStep: -1 | 0 | 1 = 0): InputFrame => ({ move: { x: 0, z: 0 }, drive: { throttle, steer }, actionPressed: false, forkStep });
 const { bodyRadius, carriedBoxRadius } = GAME_CONFIG.forklift;
-/** Facing a truck column (heading) and the forks through its door (the fork point past the wall line): its access. */
-const { faceAngle: TRUCK_FACE_ANGLE, pickReach: TRUCK_REACH } = STORAGE_ACCESS.door;
+/** The truck's access: facing a column (`faceAngle`), the forks through its door (`pickReach` past the wall line). */
+const DOOR = STORAGE_ACCESS.door;
 /** The truck levels of a snapshot (snapshot.storageSlots of skin truck). */
 const truckSlots = (snap: GameSnapshot) => snap.storageSlots.filter((s) => s.skin === 'truck');
 
@@ -345,7 +345,7 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     expect(f.pos.z).toBeLessThan(wall + bodyRadius + 0.02);
     expect(f.pos.x).toBeCloseTo(1.5 - DOCK.size.width / 2, 2);
     // The fork point, and the load on it, stand on the bed beyond the door.
-    expect(wall - forkPoint(state).z).toBeGreaterThan(TRUCK_REACH);
+    expect(wall - forkPoint(state).z).toBeGreaterThan(DOOR.pickReach);
     expect(snap.boxes[0].pos.z + carriedBoxRadius).toBeLessThan(wall + 0.05);
     expect(snap.hint).toMatchObject({ dropCell: { x: 1, z: -1 }, dropLevel: 0, dropZoneId: null, storage: { skin: 'truck', slotId: 't1:0:0' } });
     const drop = dropped(press(state))!;
@@ -379,10 +379,10 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     press(state);
     run(state, 0.3);
     const wall = wallZ(DOCK.size.depth);
-    // Creep until the load is well into the door, the fork point still short of TRUCK_REACH past the wall line.
+    // Creep until the load is well into the door, the fork point still short of the pick reach past the wall line.
     runUntil(state, () => snap.boxes[0].pos.z - carriedBoxRadius < wall - 0.15, input(0.25), 6);
     run(state, 0.6, IDLE);
-    expect(wall - forkPoint(state).z).toBeLessThan(TRUCK_REACH);
+    expect(wall - forkPoint(state).z).toBeLessThan(DOOR.pickReach);
     expect(snap.hint.dropCell).toBeNull();
     // At the column (the level chosen there, as at a rack), but the drop does not work yet.
     expect(snap.hint.storage).toMatchObject({ skin: 'truck', slotId: 't1:0:0', level: 0, ready: false });
@@ -497,12 +497,12 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     for (let i = 0; i < Math.round(2.5 / DT); i++) {
       const [heading, was] = [snap.forklift.heading, past()];
       state.update(DT, { move: { x: 0, z: -0.3 }, actionPressed: false });
-      if (past() > SQUEEZE) expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(TRUCK_FACE_ANGLE);
+      if (past() > SQUEEZE) expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(DOOR.faceAngle);
       if (was > 0.05) expect(snap.forklift.heading).toBe(heading);
     }
     run(state, 0.5, IDLE);
     expect(Math.abs(angleDelta(west, snap.forklift.heading))).toBeGreaterThan(Math.PI / 3);
-    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(TRUCK_FACE_ANGLE);
+    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(DOOR.faceAngle);
     // It went in facing the truck, through the door of (2,0) only: never into the shut span of (1,0) beside it.
     expect(past()).toBeGreaterThan(0.05);
     const shut = { x0: 1 - SIDE.size.width / 2, z0: wallZ(SIDE.size.depth) - 1 };
@@ -540,7 +540,7 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
         const [heading, was] = [snap.forklift.heading, past()];
         events.push(...state.update(dt, frame));
         if (past() > SQUEEZE) {
-          expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(TRUCK_FACE_ANGLE);
+          expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(DOOR.faceAngle);
           expect(cellX(load.x)).toBe(cellX(snap.forklift.pos.x));
         }
         if (was > 0.05) expect(snap.forklift.heading).toBe(heading);
@@ -564,7 +564,7 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     // plant behind (2,1) stops it: the turn is refused, column 0 never opens (no straight way in, as the solver says).
     hold(input(0, 1), 2.5);
     expect(past()).toBeLessThanOrEqual(SQUEEZE);
-    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeGreaterThan(TRUCK_FACE_ANGLE);
+    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeGreaterThan(DOOR.faceAngle);
     // Back east and on to the middle door cell (3,0), the load over the last one; turning toward the truck there, the
     // rig eases back into (3,1) and faces the middle column: only it opens, whatever the load swung over.
     turnTo(1, 0);
@@ -572,7 +572,7 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     hold(IDLE, 0.8);
     expect(cellX(snap.forklift.pos.x)).toBe(3);
     hold(stick(0, -0.3), 2.5);
-    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(TRUCK_FACE_ANGLE);
+    expect(Math.abs(angleDelta(snap.forklift.heading, north))).toBeLessThanOrEqual(DOOR.faceAngle);
     const events = hold(input(1), 3);
     expect(events.some((e) => e.type === 'boxDropped')).toBe(false);
     expect(cellX(snap.forklift.pos.x)).toBe(3);
@@ -669,7 +669,7 @@ describe('loading docks: the door, the wall and the forks by the keys', () => {
     forward(state);
     expect(snap.forklift.pos.x).toBeGreaterThanOrEqual(-WEST.size.width / 2 + bodyRadius - 1e-3);
     expect(snap.forklift.pos.x).toBeLessThan(-WEST.size.width / 2 + bodyRadius + 0.02);
-    expect(-WEST.size.width / 2 - forkPoint(state).x).toBeGreaterThan(TRUCK_REACH);
+    expect(-WEST.size.width / 2 - forkPoint(state).x).toBeGreaterThan(DOOR.pickReach);
     expect(snap.hint).toMatchObject({ dropCell: { x: -1, z: 1 }, storage: { skin: 'truck', slotId: 't1:0:0' } });
     expect(dropped(press(state))).toMatchObject({ boxId: 'b1', cell: { x: -1, z: 1 }, level: 0, correct: true, slotId: 't1:0:0', skin: 'truck' });
     expect(snap.boxes[0].pos).toEqual({ x: -0.5 - WEST.size.width / 2, z: 1.5 - WEST.size.depth / 2 });
@@ -773,7 +773,7 @@ describe('loading docks: the forks by the keys (docs/STORAGE.md rule 9) and «li
     ]);
     // Up to the door with empty forks at the bottom level: the coral ◆ there is under the azul ●, nothing to lift.
     forward(state, 3);
-    expect(wallZ(PILED.size.depth) - forkPoint(state).z).toBeGreaterThan(TRUCK_REACH);
+    expect(wallZ(PILED.size.depth) - forkPoint(state).z).toBeGreaterThan(DOOR.pickReach);
     expect(snap.hint).toMatchObject({ targetBoxId: null, storage: { skin: 'truck', slotId: 't1:0:0', level: 0, ready: false } });
     expect(press(state)).toEqual([{ type: 'actionIdle', carrying: false }]);
     // F: the forks at level 1, under the top box: it is the target.

@@ -674,11 +674,11 @@ export class GameState {
   }
 
   /**
-   * The carried load is inside the opening of the storage column the rig works at (docs/STORAGE.md «Rumbo fijo»): that
-   * opening is open for it and the load's leading edge is INSIDE_MARGIN past its face (depth 0 of the column's frame: a
-   * rack slot's front face, a dock's wall line). One measure for every access, read live: the heading holds, so the rig
-   * goes in and out straight; a load in a rack slot keeps its level (it cannot pass a board); a load in a dock door short
-   * of the reach drops nothing (the doorway). Empty tines never count (they meet nothing).
+   * The carried load is inside the opening of the storage column the rig works at (docs/STORAGE.md «Acceso», rumbo
+   * fijo): that opening is open for it and the load's leading edge is INSIDE_MARGIN past its face (depth 0 of the
+   * column's frame: a rack slot's front face, a dock's wall line). One measure for every access, read live: the heading
+   * holds, so the rig goes in and out straight; a load in a rack slot keeps its level (it cannot pass a board); a load in
+   * a dock door short of the reach drops nothing (the doorway). Empty tines never count (they meet nothing).
    */
   private loadInOpening(): boolean {
     const c = this.engaged;

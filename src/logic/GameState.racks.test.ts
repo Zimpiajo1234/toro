@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { angleDelta } from '../core/math';
 import type { GameEvent, InputFrame } from '../core/types';
-import { hasRacks } from '../core/racks';
 import { cueFits, isDestined } from '../core/sorting';
+import { storageOf } from '../core/storage';
 import { GAME_CONFIG } from '../config';
 import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
@@ -1053,7 +1053,7 @@ describe('levels without racks: no lock, no wrong target (as before)', () => {
       ],
     });
     let drops = 0;
-    for (const lvl of [CLASSIC(), stacking, sorting, ...LEVELS.filter((l) => !hasRacks(l))]) {
+    for (const lvl of [CLASSIC(), stacking, sorting, ...LEVELS.filter((l) => !storageOf(l).some((unit) => unit.skin === 'rack'))]) {
       const r = rng(lvl.boxes.length * 31 + lvl.zones.length);
       const state = new GameState(lvl);
       for (let i = 0; i < 1500; i++) {

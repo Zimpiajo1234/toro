@@ -10,7 +10,6 @@ import type { GameEvent, InputFrame } from '../core/types';
 import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
 import { LevelGrid } from '../data/levels/solver';
-import { slotsOf } from '../core/racks';
 import { GameState } from '../logic/GameState';
 import { autopilot } from './autopilot';
 
@@ -36,8 +35,7 @@ describe('the move counter with the real controls', () => {
 
   it('the Benchmark: moves between the slots of one column count one each; a detour counts above the minimum', () => {
     const grid = new LevelGrid(benchmark);
-    const slots = slotsOf(benchmark);
-    const at = (id: string) => grid.cellCount + slots.findIndex((s) => s.id === id);
+    const at = (id: string) => grid.positionOfSlot(id);
     // The mint swap inside column r1:0 through its «libre» top slot (docs/RACKS.md): three moves, levels 1 → 2 → …
     const swap = [
       { from: at('r1:0:1'), drop: at('r1:0:2') },

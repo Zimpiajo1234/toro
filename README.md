@@ -124,7 +124,7 @@ src/
   game/        bucle, input, orquestación
 ```
 
-Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías y camiones (en curso): [docs/STORAGE.md](docs/STORAGE.md).
+Detalle de contratos y dirección creativa: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Brief: [docs/BRIEF.md](docs/BRIEF.md). Almacenaje común de estanterías y camiones (las reglas que comparten): [docs/STORAGE.md](docs/STORAGE.md).
 
 ## Apilar
 
@@ -159,14 +159,15 @@ el brillo destella, se asienta suave y la caja toma un tono más hondo de su col
 admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido suave y se puede volver a coger; nunca
 hay rojo (los huecos «libres» y el suelo no dicen nada). Con las **pistas** encendidas (P; apagadas por defecto),
 mientras llevas una caja brillan con claridad los huecos y zonas cuya pista encaja; apagadas, solo te guían las pistas
-de los huecos. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
+de los huecos. Todo esto, solo en los niveles con almacenaje (estanterías o camiones); los demás funcionan como siempre.
 
 Delante de una columna, **F / V** (o la rueda) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
 horquilla a su altura, Espacio mete la caja (entra recta; se sale marcha atrás) o saca la del hueco. Los huecos se
 llenan en cualquier orden. Si una estantería te da la espalda, rodéala para cargarla (Q / E ayudan a leerla). La pista
 de controles de abajo está siempre a la vista mientras juegas, en todos los niveles; en los niveles con estanterías o
-camiones añade la fila "F V subir / bajar horquilla · rueda". Reglas y contratos: [docs/RACKS.md](docs/RACKS.md).
+camiones añade la fila "F V subir / bajar horquilla · rueda". Reglas comunes: [docs/STORAGE.md](docs/STORAGE.md);
+lo propio de la estantería: [docs/RACKS.md](docs/RACKS.md).
 
 ## Muelles de carga (Benchmark, Modo prueba)
 
@@ -190,7 +191,8 @@ por defecto), mientras llevas una caja late el siguiente nivel de cada columna c
 A cada lado de la puerta, una **barandilla naranja** baja, de una casilla, con una planta detrás: al camión se llega de
 frente, desde la fila de detrás de la puerta, y hay que entrar bastante recto (muy torcida, la caja puede quedarse
 atascada en la puerta: marcha atrás y otra vez, alineada).
-Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
+Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas comunes:
+[docs/STORAGE.md](docs/STORAGE.md); lo propio del muelle: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
 

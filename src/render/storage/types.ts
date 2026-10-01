@@ -130,8 +130,9 @@ export interface StorageUnitBuilder {
 }
 
 /**
- * One skin's entry in the registry (./index.ts STORAGE_RENDER): how its units are drawn. Adding a skin = its row in
- * core/storage STORAGE_SKINS + an entry here and its builders (docs/STORAGE.md «Cómo añadir un aspecto nuevo»).
+ * One skin's entry in the registry (./index.ts STORAGE_RENDER): how its units are drawn. Adding a skin = its rows in
+ * core/storage (STORAGE_SKINS, STORAGE_WORDS) + an entry here and its builders (docs/STORAGE.md «Cómo añadir un
+ * aspecto nuevo»).
  */
 export interface StorageSkinRender {
   /** Paint on the floor for a unit (a rack's loading lines), merged into the level's floor mesh; absent = none. */

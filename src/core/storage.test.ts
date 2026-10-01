@@ -1,35 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { DOCK_RAIL, DOOR_JAMB, dockRailsOf, hasTrucks, truckCellOf, truckColumnsOf, truckFrontOf, truckSlotsOf, trucksOf, usesTargetRules } from './docks';
-import { frontCellOf, hasRacks, inwardHeading as rackInwardHeading, racksOf, rackCellOf, slotIdOf as rackSlotIdOf, slotsOf } from './racks';
+import { DOCK_RAIL, DOOR_JAMB, dockRailsOf, truckCellOf, truckFrontOf } from './docks';
+import { frontCellOf, inwardHeading, rackCellOf } from './racks';
 import { levelDestinies, targetsOf, usesSymbols, zoneMatchKinds } from './sorting';
 import {
   STORAGE_SKINS,
   STORAGE_SKIN_ORDER,
+  STORAGE_WORDS,
   cellOf,
   facingOf,
   frontOf,
   hasStorage,
-  inwardHeading,
   slotIdOf,
   storageColumnsOf,
   storageOf,
   storageSlotsOf,
 } from './storage';
-import {
-  FACINGS,
-  MAX_RACK_SLOTS,
-  MAX_TRUCK_COLUMNS,
-  MAX_TRUCK_LEVELS,
-  TRUCK_FACING,
-  forwardOf,
-  type LevelData,
-  type LevelStorage,
-  type StorageAccess,
-} from './types';
+import { FACINGS, TRUCK_FACING, forwardOf, isDoorUnit, isFrontUnit, type LevelData, type LevelStorage, type StorageAccess } from './types';
 
 /*
- * The shared storage model (docs/STORAGE.md, phase 2): one skin row per look, one geometry for every unit through its
- * access, and the old per-skin helpers (core/racks, core/docks) as views of `level.storage`.
+ * The shared storage model (docs/STORAGE.md): one skin row per look (and its words), one geometry for every unit
+ * through its access (core/racks for `front`, core/docks for `door`).
  */
 
 const unit = (id: string, skin: LevelStorage['skin'], x: number, z: number, access: StorageAccess, columns: LevelStorage['columns']): LevelStorage => ({
@@ -64,8 +54,13 @@ describe('STORAGE_SKINS (docs/STORAGE.md «Modelo»)', () => {
       rack: { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r', chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
       truck: { support: 'stack', maxLevels: 2, maxColumns: 3, access: 'door', idPrefix: 't', chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
     });
-    // The same numbers as the per-skin constants they replace in phase 7.
-    expect([STORAGE_SKINS.rack.maxLevels, STORAGE_SKINS.truck.maxLevels, STORAGE_SKINS.truck.maxColumns]).toEqual([MAX_RACK_SLOTS, MAX_TRUCK_LEVELS, MAX_TRUCK_COLUMNS]);
+  });
+
+  it('one row of words per skin: the Spanish ones of the .level messages and the plan, the English ones of validateLevel', () => {
+    expect(Object.keys(STORAGE_WORDS)).toEqual([...STORAGE_SKIN_ORDER]);
+    expect([STORAGE_WORDS.rack.name, STORAGE_WORDS.rack.level, STORAGE_WORDS.truck.name, STORAGE_WORDS.truck.level]).toEqual(['estantería', 'hueco', 'camión', 'nivel']);
+    // A unit is named `${en.list}[i]` in validateLevel's messages: the legacy JSON lists.
+    expect(STORAGE_SKIN_ORDER.map((skin) => STORAGE_WORDS[skin].en.list)).toEqual(['racks', 'trucks']);
   });
 
   it('id prefixes differ (no two slot ids clash); each skin\'s letters are distinct capitals, never a fixed map character', () => {
@@ -80,17 +75,26 @@ describe('STORAGE_SKINS (docs/STORAGE.md «Modelo»)', () => {
 });
 
 describe('storage of a level', () => {
-  it('storageOf / hasStorage: none, an empty list, some units (usesTargetRules is its old name)', () => {
+  it('storageOf / hasStorage: none, an empty list, some units, of any skin', () => {
     for (const level of [{}, { storage: [] }]) {
       expect(storageOf(level)).toEqual([]);
       expect(hasStorage(level)).toBe(false);
-      expect(usesTargetRules(level)).toBe(false);
     }
     expect(storageOf(MANY)).toBe(MANY.storage);
     expect(hasStorage(MANY)).toBe(true);
-    expect(usesTargetRules(MANY)).toBe(true);
     expect(hasStorage({ storage: [RS] })).toBe(true);
     expect(hasStorage({ storage: [TW] })).toBe(true);
+  });
+
+  it('isFrontUnit / isDoorUnit tell the units by their access', () => {
+    expect(MANY.storage!.map((u) => [isFrontUnit(u), isDoorUnit(u)])).toEqual([
+      [true, false],
+      [true, false],
+      [true, false],
+      [true, false],
+      [false, true],
+      [false, true],
+    ]);
   });
 });
 
@@ -136,7 +140,6 @@ describe('geometry of every unit (core/storage)', () => {
   });
 
   it('the inward heading points from where the forklift stands into the column, for every unit', () => {
-    expect(inwardHeading).toBe(rackInwardHeading);
     for (const u of MANY.storage!) {
       u.columns.forEach((_, c) => {
         const cell = cellOf(u, c);
@@ -173,39 +176,7 @@ describe('geometry of every unit (core/storage)', () => {
     // One slot per level; each column's first slot is where storageColumnsOf says.
     for (const col of storageColumnsOf(MANY)) col.cues.forEach((cue, lvl) => expect(slots[col.firstSlot + lvl]).toMatchObject({ unit: col.unit, column: col.column, level: lvl, cue }));
     expect(slotIdOf('t9', 2, 1)).toBe('t9:2:1');
-    expect(slotIdOf).toBe(rackSlotIdOf);
     expect(storageSlotsOf({ storage: [] })).toEqual([]);
-  });
-});
-
-describe('racksOf / trucksOf and their helpers: views of level.storage (until phase 7)', () => {
-  it('racksOf: the rack units in storage order as LevelRack («libre» = {}); trucksOf: the trucks as LevelTruck', () => {
-    expect(racksOf(MANY)).toEqual([
-      { id: 'r1', x: 2, z: 5, w: 2, facing: 'north', columns: [[{ color: 'blue' }, {}], [{}]] },
-      { id: 'r2', x: 6, z: 2, w: 2, facing: 'east', columns: [[{ symbol: 'triangle' }], [{}, {}, { color: 'mint', symbol: 'circle' }]] },
-      { id: 'r3', x: 3, z: 0, w: 1, facing: 'south', columns: [[{}]] },
-      { id: 'r4', x: 1, z: 6, w: 1, facing: 'west', columns: [[{ color: 'coral' }]] },
-    ]);
-    expect(trucksOf(MANY)).toEqual([
-      { id: 't1', wall: 'north', x: 5, z: 0, w: 2, columns: [[{ color: 'yellow' }, { symbol: 'square' }], [{ color: 'lavender', symbol: 'cross' }]] },
-      { id: 't2', wall: 'west', x: 0, z: 3, w: 1, columns: [[{ color: 'blue', symbol: 'diamond' }]] },
-    ]);
-    // Derived copies: a view never hands out the level's own cue objects.
-    expect(racksOf(MANY)[0].columns[0][0]).not.toBe(RN.columns[0][0]);
-    expect([hasRacks(MANY), hasTrucks(MANY), hasRacks({ storage: [TW] }), hasTrucks({ storage: [RS] }), hasRacks({}), hasTrucks({})]).toEqual([true, true, false, false, false, false]);
-  });
-
-  it('slotsOf / truckSlotsOf / truckColumnsOf: the rack and truck parts of the storage slots and columns, same ids, cells and fronts', () => {
-    const slots = storageSlotsOf(MANY);
-    const part = (skin: LevelStorage['skin']) => slots.filter((s) => s.unit.skin === skin).map((s) => ({ id: s.id, column: s.column, level: s.level, cell: s.cell, front: s.front }));
-    expect(slotsOf(MANY).map((s) => ({ id: s.id, column: s.column, level: s.level, cell: s.cell, front: s.front }))).toEqual(part('rack'));
-    expect(truckSlotsOf(MANY).map((s) => ({ id: s.id, column: s.column, level: s.level, cell: s.cell, front: s.front }))).toEqual(part('truck'));
-    expect(truckSlotsOf(MANY).map((s) => s.cue)).toEqual(slots.filter((s) => s.unit.skin === 'truck').map((s) => s.cue));
-    expect(truckColumnsOf(MANY).map((c) => [c.truck.id, c.column, c.facing, c.firstSlot])).toEqual([
-      ['t1', 0, 'south', 0],
-      ['t1', 1, 'south', 2],
-      ['t2', 0, 'east', 3],
-    ]);
   });
 
   it('dockRailsOf: the rails of every door unit (by its unit id), at both ends of each door run', () => {

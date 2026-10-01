@@ -46,7 +46,7 @@ const SLIDE_FROM = 0.4;
 const GHOST_OPACITY = 0.55;
 const GHOST_RATE = 6;
 /**
- * Levels with racks: a box locked on its destiny (BoxState.locked) deepens once it has landed and its target's flash
+ * Levels with storage: a box locked on its destiny (BoxState.locked) deepens once it has landed and its target's flash
  * has settled (views/success), over LOCK_SEC; its faint "correct" lift fades with it, so it reads done and fixed.
  */
 export const LOCK_DELAY = DROP_GLIDE_SEC + FLASH_SEC;
@@ -108,8 +108,8 @@ export class BoxView {
     /** Stack levels only: the material may fade (ghost) while the box hides the forklift. */
     ghostable = false,
     /**
-     * Levels with racks: the tint that takes the box to its locked tone (lockTintOf), multiplying every painted tone of
-     * the box (material colour); null = never tinted (levels without racks: `locked` is always false there).
+     * Levels with storage: the tint that takes the box to its locked tone (lockTintOf), multiplying every painted tone
+     * of the box (material colour); null = never tinted (levels without storage: `locked` is always false there).
      */
     private readonly lockTint: Color | null = null,
     /**
@@ -276,7 +276,7 @@ export class BoxView {
     }
   }
 
-  /** Levels with racks: ease to the locked tone once the box is locked (after LOCK_DELAY), back if it ever unlocks. */
+  /** Levels with storage: ease to the locked tone once the box is locked (after LOCK_DELAY), back if it unlocks. */
   private applyLock(state: BoxState, dt: number): void {
     if (!this.lockTint) return;
     const locked = state.locked;
@@ -320,7 +320,7 @@ export class BoxView {
 }
 
 /**
- * Levels with racks: the material tint (a colour multiplier, linear) that turns a box painted from `palette` into its
+ * Levels with storage: the material tint (a colour multiplier, linear) that turns a box painted from `palette` into its
  * locked tone: `locked / base` per channel, clamped to 0‥1, so the base becomes exactly `palette.locked` and the tape
  * and the symbol deepen by the same factor (their contrast with the base stays).
  */

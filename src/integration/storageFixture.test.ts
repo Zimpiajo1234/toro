@@ -10,10 +10,11 @@
 import { Box3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
-import { dockRailsOf, truckColumnsOf, truckSlotsOf, trucksOf } from '../core/docks';
-import { FACING_X, FACING_Z, frontCellOf, rackCellOf, racksOf, slotsOf } from '../core/racks';
-import { assignmentsOf, cueOf, levelDestinies, sortableOf, targetsOf } from '../core/sorting';
-import type { GameEvent } from '../core/types';
+import { dockRailsOf } from '../core/docks';
+import { FACING_X, FACING_Z } from '../core/racks';
+import { assignmentsOf, levelDestinies, sortableOf, targetsOf } from '../core/sorting';
+import { frontOf, storageColumnsOf, storageOf, storageSlotsOf } from '../core/storage';
+import { isDoorUnit, isFrontUnit, type GameEvent } from '../core/types';
 import { formatLevel, renderLevel } from '../data/asciiLevel';
 import { formatRange, formatTarget } from '../data/difficulty';
 import { LEVELS, LEVEL_SOURCES, SPECIAL_LEVELS, SPECIAL_LEVEL_SOURCES, loadSpecialSources } from '../data/levels';
@@ -56,8 +57,8 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
   });
 
   it('three trucks, no hardcoding: two in the north wall one potted plant apart, one in the west wall, rails and a plant at every door end', () => {
-    const trucks = trucksOf(level);
-    expect(trucks.map((t) => [t.id, t.wall, t.x, t.z, t.w])).toEqual([
+    const trucks = storageOf(level).filter(isDoorUnit);
+    expect(trucks.map((t) => [t.id, t.access.wall, t.x, t.z, t.w])).toEqual([
       ['t1', 'north', 1, 0, 2],
       ['t2', 'north', 4, 0, 1],
       ['t3', 'west', 0, 4, 1],
@@ -67,7 +68,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     // min(2, limit) = 2 levels per column (docs/STORAGE.md rule 7): T's second column and C are written with one, the
     // one on top «libre»; never more than the level's stack limit.
     expect(trucks.map((t) => t.columns.map((c) => c.length))).toEqual([[2, 2], [2], [2]]);
-    expect(trucks.map((t) => t.columns.map((c) => c.map((cue) => cueOf(cue) === null)))).toEqual([
+    expect(trucks.map((t) => t.columns.map((c) => c.map((cue) => cue === null)))).toEqual([
       [
         [false, false],
         [false, true],
@@ -88,9 +89,10 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     ]);
     for (const { side } of rails) expect(plantAt(side.x, side.z), `${side.x},${side.z}`).toBe(true);
     // Every bed column lies outside the map beyond its wall; its door cell and the cell behind it are free floor.
-    for (const bed of truckColumnsOf(level)) {
-      const id = `${bed.truck.id}:${bed.column}`;
-      expect(bed.cell, id).toEqual(bed.truck.wall === 'north' ? { x: bed.front.x, z: -1 } : { x: -1, z: bed.front.z });
+    for (const bed of storageColumnsOf(level).filter((c) => c.unit.skin === 'truck')) {
+      const id = `${bed.unit.id}:${bed.column}`;
+      const north = isDoorUnit(bed.unit) && bed.unit.access.wall === 'north';
+      expect(bed.cell, id).toEqual(north ? { x: bed.front.x, z: -1 } : { x: -1, z: bed.front.z });
       const behind = { x: bed.front.x + FACING_X[bed.facing], z: bed.front.z + FACING_Z[bed.facing] };
       for (const c of [bed.front, behind]) {
         expect(grid.solid[cell(c)], `${id} at ${c.x},${c.z}`).toBe(0);
@@ -108,24 +110,25 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
   });
 
   it('a rack of 2 levels and a rack of 3, loaded from the front; a box starts parked in the free top slot of the first', () => {
-    const racks = racksOf(level);
-    expect(racks.map((r) => [r.id, r.facing, r.columns.map((c) => c.length)])).toEqual([
+    const racks = storageOf(level).filter(isFrontUnit);
+    expect(racks.map((r) => [r.id, r.access.facing, r.columns.map((c) => c.length)])).toEqual([
       ['r1', 'south', [2]],
       ['r2', 'north', [3]],
     ]);
     for (const rack of racks) {
+      const { facing } = rack.access;
       rack.columns.forEach((_, column) => {
-        const front = frontCellOf(rack, column);
-        const behind = { x: front.x + FACING_X[rack.facing], z: front.z + FACING_Z[rack.facing] };
+        const front = frontOf(rack, column);
+        const behind = { x: front.x + FACING_X[facing], z: front.z + FACING_Z[facing] };
         for (const c of [front, behind]) {
           expect(grid.solid[cell(c)], `${rack.id}:${column} at ${c.x},${c.z}`).toBe(0);
           expect(level.zones.some((z) => z.x === c.x && z.z === c.z), `${rack.id}:${column}: zone at ${c.x},${c.z}`).toBe(false);
         }
       });
     }
-    const top = slotsOf(level).find((s) => s.id === 'r1:0:1')!;
-    expect(cueOf(top.rack.columns[0][1])).toBeNull();
-    const parked = level.boxes.find((b) => b.level !== undefined && b.x === rackCellOf(top.rack, 0).x && b.z === rackCellOf(top.rack, 0).z)!;
+    const top = storageSlotsOf(level).find((s) => s.id === 'r1:0:1')!;
+    expect(top.cue).toBeNull();
+    const parked = level.boxes.find((b) => b.level !== undefined && b.x === top.cell.x && b.z === top.cell.z)!;
     expect(parked).toMatchObject({ id: 'b8', color: 'lavender', symbol: 'triangle', level: 1 });
   });
 
@@ -133,7 +136,7 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
     const targets = targetsOf(level);
     expect(targets.map((t) => t.skin ?? t.kind)).toEqual(['zone', 'rack', 'rack', 'rack', 'truck', 'truck', 'truck', 'truck', 'truck', 'truck']);
     expect(assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria), 2).count).toBe(1);
-    expect(levelDestinies(level)!.slots).toHaveLength(slotsOf(level).length + truckSlotsOf(level).length);
+    expect(levelDestinies(level)!.slots).toHaveLength(storageSlotsOf(level).length);
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 5, cued: 3, free: 2 });
@@ -208,8 +211,8 @@ describe('the three-truck fixture (pruebas/tres-camiones.level)', () => {
       const tagged = (tag: string) => g.children.filter((c) => c.userData[tag] !== undefined);
       // One sign sticker per truck level with a cue (a «libre» one keeps a plain cell), and the door's guard rails.
       expect(tagged('truckCue').map((c) => c.userData.truckCue), g.userData.truckId).toEqual(
-        truckSlotsOf(level)
-          .filter((s) => s.truck.id === g.userData.truckId && cueOf(s.cue) !== null)
+        storageSlotsOf(level)
+          .filter((s) => s.unit.id === g.userData.truckId && s.cue !== null)
           .map((s) => s.id),
       );
       expect(tagged('dockRails'), g.userData.truckId).toHaveLength(1);

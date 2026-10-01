@@ -1,14 +1,12 @@
 /**
  * The shared storage model (docs/STORAGE.md): a level's storage units (`level.storage`, LevelStorage), whatever they
  * look like — a storage rack, a dock truck, the skins still to come. `STORAGE_SKINS` declares what a skin brings
- * besides its drawing; the geometry here serves every unit through its access, on the math of core/racks (`front`: the
- * unit's own map cells, loaded from the floor cell in front) and of core/docks (`door`: cells one step beyond the wall,
- * outside the map, loaded from the door cells). Not to be confused with src/storage (the saved progress). Pure.
+ * besides its drawing and `STORAGE_WORDS` how the texts name it; the geometry here serves every unit through its
+ * access, on the math of core/racks (`front`: the unit's own map cells, loaded from the floor cell in front) and of
+ * core/docks (`door`: cells one step beyond the wall, outside the map, loaded from the door cells). Not to be confused
+ * with src/storage (the saved progress). Pure.
  */
 import {
-  MAX_RACK_SLOTS,
-  MAX_TRUCK_COLUMNS,
-  MAX_TRUCK_LEVELS,
   TRUCK_FACING,
   type CellPos,
   type Facing,
@@ -19,10 +17,8 @@ import {
   type StorageSupport,
   type ZoneCriteria,
 } from './types';
-import { frontCellOf, rackCellOf, slotIdOf } from './racks';
+import { frontCellOf, rackCellOf } from './racks';
 import { truckCellOf, truckFrontOf } from './docks';
-
-export { inwardHeading, slotIdOf } from './racks';
 
 /** What a storage skin declares besides its drawing: its row of STORAGE_SKINS (docs/STORAGE.md «Modelo»). */
 export interface StorageSkinRow {
@@ -43,19 +39,20 @@ export interface StorageSkinRow {
    * rule 7; validateLevel fills them, the canonical `.level` form leaves those implicit ones out: data/asciiLevel).
    */
   readonly fillToMax: boolean;
-  /** How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup): the audio reads it (phase 3). */
+  /** How a drop and a pick sound (metal = slotDrop / slotLift, wood = truckDrop / pickup): audio/AudioEngine. */
   readonly sound: 'metal' | 'wood';
 }
 
 /**
- * One row per skin (docs/STORAGE.md): adding a skin = a row here + its drawing. The key order is the order of a
- * level's units (rule 12: racks, then trucks). `chars` are the canonical letters of before the shared model (three
- * trucks are written T, C, U: docs/STORAGE.md «Huecos» 1), so the canonical form of every level stays the same.
+ * One row per skin (docs/STORAGE.md): adding a skin = a row here, its words (STORAGE_WORDS) and its drawing. The key
+ * order is the order of a level's units (rule 12: racks, then trucks). `chars` are the canonical letters of before the
+ * shared model (three trucks are written T, C, U), so the canonical form of every level stays the same.
  */
 export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   rack: {
     support: 'shelves',
-    maxLevels: MAX_RACK_SLOTS,
+    // The floor slot + 2 (docs/RACKS.md).
+    maxLevels: 3,
     maxColumns: Infinity,
     access: 'front',
     idPrefix: 'r',
@@ -65,8 +62,9 @@ export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   },
   truck: {
     support: 'stack',
-    maxLevels: MAX_TRUCK_LEVELS,
-    maxColumns: MAX_TRUCK_COLUMNS,
+    // «Solo hasta 2 alturas», on a door 1 to 3 cells wide (docs/DOCKS.md).
+    maxLevels: 2,
+    maxColumns: 3,
     access: 'door',
     idPrefix: 't',
     chars: 'TCUVWXYZKLMNO',
@@ -78,6 +76,65 @@ export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
 /** The skins in STORAGE_SKINS order: a level lists its units skin by skin in this order (rule 12). */
 export const STORAGE_SKIN_ORDER = Object.keys(STORAGE_SKINS) as readonly StorageSkin[];
 
+/**
+ * How the texts name a skin's units and their levels (docs/STORAGE.md «Cómo añadir un aspecto nuevo»): the Spanish
+ * words of the `.level` messages (data/asciiLevel) and of the plan `npm run levels` prints (data/levels/report), and in
+ * `en` the English words of validateLevel's messages (asciiLevel reads those messages back: they never change).
+ */
+export interface StorageWords {
+  /** The unit's word in the canonical legend and in the plan: «estantería frente sur: …», «camión T». */
+  readonly name: string;
+  /** «la estantería», «una estantería», «estanterías». */
+  readonly the: string;
+  readonly a: string;
+  readonly many: string;
+  /** Agreement: «un id solo puede ir en una», «dos estanterías pegadas». */
+  readonly one: string;
+  readonly together: string;
+  /** How messages name a unit by its letter: «también es el de la estantería «R»». */
+  readonly of: string;
+  /** One level of a column: «falta la pista del hueco», «el hueco de abajo», the plan's «hueco 2 de R». */
+  readonly level: string;
+  readonly en: {
+    /** The skin's legacy JSON list, and so a unit's name: `racks[0]`. */
+    readonly list: string;
+    /** One unit: «duplicate rack id». */
+    readonly one: string;
+    /** One level of a column: «slot 2» (plural + s). */
+    readonly level: string;
+    /** A box stored on the unit: «is in a rack cell: give it the level of its slot». */
+    readonly at: string;
+    readonly cell: string;
+    readonly itsLevel: string;
+  };
+}
+
+/** One row per skin, next to its STORAGE_SKINS row. */
+export const STORAGE_WORDS: { readonly [S in StorageSkin]: StorageWords } = {
+  rack: {
+    name: 'estantería',
+    the: 'la estantería',
+    a: 'una estantería',
+    many: 'estanterías',
+    one: 'una',
+    together: 'pegadas',
+    of: 'de la estantería',
+    level: 'hueco',
+    en: { list: 'racks', one: 'rack', level: 'slot', at: 'in', cell: 'a rack cell', itsLevel: 'the level of its slot' },
+  },
+  truck: {
+    name: 'camión',
+    the: 'el camión',
+    a: 'un camión',
+    many: 'camiones',
+    one: 'uno',
+    together: 'pegados',
+    of: 'del camión',
+    level: 'nivel',
+    en: { list: 'trucks', one: 'truck', level: 'level', at: 'on', cell: 'a truck bed cell', itsLevel: 'its truck level' },
+  },
+};
+
 /** A level's storage units (none → an empty list): racks, then trucks (rule 12). */
 export function storageOf(level: Pick<LevelData, 'storage'>): readonly LevelStorage[] {
   return level.storage ?? [];
@@ -85,11 +142,16 @@ export function storageOf(level: Pick<LevelData, 'storage'>): readonly LevelStor
 
 /**
  * The level has storage, so the target rules apply (docs/STORAGE.md rules 4–6: destined boxes, locks, soft buzz, strong
- * pulse; core/docks `usesTargetRules` is its old name) and the forks go by the keys at its units (rule 9: F / V step
- * there, the control hint's fork row, their click). Levels without storage play exactly as before.
+ * pulse) and the forks go by the keys at its units (rule 9: F / V step there, the control hint's fork row, their
+ * click). Levels without storage play exactly as before.
  */
 export function hasStorage(level: Pick<LevelData, 'storage'>): boolean {
   return (level.storage?.length ?? 0) > 0;
+}
+
+/** Id of a storage slot, in every skin: `${unitId}:${column}:${level}` (column and level from 0; level 0 = bottom). */
+export function slotIdOf(unitId: string, column: number, level: number): string {
+  return `${unitId}:${column}:${level}`;
 }
 
 /** The side a unit is loaded from: its front's facing; through a door, TRUCK_FACING[wall] (into the room). */

@@ -194,7 +194,7 @@ describe('render/storage: the registry', () => {
     // A truck: the cell of the level on the sign over its door (its column's door cell along the wall, its row), turned
     // like the sign (toward the warehouse); its «libre» level too (the plain cell over «menta ●»).
     const cell = (wall: 'north' | 'west', x: number, z: number, column: number, row: number) =>
-      dockToWorld(wall, MANY, dockColumnX({ wall, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
+      dockToWorld(wall, MANY, dockColumnX({ access: { kind: 'door', wall }, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
     for (const [id, column, row] of [
       ['t1:0:1', 0, 1],
       ['t1:1:0', 1, 0],
@@ -310,7 +310,7 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
     // At a truck: its marker frames the chosen level's sign cell (faint while the action would not work there, clear
     // when it would), turned like the sign; the rack's marker fades away.
     const cellOf = (wall: 'north' | 'west', x: number, z: number, column: number, row: number) =>
-      dockToWorld(wall, MANY, dockColumnX({ wall, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
+      dockToWorld(wall, MANY, dockColumnX({ access: { kind: 'door', wall }, x, z }, MANY, column), signRowY(row), signMidZ(), new Vector3());
     for (const [id, wall, x, z, column, row, yaw] of [
       ['t1:0:0', 'north', 1, 0, 0, 0, 0],
       ['t1:1:1', 'north', 1, 0, 1, 1, 0],

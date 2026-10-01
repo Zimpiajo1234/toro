@@ -1,38 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DOCK_RAIL,
-  DOOR_JAMB,
-  dockRailsOf,
-  hasTrucks,
-  truckCellOf,
-  truckColumnsOf,
-  truckFacing,
-  truckFrontOf,
-  truckInwardHeading,
-  truckSlotIdOf,
-  truckSlotsOf,
-  trucksOf,
-  usesTargetRules,
-} from './docks';
+import { DOCK_RAIL, DOOR_JAMB, dockRailsOf, truckCellOf, truckFrontOf } from './docks';
+import { columnFrame, inwardHeading } from './racks';
 import { levelDestinies, targetsOf, usesSymbols, zoneMatchKinds } from './sorting';
-import { cellToWorld, forwardOf, type LevelData, type LevelStorage, type LevelTruck } from './types';
-import { columnFrame } from './racks';
+import { facingOf, storageColumnsOf, storageSlotsOf } from './storage';
+import { TRUCK_FACING, cellToWorld, forwardOf, type DoorUnit, type LevelData, type LevelStorage, type WallSide } from './types';
 
 /*
- * Loading dock geometry and targets (docs/DOCKS.md): the door cells are map cells against the wall; the bed column of
- * each one lies just beyond the wall, outside the map; a truck reads like a rack loaded from TRUCK_FACING[wall]; a
- * guard rail stands at each end of the door run, on its jamb line, one cell into the room.
+ * Loading dock geometry and targets (docs/DOCKS.md; the `door` access of docs/STORAGE.md): the door cells are map cells
+ * against the wall; the bed column of each one lies just beyond the wall, outside the map; a truck reads like a rack
+ * loaded from TRUCK_FACING[wall]; a guard rail stands at each end of the door run, on its jamb line, one cell into the
+ * room.
  */
 
-const NORTH: LevelTruck = { id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] };
-const WEST: LevelTruck = { id: 't2', wall: 'west', x: 0, z: 1, w: 2, columns: [[{ color: 'mint' }], [{ symbol: 'square' }]] };
-
-/** A level whose storage is these trucks (level data keeps them as LevelStorage; core/docks trucksOf gives them back). */
-const withTrucks = (...trucks: LevelTruck[]): Pick<LevelData, 'storage'> => ({
-  storage: trucks.map(
-    (truck): LevelStorage => ({ id: truck.id, skin: 'truck', x: truck.x, z: truck.z, w: truck.w, access: { kind: 'door', wall: truck.wall }, columns: truck.columns.map((levels) => levels.map((cue) => ({ ...cue }))) }),
-  ),
+/** A dock truck: a unit of skin `truck` (door access), its columns' cues bottom → top. */
+const truck = (id: string, wall: WallSide, x: number, z: number, columns: LevelStorage['columns']): DoorUnit => ({
+  id,
+  skin: 'truck',
+  x,
+  z,
+  w: columns.length,
+  access: { kind: 'door', wall },
+  columns,
 });
+
+const NORTH = truck('t1', 'north', 2, 0, [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]]);
+const WEST = truck('t2', 'west', 0, 1, [[{ color: 'mint' }], [{ symbol: 'square' }]]);
+/** A truck's door run, as the door geometry reads it: its first door cell and its wall. */
+const runOf = (unit: DoorUnit) => ({ x: unit.x, z: unit.z, wall: unit.access.wall });
+
+/** A level whose storage is these trucks. */
+const withTrucks = (...trucks: LevelStorage[]): Pick<LevelData, 'storage'> => ({ storage: trucks });
 
 const level: Pick<LevelData, 'boxes' | 'zones' | 'storage'> = {
   boxes: [
@@ -47,27 +44,28 @@ const level: Pick<LevelData, 'boxes' | 'zones' | 'storage'> = {
 describe('core/docks geometry', () => {
   it('a north dock: door cells along row 0, bed columns just beyond the north wall (z = -1); a west one on column 0 / x = -1', () => {
     // The door cells (inside, floor) are where the forklift stands; the bed columns lie outside, one per door cell.
-    expect([truckFrontOf(NORTH, 0), truckFrontOf(NORTH, 1)]).toEqual([
+    expect([truckFrontOf(runOf(NORTH), 0), truckFrontOf(runOf(NORTH), 1)]).toEqual([
       { x: 2, z: 0 },
       { x: 3, z: 0 },
     ]);
-    expect([truckCellOf(NORTH, 0), truckCellOf(NORTH, 1)]).toEqual([
+    expect([truckCellOf(runOf(NORTH), 0), truckCellOf(runOf(NORTH), 1)]).toEqual([
       { x: 2, z: -1 },
       { x: 3, z: -1 },
     ]);
-    expect(truckFacing(NORTH)).toBe('south');
-    expect([truckFrontOf(WEST, 0), truckFrontOf(WEST, 1)]).toEqual([
+    expect(facingOf(NORTH)).toBe('south');
+    expect(TRUCK_FACING.north).toBe('south');
+    expect([truckFrontOf(runOf(WEST), 0), truckFrontOf(runOf(WEST), 1)]).toEqual([
       { x: 0, z: 1 },
       { x: 0, z: 2 },
     ]);
-    expect([truckCellOf(WEST, 0), truckCellOf(WEST, 1)]).toEqual([
+    expect([truckCellOf(runOf(WEST), 0), truckCellOf(runOf(WEST), 1)]).toEqual([
       { x: -1, z: 1 },
       { x: -1, z: 2 },
     ]);
-    expect(truckFacing(WEST)).toBe('east');
+    expect(facingOf(WEST)).toBe('east');
     // Facing into the truck from a door cell: north (−z) for a north dock, west (−x) for a west one.
-    const n = forwardOf(truckInwardHeading(NORTH));
-    const w = forwardOf(truckInwardHeading(WEST));
+    const n = forwardOf(inwardHeading(facingOf(NORTH)));
+    const w = forwardOf(inwardHeading(facingOf(WEST)));
     expect([n.x, n.z].map((v) => Math.round(v) + 0)).toEqual([0, -1]);
     expect([w.x, w.z].map((v) => Math.round(v) + 0)).toEqual([-1, 0]);
   });
@@ -75,29 +73,25 @@ describe('core/docks geometry', () => {
   it('in the column frame of a bed cell, depth 0 is the wall line: the door cell is in front of it, the bed beyond', () => {
     const size = { width: 6, depth: 5 };
     const frame = { depth: 0, lateral: 0 };
-    const bed = cellToWorld(truckCellOf(NORTH, 1), size);
-    const door = cellToWorld(truckFrontOf(NORTH, 1), size);
+    const bed = cellToWorld(truckCellOf(runOf(NORTH), 1), size);
+    const door = cellToWorld(truckFrontOf(runOf(NORTH), 1), size);
     // The north wall is at z = -depth / 2.
     expect(columnFrame(bed, 'south', bed.x, -size.depth / 2, frame).depth).toBeCloseTo(0, 9);
     expect(columnFrame(bed, 'south', door.x, door.z, frame)).toMatchObject({ depth: -0.5 });
     expect(columnFrame(bed, 'south', bed.x, bed.z, frame)).toMatchObject({ depth: 0.5, lateral: 0 });
   });
 
-  it('flattens columns and slots truck by truck, column by column, bottom → top, with ids «truck:column:level»', () => {
+  it('a level\'s truck columns and levels flatten truck by truck, column by column, bottom → top, with ids «truck:column:level»', () => {
     const both = withTrucks(NORTH, WEST);
-    expect(truckColumnsOf(both).map((c) => [c.truck.id, c.column, c.cues.length, c.firstSlot])).toEqual([
+    expect(storageColumnsOf(both).map((c) => [c.unit.id, c.column, c.cues.length, c.firstSlot])).toEqual([
       ['t1', 0, 2, 0],
       ['t1', 1, 1, 2],
       ['t2', 0, 1, 3],
       ['t2', 1, 1, 4],
     ]);
-    expect(truckSlotsOf(both).map((s) => s.id)).toEqual(['t1:0:0', 't1:0:1', 't1:1:0', 't2:0:0', 't2:1:0']);
-    expect(truckSlotsOf(both)[1]).toMatchObject({ truckIndex: 0, column: 0, level: 1, cell: { x: 2, z: -1 }, front: { x: 2, z: 0 }, cue: { symbol: 'triangle' } });
-    expect(truckColumnsOf(both)[3]).toMatchObject({ cell: { x: -1, z: 2 }, front: { x: 0, z: 2 }, facing: 'east' });
-    expect(truckSlotIdOf('t9', 3, 2)).toBe('t9:3:2');
-    expect(trucksOf({})).toEqual([]);
-    expect(hasTrucks({})).toBe(false);
-    expect(hasTrucks(both)).toBe(true);
+    expect(storageSlotsOf(both).map((s) => s.id)).toEqual(['t1:0:0', 't1:0:1', 't1:1:0', 't2:0:0', 't2:1:0']);
+    expect(storageSlotsOf(both)[1]).toMatchObject({ unitIndex: 0, column: 0, level: 1, cell: { x: 2, z: -1 }, front: { x: 2, z: 0 }, cue: { symbol: 'triangle' } });
+    expect(storageColumnsOf(both)[3]).toMatchObject({ cell: { x: -1, z: 2 }, front: { x: 0, z: 2 }, facing: 'east' });
   });
 
   it('guard rails: one at each end of a door run, on its jamb line, one cell into the room, thick outward; none at a corner', () => {
@@ -119,13 +113,6 @@ describe('core/docks geometry', () => {
     expect(dockRailsOf({ ...withTrucks({ ...WEST, z: 0 }), size }).map((r) => r.end)).toEqual([1]);
     expect(dockRailsOf({ ...withTrucks({ ...WEST, z: 3 }), size }).map((r) => r.end)).toEqual([0]);
     expect(dockRailsOf({ size })).toEqual([]);
-  });
-
-  it('the target rules apply with racks or trucks, never without both', () => {
-    expect(usesTargetRules({})).toBe(false);
-    expect(usesTargetRules({ storage: [] })).toBe(false);
-    expect(usesTargetRules(withTrucks(NORTH))).toBe(true);
-    expect(usesTargetRules({ storage: [{ id: 'r1', skin: 'rack', x: 0, z: 0, w: 1, access: { kind: 'front', facing: 'south' }, columns: [[null]] }] })).toBe(true);
   });
 });
 

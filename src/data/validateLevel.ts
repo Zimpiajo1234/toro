@@ -29,7 +29,7 @@ import {
   usesSymbols,
   type Sortable,
 } from '../core/sorting';
-import { STORAGE_SKINS, STORAGE_SKIN_ORDER, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
+import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
 import { dockRailsOf } from '../core/docks';
 import { GAME_CONFIG } from '../config';
 
@@ -37,27 +37,12 @@ import { GAME_CONFIG } from '../config';
 const kindName = (box: Sortable) => `${box.color}/${box.symbol}`;
 
 /**
- * How validation messages name the storage units of each skin and their levels (English; asciiLevel's
- * explainValidation reads them back and places them on the map). A unit is `${list}[i]`, the i-th unit of its skin: its
- * index in the JSON list `racks` / `trucks` of a legacy level, or among the units of that skin in `storage`.
+ * How validation messages name the storage units of each skin and their levels: the English words of its row of
+ * core/storage STORAGE_WORDS (asciiLevel's explainValidation reads the messages back and places them on the map). A
+ * unit is `${list}[i]`, the i-th unit of its skin: its index in the JSON list `racks` / `trucks` of a legacy level, or
+ * among the units of that skin in `storage`.
  */
-interface SkinWords {
-  /** The skin's legacy JSON list, and so a unit's name: `racks[0]`. */
-  list: string;
-  /** One unit: «duplicate rack id». */
-  one: string;
-  /** One level of a column: «slot 2» (plural + s). */
-  level: string;
-  /** A box stored on the unit: «is in a rack cell: give it the level of its slot». */
-  at: string;
-  cell: string;
-  itsLevel: string;
-}
-
-const SKIN_WORDS: { readonly [S in StorageSkin]: SkinWords } = {
-  rack: { list: 'racks', one: 'rack', level: 'slot', at: 'in', cell: 'a rack cell', itsLevel: 'the level of its slot' },
-  truck: { list: 'trucks', one: 'truck', level: 'level', at: 'on', cell: 'a truck bed cell', itsLevel: 'its truck level' },
-};
+const wordsOf = (skin: StorageSkin) => STORAGE_WORDS[skin].en;
 
 /**
  * Parses and validates a raw level object (from a .level file via asciiLevel.parseLevel, or a legacy JSON level) into
@@ -182,7 +167,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     return cue.color === undefined && cue.symbol === undefined ? null : cue;
   };
   const units: LevelStorage[] = [];
-  /** How messages name each unit, in storage order: `racks[0]`, `trucks[1]`… (SKIN_WORDS). */
+  /** How messages name each unit, in storage order: `racks[0]`, `trucks[1]`… (wordsOf). */
   const names: string[] = [];
   /** Storage slot id → how messages name it: `racks[0].columns[1][2]`. */
   const slotNames = new Map<string, string>();
@@ -194,7 +179,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   const inSkin = Object.fromEntries(STORAGE_SKIN_ORDER.map((skin) => [skin, 0])) as Record<StorageSkin, number>;
   for (const { skin, raw: unitRaw, path } of sources) {
     const row = STORAGE_SKINS[skin];
-    const words = SKIN_WORDS[skin];
+    const words = wordsOf(skin);
     const name = `${words.list}[${inSkin[skin]}]`;
     const o = obj(unitRaw, path);
     let unitAccess: StorageAccess;
@@ -235,7 +220,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (units.some((other) => other.skin === skin && other.id === unit.id)) fail(`duplicate ${words.one} id "${unit.id}"`);
     const clash = units.find((other) => other.id === unit.id);
     if (clash)
-      fail(`${name} has the id "${unit.id}" of a ${SKIN_WORDS[clash.skin].one}: ${SKIN_WORDS[clash.skin].list} and ${words.list} never share an id`);
+      fail(`${name} has the id "${unit.id}" of a ${wordsOf(clash.skin).one}: ${wordsOf(clash.skin).list} and ${words.list} never share an id`);
     const u = units.length;
     columns.forEach((_, j) => {
       const cell = cellOf(unit, j);
@@ -259,7 +244,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     names.push(name);
     inSkin[skin]++;
   }
-  const hasTrucks = units.some((unit) => unit.skin === 'truck');
+  /** With trucks, the one-box-per-target message counts their levels apart (its text as asciiLevel reads it). */
+  const withTrucks = units.some((unit) => unit.skin === 'truck');
   // Access `front`: every column is loaded from its front cell, floor whatever else stands around (a dock's door cell
   // too).
   units.forEach((unit, u) => {
@@ -392,7 +378,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (stored) {
       // A box stored at the start (docs/STORAGE.md): on a level of its column (checked below), one box per level.
       const [u, column] = stored;
-      const words = SKIN_WORDS[units[u].skin];
+      const words = wordsOf(units[u].skin);
       if (box.level === undefined) fail(`box "${box.id}" is ${words.at} ${words.cell}: give it ${words.itsLevel}`);
       const slotKey = `${k}@${box.level}`;
       if (storedBoxes.has(slotKey)) fail(`two boxes share ${words.level} ${box.level} of ${names[u]} column ${column}`);
@@ -444,7 +430,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // Every stored box on a level of its column; in a stack (a truck bed) the boxes sit on each other, so a box stored at
   // the start is on the bottom or on another box.
   for (const sb of storedList) {
-    const words = SKIN_WORDS[units[sb.unit].skin];
+    const words = wordsOf(units[sb.unit].skin);
     const levels = units[sb.unit].columns[sb.column].length;
     if (sb.level < 0 || sb.level >= levels)
       fail(`box "${sb.id}" is ${words.at} ${words.level} ${sb.level} of ${names[sb.unit]} column ${sb.column}, which has ${levels} ${words.level}s`);
@@ -452,7 +438,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   for (const sb of storedList) {
     if (STORAGE_SKINS[units[sb.unit].skin].support !== 'stack') continue;
     if (sb.level > 0 && !storedBoxes.has(`${sb.key}@${sb.level - 1}`))
-      fail(`box "${sb.id}" is ${SKIN_WORDS[units[sb.unit].skin].at} ${names[sb.unit]} column ${sb.column} at level ${sb.level} with no box below it`);
+      fail(`box "${sb.id}" is ${wordsOf(units[sb.unit].skin).at} ${names[sb.unit]} column ${sb.column} at level ${sb.level} with no box below it`);
   }
 
   // The storage as the target helpers (core/sorting) read it.
@@ -468,7 +454,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     const truckLevels = targets.filter((t) => t.skin === 'truck').length;
     if (boxes.length !== targets.length)
       fail(
-        hasTrucks
+        withTrucks
           ? `a level with storage racks or trucks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length - truckLevels} slots with a cue, ${truckLevels} truck levels)`
           : `a level with storage racks needs one box per target (${boxes.length} boxes, ${zones.length} zones, ${targets.length - zones.length} slots with a cue)`,
       );

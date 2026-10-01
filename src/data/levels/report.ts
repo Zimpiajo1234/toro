@@ -3,8 +3,8 @@
  * level in detail (its canonical text, metrics with their meaning, difficulty targets, a shortest plan and the narrow
  * cells). Pure: the script loads the registry and prints what this returns. Metric definitions: docs/LEVELS.md.
  */
-import type { StorageSkin } from '../../core/types';
 import { usesSymbols } from '../../core/sorting';
+import { STORAGE_WORDS } from '../../core/storage';
 import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import type { LevelSource } from './index';
@@ -193,20 +193,11 @@ function blockerIds(m: LevelMetrics): string {
 }
 
 /**
- * How the plan names a storage unit (docs/STORAGE.md), per skin: its word, and the word for one of its levels. With its
- * legend letter (the map character on its cell, or on its front cell when the cell lies beyond a wall) and by its
- * support: a shelf is a place of its own («hueco 2 de R»); a stack column names its unit («camión T»), then the height
- * the box leaves or lands at («nivel 2»), like a floor stack's «piso».
- */
-const PLAN_WORDS: { readonly [S in StorageSkin]: { readonly unit: string; readonly level: string } } = {
-  rack: { unit: 'estantería', level: 'hueco' },
-  truck: { unit: 'camión', level: 'nivel' },
-};
-
-/**
- * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks; storage by PLAN_WORDS («hueco 2 de
- * R» for a rack slot, «camión T (x,z), nivel 2» for a truck bed column, named by its door cell: the one its map
- * character stands on).
+ * "1. caja azul ▲ (7,4) → zona 4 (7,1)" per move, replayed on the model's stacks. A storage unit by its skin's words
+ * (core/storage STORAGE_WORDS: its `name` and its `level`), its legend letter (the map character on its cell, or on
+ * its front cell when the cell lies beyond a wall) and its support: a shelf is a place of its own («hueco 2 de R»); a
+ * stack column names its unit («camión T (x,z)», by its door cell), then the height the box leaves or lands at
+ * («nivel 2»), like a floor stack's «piso».
  */
 function planLines(level: LevelSource['level'], grid: string[][], plan: readonly Move[]): string[] {
   const model = new LevelGrid(level);
@@ -220,12 +211,12 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
   };
   const onShelf = (pos: number) => model.kind[pos] === POS_SHELF;
   const onStack = (pos: number) => model.kind[pos] === POS_STACK;
-  const wordsOf = (pos: number) => PLAN_WORDS[model.columnOfPos(pos)!.ref.unit.skin];
+  const wordsOf = (pos: number) => STORAGE_WORDS[model.columnOfPos(pos)!.ref.unit.skin];
   /** A storage position by its skin's words and its unit's letter: a shelf «hueco 2 de R», a stack column «camión T». */
   const storageName = (pos: number) => {
     const cell = mapCell(pos);
     const letter = grid[cell.z][cell.x];
-    return onShelf(pos) ? `${wordsOf(pos).level} ${model.levelAt(pos) + 1} de ${letter}` : `${wordsOf(pos).unit} ${letter}`;
+    return onShelf(pos) ? `${wordsOf(pos).level} ${model.levelAt(pos) + 1} de ${letter}` : `${wordsOf(pos).name} ${letter}`;
   };
   /** A level of a stack column (0 = bottom): «, nivel 2». */
   const stackLevel = (pos: number, level: number) => `, ${wordsOf(pos).level} ${level + 1}`;

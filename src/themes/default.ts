@@ -75,7 +75,7 @@ export const defaultTheme: Theme = {
   },
   // `ink` (the large lid symbol of the sorting levels) and `engrave` (a symbol cut into a pad) are deeper tones of the
   // same hue: readable from the default camera, never black, coral kept pink so it never reads as red. `locked` (a box
-  // done and fixed on its destiny, levels with racks) is base ≈ 8–9 points darker in lightness, same hue: coral turns
+  // done and fixed on its destiny, levels with storage) is base ≈ 8–9 points darker in lightness, same hue: coral turns
   // toward rose (hue ≈ 350°) and less saturated, so the deeper tone never reads as red, even in a shaded rack slot.
   boxes: {
     blue: { base: '#9bbce0', tape: '#89abd2', glyph: '#b5cdea', ink: '#5f87b8', locked: '#76a4d7' },

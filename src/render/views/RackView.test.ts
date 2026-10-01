@@ -1,7 +1,7 @@
 import { Box3, Color, Matrix4, Mesh, Vector3, type BufferGeometry, type MeshBasicMaterial, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
-import { racksOf } from '../../core/racks';
+import { storageOf } from '../../core/storage';
 import { isDestined } from '../../core/sorting';
 import type { BoxState, GameSnapshot, LevelData, StorageHint, StorageSlotState } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
@@ -385,7 +385,7 @@ describe('rack builder + view: a different piece of furniture', () => {
         const depth = -p.z;
         const column = Math.round(p.x);
         const lateral = Math.abs(p.x - column);
-        const levels = racksOf(SOUTH)[0].columns[column]?.length ?? 0;
+        const levels = storageOf(SOUTH)[0].columns[column]?.length ?? 0;
         const e = 1e-6;
         for (let k = 0; k < levels; k++) {
           const floor = rackSlotY(k);

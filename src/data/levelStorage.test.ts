@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { trucksOf } from '../core/docks';
-import { racksOf } from '../core/racks';
 import { storageOf } from '../core/storage';
+import { isDoorUnit, isFrontUnit, type LevelData, type LevelStorage } from '../core/types';
 import { formatLevel, parseLevel } from './asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from './levels';
 import { validateLevel } from './validateLevel';
@@ -11,7 +10,7 @@ import threeTrucksText from './levels/pruebas/tres-camiones.level?raw';
 const STORED = [getSpecialLevel(BENCHMARK_ID)!, parseLevel(threeTrucksText).level];
 
 /*
- * `level.storage` in level data (docs/STORAGE.md, phase 2): validateLevel reads it in LevelData's own form or from a
+ * `level.storage` in level data (docs/STORAGE.md): validateLevel reads it in LevelData's own form or from a
  * legacy JSON level's `racks` / `trucks`, lists the units skin by skin (rule 12) and names them in its messages by
  * their skin (`racks[i]`, `trucks[i]`: the i-th unit of that skin, as asciiLevel places them); asciiLevel writes the
  * units skin by skin whatever the legend's order.
@@ -41,6 +40,19 @@ function base(storage: Raw): Raw {
 
 const RACK = { skin: 'rack', x: 5, z: 0, access: { kind: 'front', facing: 'south' }, columns: [[{ color: 'blue' }]] };
 const TRUCK = { skin: 'truck', x: 2, z: 0, access: { kind: 'door', wall: 'north' }, columns: [[{ color: 'mint' }]] };
+
+/**
+ * A level's storage as a legacy JSON level lists it, before `storage`: its racks (`facing`) and its trucks (`wall`), a
+ * «libre» level written `{}`.
+ */
+function legacyListsOf(level: LevelData): { racks: Raw[]; trucks: Raw[] } {
+  const columns = (unit: LevelStorage) => unit.columns.map((levels) => levels.map((cue) => ({ ...cue })));
+  const units = storageOf(level);
+  return {
+    racks: units.filter(isFrontUnit).map((u) => ({ id: u.id, x: u.x, z: u.z, w: u.w, facing: u.access.facing, columns: columns(u) })),
+    trucks: units.filter(isDoorUnit).map((u) => ({ id: u.id, wall: u.access.wall, x: u.x, z: u.z, w: u.w, columns: columns(u) })),
+  };
+}
 
 const fails = (raw: Raw) => {
   try {
@@ -89,7 +101,7 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
 
   it('a legacy JSON level (`racks`, `trucks`) gives the same level as its `storage`', () => {
     for (const level of STORED) {
-      const legacy: Raw = { ...structuredClone(level), racks: racksOf(level), trucks: trucksOf(level) };
+      const legacy: Raw = { ...structuredClone(level), ...legacyListsOf(level) };
       delete legacy.storage;
       expect(validateLevel(legacy, level.id)).toStrictEqual(level);
     }
@@ -103,8 +115,8 @@ describe('validateLevel: `storage` (docs/STORAGE.md)', () => {
     expect(fails(base({ storage: [RACK, { ...TRUCK, skin: 'crate' }] }))).toBe('storage[1].skin must be rack or truck');
     expect(fails(base({ storage: [RACK, { ...TRUCK, access: { kind: 'front', facing: 'south' } }] }))).toBe('trucks[0].access.kind must be "door": the access of a truck');
     expect(fails(base({ storage: [{ ...RACK, access: undefined }, TRUCK] }))).toBe('racks[0].access must be an object');
-    // The rules of before, named the same way: ids unique across skins. A «libre» truck level is fine (phase 6: a truck
-    // of «libre» levels only counts no target), but in a stack only on top of the levels with a cue.
+    // Named the same way: ids unique across skins. A «libre» truck level is fine (a truck of «libre» levels only counts
+    // no target), but in a stack only on top of the levels with a cue.
     expect(fails(base({ storage: [{ ...RACK, id: 'x1' }, { ...TRUCK, id: 'x1' }] }))).toBe('trucks[0] has the id "x1" of a rack: racks and trucks never share an id');
     expect(fails(base({ storage: [RACK, { ...TRUCK, columns: [[null]] }] }))).toBe(
       'a level with storage racks or trucks needs one box per target (2 boxes, 0 zones, 1 slots with a cue, 0 truck levels)',
