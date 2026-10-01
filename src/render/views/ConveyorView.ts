@@ -82,57 +82,67 @@ export class BeltStripes {
 }
 
 /**
- * How a belt's button answers (H2, docs/CONVEYOR.md «Ajustes»), safe to tune: every press dips its cap BELT_BUTTON.dip
- * (down in `downSec`, back up in `upSec`); an accepted one also lights it in its own colour (its emissive, up to
- * `glowPeak` within `glowRise` s, faded out by `glowSec`). While the action would press it (hint.button) it glows
- * faintly (`aimGlow`, eased at `aimRate`), as a box under the forks does.
+ * How a belt's button answers (H2b, docs/CONVEYOR.md «Ajustes»), safe to tune: while the forklift stands on its pad
+ * (hint.button: the action presses it now) the pad brightens a little in its own colour (its emissive, up to
+ * `standGlow`, eased at `standRate`); an accepted press lights it (up to `glowPeak` within `glowRise` s, faded out by
+ * `glowSec`) and sinks it softly into the floor, BELT_BUTTON.dip (down in `downSec`, back up in `upSec`); a refused one
+ * only flashes it, muted (`refusedFlash` more, gone by `refusedSec`).
  */
-export const BUTTON_FEEL = { downSec: 0.08, upSec: 0.24, glowRise: 0.06, glowSec: 0.75, glowPeak: 0.55, aimGlow: 0.14, aimRate: 10 } as const;
+export const BUTTON_FEEL = {
+  downSec: 0.1,
+  upSec: 0.3,
+  glowRise: 0.06,
+  glowSec: 0.75,
+  glowPeak: 0.55,
+  standGlow: 0.24,
+  standRate: 10,
+  refusedFlash: 0.1,
+  refusedSec: 0.3,
+} as const;
 
 /**
- * A belt's button on screen (H2): its cap (a mesh of its own, standing on its post) dips on every press of the button
- * and glows briefly on an accepted one, following the belt's press counts (ConveyorState.presses / accepted): a level
- * loaded or restarted shows it at rest, nothing replays. Its material is its own (its emissive, the cap's colour).
+ * A belt's button on screen (H2b): its pad (a mesh of its own on the floor, its back arrow a child of it) brightens
+ * while the forklift stands on it, glows and dips on an accepted press and flashes, muted, on a refused one, following
+ * the belt's press counts (ConveyorState.presses / accepted): a level loaded or restarted shows it at rest, nothing
+ * replays. Its material is its own (its emissive, the pad's colour).
  */
 export class BeltButton {
   private presses = Number.NaN;
   private accepted = Number.NaN;
-  /** Seconds since the last press and since the last accepted one (Infinity: none playing). */
-  private sincePress = Infinity;
+  /** Seconds since the last accepted press and since the last refused one (Infinity: none playing). */
   private sinceAccepted = Infinity;
-  private aim = 0;
+  private sinceRefused = Infinity;
+  private stand = 0;
 
   constructor(
-    readonly cap: Mesh,
+    readonly pad: Mesh,
     private readonly material: MeshStandardMaterial,
-    /** World y of the cap at rest: the top of its post. */
-    private readonly restY: number,
   ) {}
 
-  /** Every frame: its belt's press counts, whether the action presses it now (the hint aims at it). */
-  sync(presses: number, accepted: number, aimed: boolean, dt: number): void {
+  /** Every frame: its belt's press counts, whether the forklift stands on it now (the hint names it). */
+  sync(presses: number, accepted: number, standing: boolean, dt: number): void {
     if (Number.isNaN(this.presses)) {
       this.presses = presses;
       this.accepted = accepted;
     }
-    if (presses !== this.presses) {
-      this.presses = presses;
-      this.sincePress = 0;
-    } else this.sincePress += dt;
-    if (accepted !== this.accepted) {
-      this.accepted = accepted;
-      this.sinceAccepted = 0;
-    } else this.sinceAccepted += dt;
+    const refused = presses - accepted !== this.presses - this.accepted;
+    if (accepted !== this.accepted) this.sinceAccepted = 0;
+    else this.sinceAccepted += dt;
+    if (refused) this.sinceRefused = 0;
+    else this.sinceRefused += dt;
+    this.presses = presses;
+    this.accepted = accepted;
     const F = BUTTON_FEEL;
-    // The dip: down quickly, up gently.
-    const t = this.sincePress;
+    // An accepted press: the dip, down quickly, up gently, and the glow.
+    const t = this.sinceAccepted;
     const dip = t < F.downSec ? easeOutCubic(t / F.downSec) : t < F.downSec + F.upSec ? 1 - easeInOutSine((t - F.downSec) / F.upSec) : 0;
-    this.cap.position.y = this.restY - BELT_BUTTON.dip * dip;
-    // The glow of an accepted press, over the faint one while aimed at.
-    const g = this.sinceAccepted;
-    const glow = g < F.glowRise ? g / F.glowRise : g < F.glowSec ? (1 - (g - F.glowRise) / (F.glowSec - F.glowRise)) ** 2 : 0;
-    this.aim = damp(this.aim, aimed ? 1 : 0, F.aimRate, dt);
-    if (this.aim < 1e-3) this.aim = 0;
-    this.material.emissiveIntensity = Math.max(F.glowPeak * glow, F.aimGlow * this.aim);
+    this.pad.position.y = dip > 0 ? -BELT_BUTTON.dip * dip : 0;
+    const glow = t < F.glowRise ? t / F.glowRise : t < F.glowSec ? (1 - (t - F.glowRise) / (F.glowSec - F.glowRise)) ** 2 : 0;
+    // A refused one: a short, muted flash over whatever it shows.
+    const r = this.sinceRefused;
+    const flash = r < F.refusedSec ? Math.sin((Math.PI * r) / F.refusedSec) : 0;
+    this.stand = damp(this.stand, standing ? 1 : 0, F.standRate, dt);
+    if (this.stand < 1e-3) this.stand = 0;
+    this.material.emissiveIntensity = Math.max(F.glowPeak * glow, F.standGlow * this.stand) + F.refusedFlash * flash;
   }
 }

@@ -26,9 +26,10 @@
  * the next move at that belt (or the end of the level) waits for the belt to deliver it, as a player would. A box lifted
  * off such a unit (a belt's input: one waiting there, its end exit full, or one its button brought back) is reached the
  * same way: one cell short, F there (the tines still outside), then in under it. A move the plan makes «from» a belt's
- * end exit (H2) is its button first: the forklift drives to a cell beside the button (straight in from the cell behind
- * it when it can, so it never turns its tines into the table), faces it, presses the action (no move), waits for the
- * belt to bring the box back and then lifts it off the input as above.
+ * end exit (H2) is its button first: the forklift drives onto the button's pad (H2b) straight in from a cell beside it,
+ * its tines clear of the belt's input, presses the action standing on it (no move), backs out the way it came in, waits
+ * for the belt to bring the box back and then lifts it off the input as above. It never picks or drops standing on a
+ * pad (the plan never asks it to: there the action is the press).
  */
 import { angleDelta } from '../core/math';
 import { FACING_X, FACING_Z } from '../core/racks';
@@ -372,17 +373,21 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
    * its end exit (its button).
    */
   const atBelt = (move: Move) => grid.feeds[move.drop] >= 0 || grid.fedBy[move.drop] >= 0 || grid.feeds[move.from] >= 0 || grid.fedBy[move.from] >= 0;
-  /** Each belt's end exit (its position) with a button (H2): the belt's id and the button's cell. */
-  const buttons = new Map<number, { id: string; cell: number }>();
+  /** Each belt's end exit (its position) with a button (H2): the belt's id, its button's pad and its input's cell. */
+  const buttons = new Map<number, { id: string; pad: number; input: number }>();
   for (const belt of level.conveyors ?? []) {
     const exit = slots.find((s) => s.unit.id === belt.output);
-    if (belt.button && exit) buttons.set(grid.positionOfSlot(exit.id), { id: belt.id, cell: grid.index(belt.button.x, belt.button.z) });
+    const input = slots.find((s) => s.unit.id === belt.input);
+    if (belt.button && exit && input)
+      buttons.set(grid.positionOfSlot(exit.id), { id: belt.id, pad: grid.index(belt.button.x, belt.button.z), input: grid.index(input.cell.x, input.cell.z) });
   }
   /**
-   * H2: press the button of the belt whose end exit is `exit` and wait for the belt to bring its box back to its input.
-   * The forklift drives to a cell beside the button, the shortest way that ends straight in from the cell behind it (so
-   * it never turns there, its tines sweeping into a table: docs/CONVEYOR.md decision U), else any; faces the button and
-   * presses the action. Null when done, else why not.
+   * H2b: press the button of the belt whose end exit is `exit` and wait for the belt to bring its box back to its input.
+   * The forklift drives onto the button's pad straight in from a free cell beside it, the shortest way that leaves its
+   * tines clear of the belt's input (heading into it they would reach in, and the press would be refused: «forks»);
+   * standing on it, it presses the action and backs straight out to that cell while the belt brings the box back. When
+   * no side but the one facing the input is free, it drives in from there and turns on the pad first (empty tines meet
+   * nothing turning there). Null when done, else why not.
    */
   const pressButton = (exit: number): string | null => {
     const button = buttons.get(exit);
@@ -391,35 +396,35 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     const occ = occupancyOf(grid, liveStacks(grid, snap));
     const fc = worldToCell(snap.forklift.pos, level.size);
     const fcell = grid.index(fc.x, fc.z);
-    let best: { path: number[]; dir: number; cost: number } | null = null;
-    for (const cell of grid.pressFrom[exit]) {
-      if (!isFree(grid, occ, cell)) continue;
-      const dir = [0, 1, 2, 3].find((d) => grid.step(cell, d) === button.cell)!;
-      const behind = grid.step(cell, (dir + 2) % 4);
-      const toBehind = behind >= 0 && isFree(grid, occ, behind) ? emptyPath(grid, occ, fcell, behind, closed) : null;
-      const straight = toBehind ? [...toBehind, cell] : null;
-      const path = straight ?? emptyPath(grid, occ, fcell, cell, closed);
+    let best: { path: number[]; dir: number; entry: number; clear: boolean; cost: number } | null = null;
+    for (let dir = 0; dir < 4; dir++) {
+      // Onto the pad heading `dir`, from the cell behind it that way.
+      const entry = grid.step(button.pad, (dir + 2) % 4);
+      if (entry < 0 || !isFree(grid, occ, entry)) continue;
+      const path = emptyPath(grid, occ, fcell, entry, closed);
       if (!path) continue;
-      // A path that turns on the cell itself costs a little more than one that comes in straight.
-      const cost = path.length + (straight ? 0 : 2);
-      if (!best || cost < best.cost) best = { path, dir, cost };
+      const clear = grid.step(button.pad, dir) !== button.input;
+      // Turning on the pad first costs a little more than coming in clear of the input.
+      const cost = path.length + (clear ? 0 : 3);
+      if (!best || cost < best.cost) best = { path: [...path, button.pad], dir, entry, clear, cost };
     }
-    if (!best) return 'no cell beside its button to press it from';
+    if (!best) return 'no free cell beside its button to drive onto it from';
     const pts = corners(grid, best.path);
     const here = snap.forklift.pos;
     if (pts.length > 1 && Math.hypot(pts[0].x - here.x, pts[0].z - here.z) < 0.6) pts.shift();
-    if (!pilot.follow(pts)) return 'stuck driving to its button';
-    if (!pilot.face(best.dir)) return 'cannot face its button';
-    // Facing it, the hint names it (as a box under the forks would be targeted): nudge on until it does.
-    let t = 0;
-    while (pilot.snap.hint.button !== button.id) {
-      pilot.tick(DIR_X[best.dir] * 0.25, DIR_Z[best.dir] * 0.25);
-      if ((t += pilot.dt) > 3) return `its button is never aimed at (hint ${pilot.snap.hint.button ?? 'none'})`;
+    if (!pilot.follow(pts)) return 'stuck driving onto its button';
+    if (!best.clear) {
+      const away = [0, 1, 2, 3].find((d) => grid.step(button.pad, d) !== button.input)!;
+      if (!pilot.face(away)) return 'cannot turn its tines out of the belt\'s input on its button';
     }
+    // Standing on it, the hint names it: the action is the press.
+    if (pilot.snap.hint.button !== button.id) return `not standing on its button (hint ${pilot.snap.hint.button ?? 'none'})`;
     const pressed = pilot.tick(0, 0, true).find((e) => e.type === 'beltButton');
     if (!pressed || pressed.type !== 'beltButton') return 'the press did nothing';
     if (!pressed.accepted) return `the press was refused (${pressed.reason})`;
     log?.(`  button of ${button.id}: ${pressed.boxId} comes back from ${pressed.fromSlotId}`);
+    // Off the pad, straight back the way it came in (after a turn on it, the next drive leaves it).
+    if (best.clear && !pilot.back(grid.center(best.entry))) return 'cannot back off its button';
     return pilot.waitForBelts() ? null : 'the belt never brought its box back';
   };
   for (let iter = 0; iter < 80; iter++) {

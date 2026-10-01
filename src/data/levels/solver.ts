@@ -42,17 +42,19 @@
  * shelf too, never reached by the forklift: it is filled through its input.
  * One move puts a box on the input and the belt carries it on, so in the model it lands straight in the end exit, which
  * is loaded from the input's front cell (`feeds` / `fedBy`, `front`); while the end exit is full the box stays on the
- * input (parking). The belt's cells are solid, and so is its button (H2).
+ * input (parking). The belt's cells are solid. Its button (H2b) is a pad on the floor: a cell the forklift drives over,
+ * empty or carrying, that is never a drop (no box rests there: no parking, no target) and where the forklift never picks
+ * or drops (standing on it, the action presses it), so no pick or drop pose stands on it (`pads`).
  * The button (H2) is a move of zero cost in the game: it brings the box resting at the end exit (if it is not locked
  * there) back onto the empty input, where it is lifted. The model folds it into the move that follows, so its graph
  * never has a free edge: a box at an end exit is lifted «from» the end exit (`canLift`: its belt has a button, the box
- * is not locked, the input is empty; `pickupStarts`: the button can be pressed, from a free cell beside it the forklift
- * reaches, and then it is lifted off the input from the input's front) and dropped anywhere a box lifted off the input
- * could go, as one move (the press counts none, the pick and the drop one, as in the game). So with a button any box may
- * ride down a belt: a wrong one, or any one into a «libre» end exit, parks there off the floor until the button brings
- * it back; without one (H1) only the end exit's destined box rides (a wrong one would never come back: the move the
- * model leaves out). One exit per belt so far, so the box that comes back is the one in it; with side exits (H3) the
- * order the boxes arrived in (the button brings back the last one) will join the state.
+ * is not locked, the input is empty; `pickupStarts`: the button can be pressed, its pad in the forklift's region, and
+ * then it is lifted off the input from the input's front) and dropped anywhere a box lifted off the input could go, as
+ * one move (the press counts none, the pick and the drop one, as in the game). So with a button any box may ride down a
+ * belt: a wrong one, or any one into a «libre» end exit, parks there off the floor until the button brings it back;
+ * without one (H1) only the end exit's destined box rides (a wrong one would never come back: the move the model leaves
+ * out). One exit per belt so far, so the box that comes back is the one in it; with side exits (H3) the order the boxes
+ * arrived in (the button brings back the last one) will join the state.
  */
 import {
   COLOR_IDS,
@@ -69,7 +71,7 @@ import {
 } from '../../core/types';
 import { assignBoxes, criteriaOf, levelDestinies, meets, sortableOf, usesSymbols, type Sortable } from '../../core/sorting';
 import { STORAGE_SKINS, hasStorage, slotIdOf, storageColumnsOf, type StorageColumnRef } from '../../core/storage';
-import { buttonFrontsOf, conveyorsOf } from '../../core/conveyors';
+import { conveyorsOf } from '../../core/conveyors';
 
 /* ------------------------------------------------------------------ */
 /* Grid model                                                          */
@@ -129,8 +131,16 @@ export class LevelGrid {
   /** Positions: the cells, then the storage positions (cellCount ‥ posCount − 1). Stacks arrays have this length. */
   readonly posCount: number;
   readonly size: { width: number; depth: number };
-  /** 1 where a shelf, a plant or a storage column inside the map stands (a truck's door cells are floor). */
+  /**
+   * 1 where a shelf, a plant, a storage column inside the map or a belt's cell stands (a truck's door cells are floor,
+   * and so is a belt's button pad).
+   */
   readonly solid: Uint8Array;
+  /**
+   * Per cell: 1 on a belt's button pad (docs/CONVEYOR.md H2b): floor the forklift drives over, empty or carrying, but
+   * never a drop (no box rests there) and never where it stands to pick or drop (there the action presses the button).
+   */
+  readonly pads: Uint8Array;
   /**
    * Per position, what each box of its stack must meet, bottom → top: on a zone cell the zone's own criteria (color
    * and / or symbol) for the bottom box, then the colors of its recipe; on a shelf its cue. In a level with storage
@@ -165,8 +175,8 @@ export class LevelGrid {
   readonly feeds: Int32Array;
   readonly fedBy: Int32Array;
   /**
-   * Per position: on the end exit of a belt with a button (H2), the free floor cells beside the button the forklift can
-   * press it from (facing it); empty everywhere else (a belt without a button: its end exit's box never comes back).
+   * Per position: on the end exit of a belt with a button (H2), the cells the forklift presses it from: its pad (H2b,
+   * standing on it); empty everywhere else (a belt without a button: its end exit's box never comes back).
    */
   readonly pressFrom: readonly (readonly number[])[];
   /** Neighbour of each cell in each direction, indexed like a pose (cell * 4 + dir); -1 outside the warehouse. */
@@ -199,6 +209,7 @@ export class LevelGrid {
     this.columns = columns;
     this.posCount = posCount;
     this.solid = new Uint8Array(this.cellCount);
+    this.pads = new Uint8Array(this.cellCount);
     this.steps = new Array<ZoneCriteria[] | null>(this.posCount).fill(null);
     this.kind = new Uint8Array(this.posCount).fill(POS_FLOOR);
     this.capacity = new Uint8Array(this.posCount).fill(this.stackLimit);
@@ -255,10 +266,9 @@ export class LevelGrid {
       }
     });
     // Conveyor belts: each end exit is filled through its input (loaded from the input's front cell, facing in), and
-    // the belt's cells and its button (H2) are solid.
+    // the belt's cells are solid; its button (H2b) is pressed standing on its pad (never occupied: the region decides).
     const columnOfUnit = (id: string) => columns.findIndex((col) => col.ref.unit.id === id);
     const pressFrom: number[][] = Array.from({ length: this.posCount }, () => []);
-    const buttons: { exit: number; button: { x: number; z: number } }[] = [];
     for (const belt of conveyorsOf(level)) {
       const input = columns[columnOfUnit(belt.input)]?.positions[0];
       const output = columns[columnOfUnit(belt.output)]?.positions[0];
@@ -267,13 +277,13 @@ export class LevelGrid {
       this.fedBy[output] = input;
       this.front[output] = this.front[input];
       this.inward[output] = this.inward[input];
-      for (const cell of [...belt.cells, ...(belt.button ? [belt.button] : [])]) if (this.inMap(cell.x, cell.z)) this.solid[this.index(cell.x, cell.z)] = 1;
-      if (belt.button) buttons.push({ exit: output, button: belt.button });
-    }
-    // A button is pressed from a floor cell beside it free of furniture (boxes may come and go: the region decides).
-    for (const { exit, button } of buttons) {
-      const free = (x: number, z: number) => this.inMap(x, z) && this.solid[this.index(x, z)] === 0;
-      pressFrom[exit] = buttonFrontsOf(button, free).map((c) => this.index(c.x, c.z));
+      for (const cell of belt.cells) if (this.inMap(cell.x, cell.z)) this.solid[this.index(cell.x, cell.z)] = 1;
+      const button = belt.button;
+      if (button && this.inMap(button.x, button.z)) {
+        const pad = this.index(button.x, button.z);
+        this.pads[pad] = 1;
+        pressFrom[output] = [pad];
+      }
     }
     this.pressFrom = pressFrom;
     level.zones.forEach((zone, i) => {
@@ -432,7 +442,7 @@ export function lockedAt(grid: LevelGrid, stacks: Stacks, pos: number): boolean 
 /**
  * The top box of `pos` can be lifted: there is one and it is not locked (lockedAt). A box in a belt's end exit only
  * through its button (H2): the belt has one and the input is empty (the box comes back onto it, and is lifted there:
- * pickupStarts says whether the forklift can press the button and reach the input now).
+ * pickupStarts says whether the forklift can reach the button's pad and the input now).
  */
 export function canLift(grid: LevelGrid, stacks: Stacks, pos: number): boolean {
   if (stacks[pos].length === 0 || lockedAt(grid, stacks, pos)) return false;
@@ -586,10 +596,11 @@ export function regionShift(grid: LevelGrid, occupancy: Int16Array, region: Uint
 }
 
 /**
- * Pick-up poses for the top box at `from` (cell * 4 + dir): facing it from a reachable orthogonal neighbour; for a
- * storage position, facing into its column from the column's front cell (a rack's front cell, a truck's door cell). A
- * box in a belt's end exit (H2) comes back with the button first: only while the forklift reaches a cell the button is
- * pressed from, and then it is lifted off the input, from the input's front (its end exit shares it).
+ * Pick-up poses for the top box at `from` (cell * 4 + dir): facing it from a reachable orthogonal neighbour (never from
+ * a belt's button pad, where the action presses the button); for a storage position, facing into its column from the
+ * column's front cell (a rack's front cell, a truck's door cell). A box in a belt's end exit (H2) comes back with the
+ * button first: only while the forklift reaches the button's pad (H2b), and then it is lifted off the input, from the
+ * input's front (its end exit shares it).
  */
 export function pickupStarts(grid: LevelGrid, region: Uint8Array, from: number): number[] {
   const starts: number[] = [];
@@ -601,7 +612,7 @@ export function pickupStarts(grid: LevelGrid, region: Uint8Array, from: number):
   }
   for (let dir = 0; dir < 4; dir++) {
     const approach = grid.step(from, (dir + 2) % 4);
-    if (approach >= 0 && region[approach] === 1) starts.push(approach * 4 + dir);
+    if (approach >= 0 && region[approach] === 1 && grid.pads[approach] === 0) starts.push(approach * 4 + dir);
   }
   return starts;
 }
@@ -626,12 +637,15 @@ export interface CarryDrops {
  * stack with room (not a locked box) that a forward step or a turn brings ahead, or into a storage column that a
  * forward step onto its front cell (facing into it) brings ahead: into any empty level of a shelves column, on top of a
  * stack column with room (a locked box included; through the door of a truck). A turn never puts the box into storage.
- * A start pose with the box inside a storage column (just lifted out of it) can only back straight out. Chains are the
- * cheapest ones, a step back (grid.reverse) counting double, so a chain only backs up when that saves driving.
+ * A start pose with the box inside a storage column (just lifted out of it) can only back straight out. The forklift
+ * drives over a belt's button pad but never drops while it stands there (the action would press the button): no drop
+ * leaves it on one. Chains are the cheapest ones, a step back (grid.reverse) counting double, so a chain only backs up
+ * when that saves driving.
  */
 export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stacks, starts: readonly number[]): CarryDrops {
   const links = grid.links;
   const solid = grid.solid;
+  const pads = grid.pads;
   const limit = grid.stackLimit;
   const reverse = grid.reverse;
   const parent = new Int32Array(grid.cellCount * 4).fill(-2);
@@ -672,7 +686,9 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
   const firstPose = new Int32Array(grid.posCount);
   const firstExtra = new Int32Array(grid.posCount);
   // Every recorded drop is a cell of the warehouse: the front of a reached pose is its own box's cell or free floor.
+  // `cell` is where the drop leaves the forklift: never a button pad.
   const record = (drop: number, cell: number, pose: number, extra: number) => {
+    if (pads[cell] === 1) return;
     const cells = cellsAt[drop];
     if (cells) cells.push(cell);
     else {
@@ -745,6 +761,7 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
       return chainOf(firstPose[drop], firstExtra[drop]);
     },
     chainTo(drop: number, cell: number) {
+      if (cell >= 0 && cell < grid.cellCount && pads[cell] === 1) return undefined;
       if (grid.isStorage(drop)) {
         // Into storage: from the cell behind its column's front cell, one step on (the forklift ends on the front cell).
         const front = grid.front[drop];
@@ -774,9 +791,9 @@ export function carrySearch(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
 
 /**
  * The undo test of the dead-end check: every carry pose (cell * 4 + dir, box ahead) from which the carrying rules of
- * carrySearch lead to a drop on `target` that leaves the forklift on a cell with `end[cell] === 1`. Same `occupancy` /
- * `stacks` as carrySearch (without the carried box). A pose whose front is occupied (a pick from the top of a stack)
- * can only be a starting pose, so nothing leads into it.
+ * carrySearch lead to a drop on `target` that leaves the forklift on a cell with `end[cell] === 1` (never a button
+ * pad, as there). Same `occupancy` / `stacks` as carrySearch (without the carried box). A pose whose front is occupied
+ * (a pick from the top of a stack) can only be a starting pose, so nothing leads into it.
  */
 export function carryBackTo(grid: LevelGrid, occupancy: Int16Array, stacks: Stacks, target: number, end: Uint8Array): Uint8Array {
   const found = new Uint8Array(grid.cellCount * 4);
@@ -800,7 +817,7 @@ export function carryBackTo(grid: LevelGrid, occupancy: Int16Array, stacks: Stac
   for (let dir = 0; dir < 4 && !grid.isStorage(target); dir++) {
     // `before` is the cell next to the target on the side the forklift comes from, facing `dir`.
     const before = grid.step(target, (dir + 2) % 4);
-    if (!free(before) || end[before] !== 1) continue;
+    if (!free(before) || end[before] !== 1 || grid.pads[before] === 1) continue;
     if (free(target)) {
       add(before * 4 + dir); // facing the free target: drop on it
     } else if (stackable) {
@@ -855,7 +872,8 @@ export interface Move {
  * one box, and a stack column takes its next level on a locked box). Conveyor belts (docs/CONVEYOR.md): a box set down
  * on an empty input rides on into its end exit while that is free, so it lands there: with a button (H2) any box (a
  * wrong one parks there until the button brings it back), without one only the end exit's destined box (a wrong one
- * would never come back: the one move the model leaves out); with the end exit full it stays on the input.
+ * would never come back: the one move the model leaves out); with the end exit full it stays on the input. Never onto a
+ * belt's button pad (H2b): no box rests there.
  */
 export function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: number, box: string): boolean {
   if (drop === from || drop < 0 || drop >= grid.posCount || lifted[drop].length >= grid.capacity[drop]) return false;
@@ -868,7 +886,7 @@ export function validDrop(grid: LevelGrid, lifted: Stacks, from: number, drop: n
   }
   const exit = grid.feeds[drop];
   if (exit >= 0) return lifted[exit].length >= grid.capacity[exit];
-  return grid.isStorage(drop) || (grid.solid[drop] === 0 && !lockedAt(grid, lifted, drop));
+  return grid.isStorage(drop) || (grid.solid[drop] === 0 && grid.pads[drop] === 0 && !lockedAt(grid, lifted, drop));
 }
 
 /** Compact, unique text of a state: the non-empty stacks by cell, then the reachable region (its lowest cell). */

@@ -1,6 +1,5 @@
 import { angleDelta, approach, clamp, degToRad, wrapAngle } from '../core/math';
 import {
-  FACINGS,
   TINES,
   cellToWorld,
   type BoxState,
@@ -20,7 +19,7 @@ import { hasStorage, storageSlotsOf } from '../core/storage';
 import { conveyorsOf, hasBeltButtons } from '../core/conveyors';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, SOLID_TOP_EPSILON, pointRectDistance } from './collision';
-import { CONVEYOR, ConveyorSystem, buttonRefusal, type ConveyorHost } from './conveyor';
+import { CONVEYOR, ConveyorSystem, buttonRefusal, onButtonPad, type ConveyorHost } from './conveyor';
 import { forkRiseRate } from './forkRise';
 import { ForkliftController, MOVE_EPSILON } from './forklift';
 import { LevelGrid } from './grid';
@@ -134,8 +133,8 @@ export class GameState {
     returned: (belt, box) => this.returned(belt, box),
   };
   /**
-   * Per belt (level.conveyors order): the world centre of its button's cell (H2), or null for a belt without one;
-   * `hasButtons` = some belt has one (the hint names the button aimed at: InteractionHint.button).
+   * Per belt (level.conveyors order): the world centre of its button's pad (H2b), or null for a belt without one;
+   * `hasButtons` = some belt has one (the hint names the button stood on: InteractionHint.button).
    */
   private readonly buttonCentres: (Vec2 | null)[];
   private readonly hasButtons: boolean;
@@ -320,8 +319,8 @@ export class GameState {
   }
 
   private act(): void {
-    // Facing a belt's button (docs/CONVEYOR.md H2), the action presses it, the forks empty or carrying.
-    const button = this.aimedButton();
+    // Standing on a belt's button (docs/CONVEYOR.md H2b), the action presses it, the forks empty or carrying.
+    const button = this.standingOnButton();
     if (button >= 0) {
       this.pressButton(button);
       return;
@@ -549,29 +548,17 @@ export class GameState {
   }
 
   /**
-   * The belt whose button (docs/CONVEYOR.md H2) the action presses now, or -1: the forklift faces the button's cell from
-   * one of its sides the way it faces a rack column it picks from (STORAGE_ACCESS.front: its heading within `faceAngle`
-   * of straight in, the fork point within `faceLateral` of the centre line, from `faceNear` in front of the cell's face to
-   * `faceFar` past it), with the forks empty or carrying. The button cell is an obstacle (the body stops at its edge,
-   * the fork point then over its post) and never a drop target, so nothing else is meant there.
+   * The belt whose button (docs/CONVEYOR.md H2b) the action presses now, or -1: the forklift stands on its pad, its body
+   * centre inside the pad's cell (logic/conveyor onButtonPad: BUTTON_PAD.margin in from each edge), whatever its heading
+   * and with the forks empty or carrying. There the action is the press and nothing else: no box is ever picked or set
+   * down from the pad (nor onto it: Interaction.findDrop).
    */
-  private aimedButton(): number {
+  private standingOnButton(): number {
     if (!this.hasButtons) return -1;
-    const f = this.snapshot.forklift;
-    const row = STORAGE_ACCESS.front;
-    const reach = this.config.forklift.forkReach;
-    const px = f.pos.x + Math.sin(f.heading) * reach;
-    const pz = f.pos.z + Math.cos(f.heading) * reach;
-    const frame = this.frame;
+    const p = this.snapshot.forklift.pos;
     for (let b = 0; b < this.buttonCentres.length; b++) {
       const centre = this.buttonCentres[b];
-      if (!centre) continue;
-      // Each side of its cell (the side the forklift stands on), as if it were a column loaded from there.
-      for (const side of FACINGS) {
-        if (Math.abs(angleDelta(f.heading, inwardHeading(side))) > row.faceAngle) continue;
-        columnFrame(centre, side, px, pz, frame);
-        if (Math.abs(frame.lateral) <= row.faceLateral && frame.depth >= -row.faceNear && frame.depth <= row.faceFar) return b;
-      }
+      if (centre && onButtonPad(p.x, p.z, centre)) return b;
     }
     return -1;
   }
@@ -1067,8 +1054,8 @@ export class GameState {
       return;
     }
     this.refreshStorageAim();
-    // Facing a belt's button (H2): the action presses it, so nothing would be picked or dropped now.
-    const button = this.aimedButton();
+    // Standing on a belt's button (H2b): the action presses it, so nothing would be picked or dropped now.
+    const button = this.standingOnButton();
     if (button >= 0) {
       hint.button = snap.conveyors[button].id;
       hint.dropCell = null;

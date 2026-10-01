@@ -12,10 +12,11 @@
 import { describe, expect, it } from 'vitest';
 import { cueFits, isDestined } from '../core/sorting';
 import { storageOf, storageSlotsOf } from '../core/storage';
-import type { GameEvent, GameSnapshot } from '../core/types';
+import { cellToWorld, type GameEvent, type GameSnapshot, type InputFrame } from '../core/types';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
 import { LevelGrid, misplacedCount } from '../data/levels/solver';
 import { GameState } from '../logic/GameState';
+import { onButtonPad } from '../logic/conveyor';
 import { autopilot, liveStacks } from './autopilot';
 
 const level = getSpecialLevel(BENCHMARK_ID)!;
@@ -99,13 +100,26 @@ describe('the Benchmark is playable with the real controls', () => {
   });
 });
 
-describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md)', () => {
+describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md; H2b: a pad on the floor at (7,3))', () => {
   it.each([
     ['60 fps', 1 / 60],
     ['20 fps (Game dt clamp)', 1 / 20],
-  ] as const)('%s: a wrong box sent to B first (the yellow ●) comes back with the button, and the autopilot still finishes, one move more', (_, dt) => {
+  ] as const)('%s: a wrong box sent to B first (the yellow ●) comes back with the button, pressed standing on it, and the autopilot still finishes, one move more', (_, dt) => {
     const exit = grid.positionOfSlot('s1:0:1');
-    const out = autopilot(level, dt, [{ from: grid.index(8, 3), drop: exit }]);
+    // Where the forklift stands at every action pressed while the hint names the button.
+    const onButton: { x: number; z: number }[] = [];
+    const update = GameState.prototype.update;
+    GameState.prototype.update = function (this: GameState, step: number, frame: InputFrame) {
+      const snap = this.getSnapshot();
+      if (frame.actionPressed && snap.hint.button) onButton.push({ ...snap.forklift.pos });
+      return update.call(this, step, frame);
+    };
+    let out: ReturnType<typeof autopilot>;
+    try {
+      out = autopilot(level, dt, [{ from: grid.index(8, 3), drop: exit }]);
+    } finally {
+      GameState.prototype.update = update;
+    }
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     // The wrong ride (the soft «no» at B), the press (accepted: no move), the ride back, the box lifted off A at level 1.
@@ -114,6 +128,8 @@ describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md)', () => {
     const pressedAt = out.events.findIndex((e) => e.type === 'beltButton');
     expect(out.events[pressedAt]).toEqual({ type: 'beltButton', conveyorId: 'c1', accepted: true, boxId: delivered[0].boxId, fromSlotId: 's1:0:1' });
     expect(out.events.filter((e) => e.type === 'beltButton')).toHaveLength(1);
+    expect(onButton).toHaveLength(1);
+    expect(onButtonPad(onButton[0].x, onButton[0].z, cellToWorld(level.conveyors![0].button!, level.size))).toBe(true);
     const back = out.events.findIndex((e) => e.type === 'beltReturned');
     expect(back).toBeGreaterThan(pressedAt);
     expect(out.events.slice(pressedAt, back).some((e) => e.type === 'beltStarted' && e.reverse === true)).toBe(true);

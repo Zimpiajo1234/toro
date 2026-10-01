@@ -70,21 +70,20 @@ function coarseProblems(level: LevelData): string[] {
 }
 
 /**
- * Zones, boxes and the forklift spawn hidden from the default camera (yaw 45°, sitting toward +x / +z): the cells
- * east, south and south-east of an item stand between it and the camera. Blockers there are shelves, plants and
- * any cell whose stack stands 2+ boxes tall at the start or once its recipe is built (1.28 u, taller than a 2-tier
- * shelf; stacks only ghost for the forklift). A 3-high tower (1.92 u) also shades the cells one step further.
+ * Zones, boxes, belt buttons (docs/CONVEYOR.md H2b: pads on the floor) and the forklift spawn hidden from the default
+ * camera (yaw 45°, sitting toward +x / +z): the cells east, south and south-east of an item stand between it and the
+ * camera. Blockers there are shelves, plants and any cell whose stack stands 2+ boxes tall at the start or once its
+ * recipe is built (1.28 u, taller than a 2-tier shelf; stacks only ghost for the forklift). A 3-high tower (1.92 u)
+ * also shades the cells one step further.
  */
 function hiddenItems(level: LevelData): string[] {
   const grid = new LevelGrid(level);
   const stacks = stacksOf(grid, level);
-  // A belt's button (docs/CONVEYOR.md H2) is a slim post with a small cap, lower than a box: solid, yet it hides nothing.
-  const buttons = new Set((level.conveyors ?? []).flatMap((c) => (c.button ? [grid.index(c.button.x, c.button.z)] : [])));
   const blocks = (x: number, z: number, far: boolean) => {
     if (x >= grid.width || z >= grid.depth) return false;
     const cell = grid.index(x, z);
     const tallest = Math.max(stacks[cell].length, grid.steps[cell]?.length ?? 0);
-    return far ? tallest >= 3 : (grid.solid[cell] === 1 && !buttons.has(cell)) || tallest >= 2;
+    return far ? tallest >= 3 : grid.solid[cell] === 1 || tallest >= 2;
   };
   // Offsets never include the item's own cell, so boxes of a stack never hide each other or their zone.
   const near = [
@@ -99,7 +98,8 @@ function hiddenItems(level: LevelData): string[] {
   ] as const;
   const inFront = (x: number, z: number) =>
     near.some(([dx, dz]) => blocks(x + dx, z + dz, false)) || far.some(([dx, dz]) => blocks(x + dx, z + dz, true));
-  return [...level.zones, ...level.boxes, { id: 'forklift', ...level.forklift }]
+  const buttons = (level.conveyors ?? []).flatMap((c) => (c.button ? [{ id: `botón ${c.id}`, ...c.button }] : []));
+  return [...level.zones, ...level.boxes, ...buttons, { id: 'forklift', ...level.forklift }]
     .filter((item) => inFront(item.x, item.z))
     .map((item) => `${item.id}@${item.x},${item.z}`);
 }
@@ -386,7 +386,7 @@ describe('decor', () => {
       for (let i = w.at; i < w.at + w.width; i++) expect(w.wall === 'north' ? shelfAt(i, 0) : shelfAt(0, i)).toBe(false);
   });
 
-  it.each(LEVELS.map((l) => [l.id, l] as const))('%s never hides the forklift, a zone or a box behind a shelf, plant or tall stack', (_, level) => {
+  it.each(LEVELS.map((l) => [l.id, l] as const))('%s never hides the forklift, a zone, a box or a belt button behind a shelf, plant or tall stack', (_, level) => {
     expect(hiddenItems(level)).toEqual([]);
   });
 

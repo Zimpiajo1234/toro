@@ -170,7 +170,8 @@ export class AudioEngine {
           rt.sfx.beltHum(now, event.runSec, event.rampSec);
           break;
         case 'beltButton':
-          // Its button (H2): the cap's soft click; with nothing it can do, a duller one and a short muted «no».
+          // Its button (H2, a pad on the floor): its soft click; with nothing it can do, a duller one and a short muted
+          // «no».
           if (event.accepted) rt.sfx.buttonClick(now);
           else rt.sfx.buttonRefused(now);
           break;

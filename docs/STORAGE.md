@@ -343,12 +343,14 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   sus puntas su nivel base); `logic/conveyor.ts` (`ConveyorSystem`, desde `GameState.update`; `snapshot.conveyors`;
   eventos `beltStarted` / `beltDelivered` / `beltBlocked`) y `LevelGrid.seal`; en el solver, `feeds` / `fedBy` y
   `validDrop`; en el render, `animate` y `landDelay` (opcionales de `StorageUnitView`). Su **botón** (H2): fuera del
-  modelo común (no es una unidad: una casilla de `LevelConveyor.button`, un obstáculo), en `core/conveyors.ts`
-  (`hasBeltButtons`, `buttonFrontsOf`), `GameState` (`hint.button`, eventos `beltButton` / `beltReturned`),
-  `ConveyorSystem` (`keep` / `takeLast` / `reverse`, `buttonRefusal`), el solver (`pressFrom`, `canLift` /
-  `pickupStarts` desde la salida), el piloto (`pressButton`), el render (`views/ConveyorView` `BeltButton`), el audio
-  (`buttonClick` / `buttonRefused`) y la UI (`UIState.beltButton`). El modelo común no cambia: la caja que vuelve deja
-  el hueco de la salida y entra en el de la entrada como cualquier caja guardada (sellado mientras viaja).
+  modelo común (no es una unidad: una casilla de `LevelConveyor.button`; desde H2b, una almohadilla en el suelo, que no
+  es un obstáculo y nunca lleva una caja), en `core/conveyors.ts` (`hasBeltButtons`, `buttonEntriesOf`),
+  `logic/conveyor.ts` (`BUTTON_PAD`, `onButtonPad`, `buttonRefusal`), `LevelGrid` (`padAt`: `canTakeBox` nunca en ella),
+  `GameState` (`hint.button` con la carretilla encima, eventos `beltButton` / `beltReturned`), `ConveyorSystem` (`keep`
+  / `takeLast` / `reverse`), el solver (`pads`, `pressFrom` = la almohadilla, `canLift` / `pickupStarts` desde la
+  salida), el piloto (`pressButton`), el render (`views/ConveyorView` `BeltButton`), el audio (`buttonClick` /
+  `buttonRefused`) y la UI (`UIState.beltButton`). El modelo común no cambia: la caja que vuelve deja el hueco de la
+  salida y entra en el de la entrada como cualquier caja guardada (sellado mientras viaja).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -454,6 +456,20 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
     obstáculo nuevo, que cambia un poco los trayectos por allí (el mismo código de H2 sin el botón da los 15229 / 5560
     de antes); pulsaciones de F / V (10: 7 + 1 + 2) y frames marcha atrás (2348 / 772), iguales; **`buttonPresses: 0`**
     (clave nueva, solo en niveles con botón); el registro de movimientos, el mismo.
+- **Regenerada con el botón en el suelo** (H2b de docs/CONVEYOR.md, 2026-10-01: el botón, una almohadilla en el suelo
+  que no es un obstáculo, desde la que no se coge ni se deja, pasa de (7,2) a (7,3), a la izquierda de la casilla de
+  delante de A). Todas las diferencias son del Benchmark (el nivel de prueba de los camiones, byte a byte igual;
+  `targets`, `solver` y `start`, iguales: el mismo plan de 15, que no usa el botón):
+  - `storage.conveyors`: ` · botón 7,2` → **` · botón 7,3`**.
+  - `metrics`: estrechas **9 → 8** y libre **74 → 75 %**: la almohadilla es suelo (se pasa por encima, también con
+    carga), así que (7,1) recupera sus cuadrados de 2×2 y la casilla del botón cuenta como libre; (7,3) no es estrecha.
+    Son los números de H1c. `belts`, igual (`buttons: 1`); movimientos, bloqueos, trampas, ambiguas y repartos, iguales.
+  - `autopilot60` / `autopilot20`: **15449 / 5636** frames (antes 15184 / 5543: +265 / +93) y **2246 / 738** frames
+    marcha atrás (antes 2348 / 772: −102 / −34). Es la jugada 6, el amarillo ● de (8,3) al hueco 2 de S: en H2 el piloto
+    lo cogía desde (7,3), de cara al este; ahora (7,3) es la almohadilla, donde Espacio pulsa (el modelo nunca coge ni
+    deja desde ella), así que lo coge desde (8,4), de cara al norte, y rodea por (5,4). Con la almohadilla en (7,2) el
+    piloto da los 15229 / 5560 de H1c, como sin botón: la almohadilla solo cambia un trayecto si ocupa una casilla de
+    trabajo. Pulsaciones de F / V (10) y `buttonPresses: 0`, iguales; el registro de movimientos, el mismo.
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
   una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
   repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización

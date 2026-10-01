@@ -99,10 +99,10 @@ export const BELT_HUM_WHISPER = 0.6;
 export const BELT_HUM_LOWPASS_HZ = 760;
 
 /**
- * A belt's button (docs/CONVEYOR.md H2): its mushroom cap pressed, a soft mechanical click — the plastic cap going down
- * (a short band of noise around `hz`, a little tick tone) and, `release` s later, coming back up a touch higher and
- * softer — at `level` (peak). Refused, the cap goes down on nothing: a duller click (`refusedHz`) and the soft «no» of a
- * wrong target, shorter and at `refusedBuzz` of its level, `refusedAfter` s later.
+ * A belt's button (docs/CONVEYOR.md H2; a pad on the floor since H2b): pressed, a soft mechanical click — the pad giving
+ * under the forklift (a short band of noise around `hz`, a little tick tone) and, `release` s later, coming back up a
+ * touch higher and softer — at `level` (peak). Refused, it gives on nothing: a duller click (`refusedHz`) and the soft
+ * «no» of a wrong target, shorter and at `refusedBuzz` of its level, `refusedAfter` s later.
  */
 export const BUTTON_CLICK = {
   hz: 1650,
@@ -315,7 +315,7 @@ export class SfxPlayer {
   }
 
   /**
-   * Conveyor belts (H2): its button pressed and accepted, at `t`: the soft mechanical click of its cap going down and
+   * Conveyor belts (H2): its button pressed and accepted, at `t`: the soft mechanical click of its pad going down and
    * coming back up (BUTTON_CLICK). The belt's hum follows when it starts back (beltHum).
    */
   buttonClick(t: number): void {
@@ -328,7 +328,7 @@ export class SfxPlayer {
 
   /**
    * Conveyor belts (H2): its button pressed with nothing it can do (the belt busy, its input taken, nothing to bring
-   * back), at `t`: the cap's duller click and, just after, a short, softer version of the wrong-target «no» (wrongBuzz):
+   * back), at `t`: the pad's duller click and, just after, a short, softer version of the wrong-target «no» (wrongBuzz):
    * muted, never an alarm.
    */
   buttonRefused(t: number): void {

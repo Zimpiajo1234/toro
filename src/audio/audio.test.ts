@@ -443,7 +443,7 @@ describe('SfxPlayer', () => {
     expect(bell).not.toHaveBeenCalled();
   });
 
-  it('a belt\'s button (H2): a soft mechanical click, the cap down then back up; refused, a duller click and a short muted «no»', () => {
+  it('a belt\'s button (H2, a pad since H2b): a soft mechanical click, the pad down then back up; refused, a duller click and a short muted «no»', () => {
     const accepted = setup();
     accepted.sfx.buttonClick(1);
     const bell = vi.spyOn(BellInstrument.prototype, 'strike');

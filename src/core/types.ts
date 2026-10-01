@@ -269,9 +269,9 @@ export interface LevelConveyor {
   /** Its belt cells in order, from the one next to the input to the one next to the end exit (at least one). */
   cells: ConveyorCell[];
   /**
-   * Its button (docs/CONVEYOR.md, H2): a map cell of its own, an obstacle (a mushroom cap on a post, in the belt's
-   * identity colour), pressed with the action from a free floor cell beside it, facing it. Omitted = no button (at most
-   * one per belt).
+   * Its button (docs/CONVEYOR.md, H2 / H2b): a map cell of its own, a pad on the floor in the belt's identity colour
+   * with a back arrow on it. Floor the forklift drives onto (never an obstacle) where no box ever rests; standing on it
+   * (its body centre inside, any heading), the action presses it. Omitted = no button (at most one per belt).
    */
   button?: CellPos;
 }
@@ -590,8 +590,8 @@ export interface InteractionHint {
   storage: StorageHint | null;
   /**
    * Levels with a belt button (docs/CONVEYOR.md H2; absent in every other level, so their hint is as it always was): the
-   * id of the belt whose button the action presses now (the forklift faces it, within reach), else null. While it is
-   * set nothing is picked or dropped: the action is the press.
+   * id of the belt whose button the action presses now (H2b: the forklift stands on its pad, the forks empty or
+   * carrying), else null. While it is set nothing is picked or dropped: the action is the press.
    */
   button?: string | null;
 }
@@ -745,10 +745,10 @@ export type GameEvent =
    */
   | { type: 'beltBlocked'; conveyorId: string; boxId: string }
   /**
-   * The action pressed the button of belt `conveyorId` (docs/CONVEYOR.md H2: facing it; empty forks or carrying). No box
-   * move. Accepted: the belt runs in reverse (after CONVEYOR.pressSec: beltStarted with `reverse`) and brings `boxId`,
-   * the last box that reached one of its exits without being locked there (from slot `fromSlotId`), back to its input
-   * (beltReturned). Refused (`reason`: BeltButtonRefusal): nothing moves, a soft «no».
+   * The action pressed the button of belt `conveyorId` (docs/CONVEYOR.md H2: standing on its pad, H2b; empty forks or
+   * carrying). No box move. Accepted: the belt runs in reverse (after CONVEYOR.pressSec: beltStarted with `reverse`) and
+   * brings `boxId`, the last box that reached one of its exits without being locked there (from slot `fromSlotId`), back
+   * to its input (beltReturned). Refused (`reason`: BeltButtonRefusal): nothing moves, a soft «no».
    */
   | { type: 'beltButton'; conveyorId: string; accepted: true; boxId: string; fromSlotId: string }
   | { type: 'beltButton'; conveyorId: string; accepted: false; reason: BeltButtonRefusal }

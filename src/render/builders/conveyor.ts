@@ -1,4 +1,4 @@
-import { CylinderGeometry, Path, Shape, ShapeGeometry, SphereGeometry, Vector2, type BufferGeometry } from 'three';
+import { Path, Shape, ShapeGeometry, Vector2, type BufferGeometry } from 'three';
 import { FACING_X, FACING_Z } from '../../core/racks';
 import { BASE_GUARD } from '../../core/storage';
 import { cellToWorld, type Facing, type LevelConveyor, type LevelData, type LevelStorage } from '../../core/types';
@@ -20,8 +20,9 @@ import { buildCueFace, buildGlowFrameGeometry, rectRingShape, type CueDims, type
  * the drop icon painted on it and closed black guards on its two sides (it is loaded from its front only). Its end exit
  * is the table's last stretch: a deck with the cue sticker of its level (the rack's, builders/rack buildCueFace) painted
  * flat on it and a low solid skirting in the belt's identity colour along its three open edges, never on the side
- * joined to the belt. Its button (H2), on a cell of its own next to the input, is a mushroom cap in that same identity
- * colour on a slim near-black post («una seta en un poste»): A and its button read as one.
+ * joined to the belt. Its button (H2b), on a floor cell of its own next to the input, is the input's pad again, on the
+ * floor, with a cream back arrow on it («un slot en el suelo con un icono de flecha hacia atrás… del mismo color que la
+ * base A»): A and its button read as one.
  */
 
 /**
@@ -104,19 +105,31 @@ export const BELT_GLOW: GlowFrameDims & { halfH: number; lift: number } = {
 export const BELT_BURST = { halfW: 0.44 } as const;
 
 /**
- * A belt's button (H2; buildBeltButtonPost, buildBeltButtonCap), on a cell of its own next to its input: «una seta en
- * un poste». A slim post on a small round foot in the table's near-black (Theme.conveyor.side) and, on top, a low
- * mushroom cap in the belt's identity colour (its input's pad's and its end exit's skirting's: with several belts each
- * button pairs with its own). Heights from the floor: the cap a little over the table top and its input's guards (it
- * reads as the belt's), well under a box resting on the input; `dip` = how far the cap goes down when pressed
- * (views/ConveyorView BeltButton). Low-poly: `segments` round.
+ * A belt's button (H2b; buildBeltButtonPad, buildBeltButtonIcon), on a floor cell of its own next to its input: «un slot
+ * en el suelo… del mismo color que la base A». Its input's pad over again, on the floor: the same rounded square
+ * (BELT.pad), as thick as the input's (BELT.skin), the same rubber, in the belt's identity colour (its input's pad's and
+ * its end exit's skirting's: with several belts each button pairs with its own), with a back arrow painted on it
+ * (BELT_BUTTON_ICON). Flat: the forklift drives onto it. `dip` = how far it sinks into the floor on an accepted press
+ * (views/ConveyorView BeltButton).
  */
-export const BELT_BUTTON = {
-  foot: { radius: 0.11, height: 0.025 },
-  post: { radius: 0.042, top: 0.84 },
-  /** The cap: its round `radius`, its whole `height` over the post, the straight `rim` under its dome. */
-  cap: { radius: 0.15, height: 0.075, rim: 0.02 },
-  dip: 0.03,
+export const BELT_BUTTON = { half: BELT.pad.half, radius: BELT.pad.radius, height: BELT.skin, dip: 0.01 } as const;
+
+/**
+ * The back arrow painted flat on a belt's button (buildBeltButtonIcon, cell-local: +z along its belt, from the input
+ * toward the end exit): «un icono de flecha hacia atrás», a bold U-turn in cream (Theme.conveyor.icon, the drop icon's)
+ * on its identity colour. Its tail runs along the belt toward the end exit, it turns over and its head points back,
+ * toward the input (seen with the belt running up: ↶, the box coming back). Turned with its belt; a turn is never a
+ * mirror, so it reads the same from every camera turn. The forklift standing on the pad covers it.
+ */
+export const BELT_BUTTON_ICON = {
+  lift: 0.003,
+  /** The turn: the radius of its centre line, its centre (z), the width of the line. */
+  turn: { radius: 0.14, z: 0.05, width: 0.075 },
+  /** Where its tail starts (z). */
+  tail: -0.2,
+  /** The head: half its base, its length back toward the input. */
+  head: { half: 0.11, length: 0.14 },
+  /** Points on each half-turn edge. */
   segments: 10,
 } as const;
 
@@ -287,29 +300,49 @@ export function buildBeltGlowGeometry(top: number): BufferGeometry {
 }
 
 /**
- * The post of a belt's button (BELT_BUTTON), in its cell-local space (origin = its cell's centre on the floor): a small
- * round foot and a slim post up to under its cap, in the table's near-black. Static; it casts and takes shadows.
+ * The pad of a belt's button (BELT_BUTTON), in its cell-local space (origin = its cell's centre on the floor): its
+ * input's pad (buildBeltPad) standing on the floor, in `identity` (its belt's colour). Its own mesh: it glows and dips.
  */
-export function buildBeltButtonPost(theme: Theme): BufferGeometry {
-  const { foot, post, segments } = BELT_BUTTON;
-  const color = theme.conveyor.side;
-  return new PartList()
-    .add(new CylinderGeometry(foot.radius, foot.radius, foot.height, segments), color, { y: foot.height / 2 })
-    .add(new CylinderGeometry(post.radius, post.radius, post.top - foot.height, segments), color, { y: (post.top + foot.height) / 2 })
-    .build();
+export function buildBeltButtonPad(identity: string): BufferGeometry {
+  const B = BELT_BUTTON;
+  const pad = extrudedShapeGeometry(roundedRectShape(B.half, B.half, B.radius, 4), B.height, 0, 4);
+  return new PartList().add(pad, identity).build();
 }
 
 /**
- * The cap of a belt's button (BELT_BUTTON), in its own space (origin = the top of its post: the mesh stands there and
- * dips from there when pressed): a short straight rim and a low dome over it, in `identity` (its belt's colour).
+ * The back arrow of a belt's button (BELT_BUTTON_ICON), cell-local (+z along its belt: the mesh is turned with it),
+ * flat on the pad's top, face up, in `color` (Theme.conveyor.icon): the tail, the half-turn and the head, the whole
+ * centred on the pad.
  */
-export function buildBeltButtonCap(identity: string): BufferGeometry {
-  const { cap, segments } = BELT_BUTTON;
-  const dome = new SphereGeometry(cap.radius, segments, 3, 0, Math.PI * 2, 0, Math.PI / 2);
-  return new PartList()
-    .add(new CylinderGeometry(cap.radius, cap.radius, cap.rim, segments), identity, { y: cap.rim / 2 })
-    .add(dome, identity, { y: cap.rim, sy: (cap.height - cap.rim) / cap.radius })
-    .build();
+export function buildBeltButtonIcon(color: string): BufferGeometry {
+  const I = BELT_BUTTON_ICON;
+  const { radius: r, z: zc, width: w } = I.turn;
+  const outer = r + w / 2;
+  const inner = r - w / 2;
+  // Centred on the pad: across, from the tail's outer edge (x = −outer) to the head's far corner; along, from the tail's
+  // start to the top of the turn.
+  const dx = -(r + I.head.half - outer) / 2;
+  const dz = -(I.tail + zc + outer) / 2;
+  // Drawn in cell-local (x, z) and laid face up (rx −π/2: a shape's y is −z).
+  const point = (x: number, z: number) => new Vector2(x + dx, -(z + dz));
+  const parts = new PartList();
+  const flat = (points: Vector2[]) => parts.add(new ShapeGeometry(new Shape(points), 4), color, { y: BELT_BUTTON.height + I.lift, rx: -Math.PI / 2 });
+  // The tail, along the belt on the −x side, up to where the turn starts.
+  flat([point(-outer, I.tail), point(-inner, I.tail), point(-inner, zc), point(-outer, zc)]);
+  // The half-turn over the top (toward the end exit), from −x round to +x.
+  const turn: Vector2[] = [];
+  for (let i = 0; i <= I.segments; i++) {
+    const a = Math.PI - (Math.PI * i) / I.segments;
+    turn.push(point(Math.cos(a) * outer, zc + Math.sin(a) * outer));
+  }
+  for (let i = I.segments; i >= 0; i--) {
+    const a = Math.PI - (Math.PI * i) / I.segments;
+    turn.push(point(Math.cos(a) * inner, zc + Math.sin(a) * inner));
+  }
+  flat(turn);
+  // The head at the turn's end (+x), pointing back toward the input (−z).
+  flat([point(r - I.head.half, zc), point(r, zc - I.head.length), point(r + I.head.half, zc)]);
+  return parts.build();
 }
 
 /**

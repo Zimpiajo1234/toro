@@ -1,5 +1,5 @@
 import { beltPathOf, conveyorsOf } from '../core/conveyors';
-import { cellToWorld, type BeltButtonRefusal, type BoxState, type ConveyorState, type LevelData } from '../core/types';
+import { cellToWorld, type BeltButtonRefusal, type BoxState, type ConveyorState, type LevelData, type Vec2 } from '../core/types';
 import type { LevelGrid } from './grid';
 
 /**
@@ -14,11 +14,25 @@ export const CONVEYOR = {
   /** Seconds the belt takes to reach its cruise speed, and to come to rest at the end exit (sine-eased both ways). */
   rampSec: 0.6,
   /**
-   * Seconds between an accepted press of a belt's button (H2) and the belt starting back: the cap dips and comes up
+   * Seconds between an accepted press of a belt's button (H2) and the belt starting back: the pad dips and glows
    * first, then it runs.
    */
   pressSec: 0.3,
 } as const;
+
+/**
+ * A belt's button pad (docs/CONVEYOR.md H2b, «Ajustes»), safe to tune: the forklift stands on it, and the action
+ * presses it, while its body centre is inside the pad's cell at least `margin` in from each edge, whatever its heading
+ * and with the forks empty or carrying. Driven straight in from a side cell that is a little past the near edge; on the
+ * cell's last `margin` all round the action is the forklift's own, as anywhere else.
+ */
+export const BUTTON_PAD = { margin: 0.15 } as const;
+
+/** The forklift's body centre (x, z) stands on the button pad whose cell centre is `centre` (BUTTON_PAD). */
+export function onButtonPad(x: number, z: number, centre: Vec2): boolean {
+  const inner = 0.5 - BUTTON_PAD.margin;
+  return Math.abs(x - centre.x) <= inner && Math.abs(z - centre.z) <= inner;
+}
 
 /**
  * What GameState does when a belt starts or a box reaches either end of it (it owns the slots, the events,

@@ -138,7 +138,7 @@ id          = "(" texto sin espacios ")"
 | `T = camión muelle norte: azul \| coral ◆ / libre` | camión de 2 columnas; con `limit: 2` cada columna llega sola a 2 niveles (`min(2, limit)`), así que las dos llevan un «libre» arriba, escrito o no (el formateador no escribe los «libre» de arriba sin caja) |
 | `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
 | `A = cinta entrada` · `~ = cinta` · `B = cinta final: coral ✚` | una **cinta transportadora**: en el mapa, `A~~B` en línea recta (de A a B; una fila o una columna); lo que se deja en A viaja solo hasta B, que pide «coral ✚» |
-| `o = cinta botón` | el **botón** de la cinta, en una casilla junto a A (`oA~~B`): se pulsa con Espacio de frente y devuelve a A la última caja mal puesta (0 movimientos); con varias cintas, `o = cinta botón (c2)` |
+| `o = cinta botón` | el **botón** de la cinta, una almohadilla en el suelo en una casilla junto a A (`oA~~B`): la carretilla se sube a ella, Espacio lo pulsa y devuelve a A la última caja mal puesta (0 movimientos); con varias cintas, `o = cinta botón (c2)` |
 
 Estanterías almacenables y camiones son dos aspectos del mismo almacenaje (docs/STORAGE.md: sus reglas comunes, entre
 ellas la horquilla con F / V y los niveles «libre»). Cada zona y cada nivel con pista de una unidad es un **objetivo**:
@@ -181,10 +181,13 @@ de nivel 1 de una estantería (con F); la carretilla nunca trabaja en la salida 
 caja dejada en la entrada viaja sola hasta ella (si está libre; si no, se queda en la entrada). La salida final con
 pista es un objetivo más del reparto único. Cinta, entrada y salida son obstáculos, y la cinta empieza vacía. Ids:
 cintas `c1, c2…` (o `(id)` en una de sus puntas), entradas `e1…`, salidas `s1…`. Su **botón** (`cinta botón`, como
-mucho uno por cinta; con varias cintas lleva el id de la suya) va en una casilla propia junto a la entrada, es un
-obstáculo y necesita al menos un lado de suelo libre desde el que pulsarlo: con la cinta parada y la entrada vacía,
-devuelve a la entrada la última caja que llegó a la salida sin quedar fija (0 movimientos). Sin botón, una caja
-equivocada en la salida ya no vuelve.
+mucho uno por cinta; con varias cintas lleva el id de la suya) va en una casilla propia junto a la entrada: es una
+almohadilla en el suelo (no un obstáculo: la carretilla pasa por encima) en la que nunca hay una caja (ni caja, ni
+zona, ni la carretilla empiezan en ella), nunca en la casilla desde la que se carga una unidad (la de delante de una
+estantería o de una entrada de cinta, la puerta de un camión), y necesita al menos un lado de suelo libre desde el que
+subir a ella. Con la carretilla encima, Espacio lo pulsa: con la cinta parada y la entrada vacía, devuelve a la
+entrada la última caja que llegó a la salida sin quedar fija (0 movimientos). Sin botón, una caja equivocada en la
+salida ya no vuelve.
 
 ## Reglas que conviene saber
 
@@ -251,7 +254,7 @@ frente (o de su puerta) y una caja sacada de ellas sale marcha atrás.
 | `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
 | `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
 | `camion` | Niveles de camión, con pista y «libre» (alias `camiones`; en el informe: con pista y libres, columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
-| `cinta` | Cintas transportadoras (alias `cintas`; en el informe: sus casillas por pieza, sus salidas finales con pista y sus botones; columna «cinta» = cintas / casillas; `docs/CONVEYOR.md`). Dejar en la entrada es un movimiento que pone la caja en su salida final; el viaje no cuenta. Sin botón solo se manda su caja destinada; con botón, cualquiera (una equivocada aparca allí), y sacarla de la salida es pulsar el botón (0) y cogerla de la entrada: un movimiento con lo que siga. |
+| `cinta` | Cintas transportadoras (alias `cintas`; en el informe: sus casillas por pieza, sus salidas finales con pista y sus botones; columna «cinta» = cintas / casillas; `docs/CONVEYOR.md`). Dejar en la entrada es un movimiento que pone la caja en su salida final; el viaje no cuenta. Sin botón solo se manda su caja destinada; con botón, cualquiera (una equivocada aparca allí), y sacarla de la salida es pulsar el botón (0, subido a su almohadilla) y cogerla de la entrada: un movimiento con lo que siga. La almohadilla del botón es suelo para «estrechas» y «libre», pero nunca un sitio para una caja ni para coger o dejar desde ella. |
 | `cajas`, `zonas` | Cuántas hay. |
 
 Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de

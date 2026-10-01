@@ -1927,7 +1927,12 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
   if ((m = /^conveyors\[(\d+)\]\.button at (-?\d+),(-?\d+) has no free floor beside it/.exec(message)))
     return {
       pos: ctx.cell(Number(m[2]), Number(m[3])),
-      reason: 'el botón de la cinta se pulsa de frente desde una casilla de suelo a su lado, y no le queda ninguna libre (paredes, muebles, plantas o la propia cinta): déjale sitio por algún lado',
+      reason: 'el botón de la cinta es una almohadilla del suelo a la que la carretilla se sube desde una casilla de suelo a su lado, y no le queda ninguna libre (paredes, muebles, plantas o la propia cinta): déjale sitio por algún lado',
+    };
+  if ((m = /^conveyors\[(\d+)\]\.button at (-?\d+),(-?\d+) is where \S+ column \d+ is loaded from/.exec(message)))
+    return {
+      pos: ctx.cell(Number(m[2]), Number(m[3])),
+      reason: 'el botón de la cinta no va en la casilla desde la que se carga una unidad (delante de una estantería o de una entrada de cinta, o en la puerta de un camión): la carretilla se pone ahí para cargarla, y sobre el botón Espacio lo pulsa; ponlo en otra casilla junto a la entrada',
     };
   if ((m = /^beltInputs\[(\d+)\] column \d+ has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
     const input = ctx.units.beltIn[Number(m[1])];

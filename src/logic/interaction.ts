@@ -177,7 +177,8 @@ export class Interaction {
    * next level up of a stack with room, also on a locked box: the next level loads on it; with the forks at any other
    * level of a stack, nothing), else nothing (never the floor in front or beside it); while the aim is blocked (the
    * forks still on their way to the selected level, the load in a doorway short of the reach or with the forks away
-   * from the level chosen), nothing. A dock's door cells are plain floor otherwise.
+   * from the level chosen), nothing. A dock's door cells are plain floor otherwise. A belt's button pad (docs/CONVEYOR.md
+   * H2b) never takes a box: with the fork point over one, nothing (the gentle actionIdle), and it is never a candidate.
    */
   findDrop(box: Sortable, out: DropChoice): boolean {
     const f = this.forklift;
@@ -199,6 +200,7 @@ export class Interaction {
       out.column = aim.column;
       return true;
     }
+    if (this.grid.padAt(cellX, cellZ) >= 0) return false;
 
     let nearestSq = Infinity;
     let nearestX = 0;

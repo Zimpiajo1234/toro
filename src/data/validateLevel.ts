@@ -34,7 +34,7 @@ import {
   type Sortable,
 } from '../core/sorting';
 import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, baseLevelOf, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
-import { FLOOR_BELT_LEVEL, beltEndLevels, buttonFrontsOf } from '../core/conveyors';
+import { FLOOR_BELT_LEVEL, beltEndLevels, buttonEntriesOf } from '../core/conveyors';
 import { dockRailsOf } from '../core/docks';
 import { GAME_CONFIG } from '../config';
 
@@ -48,6 +48,14 @@ const kindName = (box: Sortable) => `${box.color}/${box.symbol}`;
  * among the units of that skin in `storage`.
  */
 const wordsOf = (skin: StorageSkin) => STORAGE_WORDS[skin].en;
+
+/**
+ * Why a belt's button pad (docs/CONVEYOR.md H2b) is never where a storage column is loaded from (its front cell, a dock
+ * door cell): standing on it, the action presses the button, so it would never load the column.
+ */
+const PAD_NOT_FRONT = 'the forklift stands there to load it, and standing on a button the action presses it';
+/** Why nothing that holds a box (a box, a zone) starts on a button pad: no box ever rests on one (H2b). */
+const PAD_TAKES_NO_BOX = 'no box ever rests on a belt button (the forklift drives onto it to press it)';
 
 /**
  * Parses and validates a raw level object (from a .level file via asciiLevel.parseLevel, or a legacy JSON level) into
@@ -264,8 +272,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // end exit (one of skin beltOut), the input loaded from the side away from the belt, the end exit fed from the belt's
   // last cell. Every cell a floor piece for now (the ramp and the ceiling pieces come later: the data already carries
   // them), a table at FLOOR_BELT_LEVEL (its cells' height, by default), on cells of its own: nothing else stands on a
-  // belt (an obstacle for the body and the load). Its button (H2), if any, is a cell of its own too, an obstacle,
-  // pressed from a free floor cell beside it (checked once every obstacle is known).
+  // belt (an obstacle for the body and the load). Its button (H2), if any, is a cell of its own too: a pad on the floor
+  // (H2b), driven onto from a free floor cell beside it and pressed standing on it, never an obstacle, where nothing
+  // starts and no unit is loaded from (checked once every obstacle is known).
   const conveyors: LevelConveyor[] = arr(r.conveyors, 'conveyors').map((c, i) => {
     const name = `conveyors[${i}]`;
     const o = obj(c, name);
@@ -291,6 +300,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   });
   /** The conveyor of each belt unit (by unit index). */
   const beltOfUnit = new Map<number, number>();
+  /** The conveyor of each button pad (by its cell key, H2b): floor, yet nothing starts there. */
+  const pads = new Map<string, number>();
   /** The base level a belt gives each of its two units (by unit index): its height there. */
   const beltBases = new Map<number, number>();
   conveyors.forEach((belt, i) => {
@@ -329,15 +340,19 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     for (const cell of belt.cells) {
       const k = cellKey(cell);
       if (!inBounds(cell.x, cell.z)) fail(`${name} leaves the warehouse at ${k}`);
-      if (blocked.has(k) || doorCells.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
+      if (blocked.has(k) || doorCells.has(k) || pads.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
       blocked.add(k);
     }
-    // Its button (H2): an obstacle on a cell of its own.
+    // Its button (H2b): a pad on a floor cell of its own (never an obstacle: it stays out of `blocked`).
     if (belt.button) {
       const k = cellKey(belt.button);
       if (!inBounds(belt.button.x, belt.button.z)) fail(`${name}.button leaves the warehouse at ${k}`);
-      if (blocked.has(k) || doorCells.has(k)) fail(`${name}.button overlaps another obstacle at ${k}`);
-      blocked.add(k);
+      if (blocked.has(k)) fail(`${name}.button overlaps another obstacle at ${k}`);
+      const door = doorCells.get(k);
+      if (door) fail(`${name}.button at ${k} is where ${names[door[0]]} column ${door[1]} is loaded from: ${PAD_NOT_FRONT}`);
+      const other = pads.get(k);
+      if (other !== undefined) fail(`${name}.button is at ${k}, where the button of conveyors[${other}] is: every button has a cell of its own`);
+      pads.set(k, i);
     }
     // Its input and end exit stand on the belt (docs/CONVEYOR.md): their slots at its height next to each.
     const ends = beltEndLevels(belt);
@@ -371,13 +386,16 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       const front = frontOf(unit, j);
       if (!inBounds(front.x, front.z) || blocked.has(cellKey(front)))
         fail(`${names[u]} column ${j} has no room in front: cell ${front.x},${front.z} is a wall, a shelf, a plant or another rack`);
+      const pad = pads.get(cellKey(front));
+      if (pad !== undefined) fail(`conveyors[${pad}].button at ${front.x},${front.z} is where ${names[u]} column ${j} is loaded from: ${PAD_NOT_FRONT}`);
     });
   });
-  // A belt's button (docs/CONVEYOR.md H2) is pressed facing it from a floor cell beside it: one free side at least.
+  // A belt's button (docs/CONVEYOR.md H2b) is a pad the forklift drives onto from a floor cell beside it: one free side
+  // at least.
   conveyors.forEach((belt, i) => {
     const b = belt.button;
-    if (b && buttonFrontsOf(b, (x, z) => inBounds(x, z) && !blocked.has(cellKey({ x, z }))).length === 0)
-      fail(`conveyors[${i}].button at ${b.x},${b.z} has no free floor beside it to be pressed from`);
+    if (b && buttonEntriesOf(b, (x, z) => inBounds(x, z) && !blocked.has(cellKey({ x, z }))).length === 0)
+      fail(`conveyors[${i}].button at ${b.x},${b.z} has no free floor beside it to drive onto it from`);
   });
   // Access `door`: every dock door has a guard rail at each end of its run (core/docks dockRailsOf, never written in a
   // .level), and the cell just past that end along the wall, behind the rail, holds a static obstacle (a plant, a shelf
@@ -425,6 +443,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // A door cell holds its truck's character in a .level map: nothing else starts there.
   const forkliftDoor = doorAt(cellKey(forklift));
   if (forkliftDoor) fail(`forklift starts on ${forkliftDoor}: door cells start empty`);
+  // So does a belt's button pad (H2b): its character in the map, and the forklift's first action would press it.
+  const forkliftPad = pads.get(cellKey(forklift));
+  if (forkliftPad !== undefined) fail(`forklift starts on conveyors[${forkliftPad}].button at ${cellKey(forklift)}: it starts beside the button`);
 
   // Zones: each declares what it accepts (a color, a symbol, or both) and optionally a color recipe to stack.
   const zoneIds = new Set<string>();
@@ -454,6 +475,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     if (!inBounds(zone.x, zone.z)) fail(`zone "${zone.id}" out of bounds`);
     const k = cellKey(zone);
     if (blocked.has(k)) fail(`zone "${zone.id}" is inside an obstacle`);
+    const pad = pads.get(k);
+    if (pad !== undefined) fail(`zone "${zone.id}" is on conveyors[${pad}].button at ${k}: ${PAD_TAKES_NO_BOX}`);
     if (zoneCells.has(k)) fail(`two zones share cell ${k}`);
     if (k === cellKey(forklift)) fail(`zone "${zone.id}" is under the forklift start`);
     // Its locked box would close that bed column for good.
@@ -512,6 +535,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
     }
     if (box.level !== undefined) fail(`box "${box.id}" has a level but is not in a rack slot (floor stacks go by list order)`);
     if (blocked.has(k)) fail(`box "${box.id}" is inside an obstacle`);
+    const pad = pads.get(k);
+    if (pad !== undefined) fail(`box "${box.id}" starts on conveyors[${pad}].button at ${k}: ${PAD_TAKES_NO_BOX}`);
     if (k === cellKey(forklift)) fail(`box "${box.id}" is under the forklift start`);
     const door = doorCells.get(k);
     if (door)

@@ -34,7 +34,8 @@ import buttonText from './pruebas/cinta-boton.level?raw';
  * exit's destined box is sent down a belt, and a box is never lifted from an end exit. With the end exit full, a box
  * set down on the input stays there, and can be lifted again. With a button (H2, the button fixture) any box rides
  * down, and one resting at the end exit unlocked is lifted «from» it: the press (no move) brings it back onto the empty
- * input, where the move goes on, so the model never has a free edge.
+ * input, where the move goes on, so the model never has a free edge. The button is a pad on the floor (H2b): a cell the
+ * forklift drives over, never a drop, never where it stands to pick or drop; it presses it standing on it.
  */
 
 const FIXTURE = parseLevel(fixtureText, 'src/data/levels/pruebas/cinta.level').level;
@@ -163,14 +164,39 @@ describe('grid model with a belt button (H2)', () => {
   const exit = grid.positionOfSlot('s1:0:1');
   const blue = boxCode({ color: 'blue', symbol: 'circle' });
   const mint = boxCode({ color: 'mint', symbol: 'triangle' });
-  const press = grid.index(4, 3);
+  const pad = grid.index(4, 2);
 
-  it('the button is solid and pressed from the free cells beside it: only (4,3), facing north; a belt without one has none', () => {
-    expect(grid.solid[grid.index(4, 2)]).toBe(1);
-    expect(grid.pressFrom[exit]).toEqual([press]);
+  it('the button is a pad: floor the forklift drives over (not solid), pressed standing on it; a belt without one has none', () => {
+    expect([grid.solid[pad], grid.pads[pad]]).toEqual([0, 1]);
+    expect(grid.pads.reduce((n, p) => n + p, 0)).toBe(1);
+    expect(grid.pressFrom[exit]).toEqual([pad]);
     expect(grid.pressFrom.filter((cells) => cells.length > 0)).toHaveLength(1);
     const plain = new LevelGrid(FIXTURE);
     expect(plain.pressFrom.every((cells) => cells.length === 0)).toBe(true);
+    expect(plain.pads.every((p) => p === 0)).toBe(true);
+    // The empty forklift reaches it (from (4,3), its one free side).
+    const start = stacksOf(grid, BUTTON);
+    const region = reachableFrom(grid, occupancyOf(grid, start), grid.index(BUTTON.forklift.x, BUTTON.forklift.z));
+    expect([region[pad], region[grid.index(4, 3)]]).toEqual([1, 1]);
+  });
+
+  it('never a drop, nor a pick or drop pose: no box rests on it, and standing on it the action presses the button', () => {
+    const start = stacksOf(grid, BUTTON);
+    const from = grid.index(1, 5); // azul ●, on the menta zone
+    const lifted = lift(start, from);
+    expect(validDrop(grid, lifted, from, pad, blue)).toBe(false);
+    expect(validDrop(grid, lifted, from, grid.index(4, 3), blue)).toBe(true);
+    // A box just south of it, at (4,3), with every cell round it in reach: picked from either side along the row,
+    // never from the pad, north of it (the plant south of it takes nothing).
+    const region = reachableFrom(grid, occupancyOf(grid, start), grid.index(BUTTON.forklift.x, BUTTON.forklift.z));
+    expect([region[pad], region[grid.index(3, 3)], region[grid.index(5, 3)]]).toEqual([1, 1, 1]);
+    const starts = pickupStarts(grid, region, grid.index(4, 3));
+    expect(starts.map((s) => s >> 2).sort((x, y) => x - y)).toEqual([grid.index(3, 3), grid.index(5, 3)]);
+    // Carrying a box anywhere, no drop leaves the forklift on the pad.
+    const carried = lift(start, from);
+    const occ = occupancyOf(grid, carried);
+    const all = reachableFrom(grid, occupancyOf(grid, start), grid.index(BUTTON.forklift.x, BUTTON.forklift.z));
+    for (const [, cells] of carrySearch(grid, occ, carried, pickupStarts(grid, all, from)).drops) expect(cells).not.toContain(pad);
   });
 
   it('any box rides down a belt with a button (input empty, exit free); one at its exit unlocked comes back onto the empty input', () => {
@@ -187,13 +213,13 @@ describe('grid model with a belt button (H2)', () => {
     const busy = parked.slice();
     busy[input] = mint;
     expect(canLift(grid, busy, exit)).toBe(false);
-    // Only while the forklift reaches the cell the button is pressed from; then off the input, from its front.
+    // Only while the forklift reaches the button's pad; then off the input, from its front.
     const occupancy = occupancyOf(grid, parked);
     const region = reachableFrom(grid, occupancy, grid.index(BUTTON.forklift.x, BUTTON.forklift.z));
-    expect(region[press]).toBe(1);
+    expect(region[pad]).toBe(1);
     expect(pickupStarts(grid, region, exit)).toEqual([grid.index(3, 3) * 4 + DIR.N]);
     const away = region.slice();
-    away[press] = 0;
+    away[pad] = 0;
     expect(pickupStarts(grid, away, exit)).toEqual([]);
     // Back where it came from it never goes: not onto the input (it would ride back), not into the end exit.
     const again = lift(parked, exit);

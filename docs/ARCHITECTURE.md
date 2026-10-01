@@ -205,9 +205,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°, past
   the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design decision;
   `GameState.docksDriving.test.ts` measures it).
-- **Conveyor belts** (spec: `docs/CONVEYOR.md`, H1 + H1b + H1c + H2 done: a straight floor belt, a table at level 1 on
-  a closed base, and its button; only the «Benchmark» has one): `LevelData.conveyors?: LevelConveyor[]` (`{ id, input,
-  output, cells, button? }`,
+- **Conveyor belts** (spec: `docs/CONVEYOR.md`, H1 + H1b + H1c + H2 + H2b done: a straight floor belt, a table at level
+  1 on a closed base, and its button, a pad on the floor; only the «Benchmark» has one): `LevelData.conveyors?:
+  LevelConveyor[]` (`{ id, input, output, cells, button? }`,
   each cell `{ x, z, piece, height }` with pieces `suelo` / `rampa` / `techo`, only `suelo` built so far, at height 1:
   `core/conveyors` `FLOOR_BELT_LEVEL`) links two storage units standing on it, at its height (`LevelStorage.baseLevel`
   = 1, filled by validateLevel: docs/STORAGE.md «Nivel base»; their slots `e1:0:1` / `s1:0:1`): its input (skin
@@ -220,11 +220,13 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the end exit (`beltStarted`, `beltDelivered` with `correct` / `wrongTarget`); one box at a time (the input's slot
   sealed meanwhile, `LevelGrid.seal`); with the end exit full the box stays on the input, pickable (`beltBlocked`).
   State: `GameSnapshot.conveyors` (`ConveyorState { id, phase, boxId, progress, running, direction, travel, presses,
-  accepted }`). The drop counts as the move; the ride counts none. **Its button** (H2, `LevelConveyor.button`: a cell
-  of its own beside the input, a whole-cell static like the belt's, pressed from a free floor side): facing it the way
-  a rack column is faced to pick (`STORAGE_ACCESS.front` margins, forks empty or carrying), `hint.button` names its
-  belt (the field exists only in levels with a button: `core/conveyors` `hasBeltButtons`) and the action presses it
-  instead of picking or dropping. `logic/conveyor.ts` `buttonRefusal` (pure) checks, in order, the belt at rest
+  accepted }`). The drop counts as the move; the ride counts none. **Its button** (H2; H2b: a pad on the floor;
+  `LevelConveyor.button`: a floor cell of its own beside the input, never a static, driven onto from a free floor side,
+  never where a unit is loaded from; no box ever rests on it: validateLevel refuses a box, a zone or the forklift there,
+  `LevelGrid.padAt` / `canTakeBox`, and `Interaction.findDrop` refuses a drop with the fork point over it, the gentle
+  `actionIdle`): standing on it (`logic/conveyor` `onButtonPad`: the body centre inside its cell, `BUTTON_PAD.margin` in
+  from every edge, any heading, forks empty or carrying), `hint.button` names its belt (the field exists only in levels
+  with a button: `core/conveyors` `hasBeltButtons`) and the action presses it instead of picking or dropping. `logic/conveyor.ts` `buttonRefusal` (pure) checks, in order, the belt at rest
   (`busy`), its input empty (`input`), nothing of the forklift in the input (`forks`) and a box to bring back
   (`nothing`): refused → `beltButton { accepted: false, reason }`, nothing moves; accepted → the last box that reached
   an exit without locking there (LIFO, `ConveyorSystem.keep` / `takeLast`) moves into the input's slot (sealed),
@@ -232,8 +234,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (`beltStarted` with `reverse: true`, `direction` −1, `travel` decreasing: the same eased ride mirrored) and the box
   rests on the input again (`beltReturned { conveyorId, boxId, slotId, skin, level }`), pickable at its level. No move,
   «Quedan N» unchanged, never `levelComplete`. Solver (`levels/solver.ts`): the press folds into the move that follows
-  (`canLift` / `pickupStarts` from the end exit through `pressFrom`; with a button any box may ride down); autopilot:
-  `pressButton` (drive beside it, face, press, wait, lift off the input).
+  (`canLift` / `pickupStarts` from the end exit through `pressFrom`, the pad, in the forklift's region; with a button
+  any box may ride down); the pad is `LevelGrid.pads`: floor for driving and the metrics, never a drop and never a pick
+  or drop pose; autopilot: `pressButton` (onto the pad straight in, the tines clear of the input, press, back out, wait,
+  lift off the input).
 - Fork lift animates `forkLift` toward 1 while carrying, 0 otherwise, at `forkLiftSpeed` (units of 0‥1 per s).
 - Level completes when every target is satisfied (every zone; also every cued rack slot and truck level) and
   nothing is carried → `levelComplete` exactly once, after which
@@ -469,11 +473,13 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   and the chosen-level marker on the pad's rim (`markerGeometry`, only with the forks at its slot's level); the end exit
   the table's last stretch, its cue sticker painted flat on its deck (`buildCueFace`, face up, world-aligned like a
   zone's glyph) and a low solid skirting on its three open sides in the belt's identity colour (`buildBeltSkirting`: it
-  pairs with its input's pad), which lights as the box slides in (`landDelay` 0). The button (H2, drawn by the input's
-  unit on its own cell: `buildBeltButtonPost` / `buildBeltButtonCap`, `BELT_BUTTON`): a slim post in `side` and a
-  mushroom cap in the belt's identity colour with its own material; `views/ConveyorView` `BeltButton` follows
-  `ConveyorState.presses` / `accepted` (every press dips the cap, an accepted one also glows it; a faint glow while
-  `hint.button` names it; `BUTTON_FEEL`), and the stripes slide back while `travel` decreases. Sounds: `beltDrop`
+  pairs with its input's pad), which lights as the box slides in (`landDelay` 0). The button (H2b, drawn by the input's
+  unit on its own cell: `buildBeltButtonPad` / `buildBeltButtonIcon`, `BELT_BUTTON` / `BELT_BUTTON_ICON`): its input's
+  pad again, flat on the floor, in the belt's identity colour with its own material, and on it a cream back arrow (a
+  U-turn, turned with the belt, a child of the pad); `views/ConveyorView` `BeltButton` follows `ConveyorState.presses` /
+  `accepted` and `hint.button` (a slight glow while the forklift stands on it; an accepted press glows it and sinks it a
+  little into the floor; a refused one only flashes it, muted; `BUTTON_FEEL`), and the stripes slide back while
+  `travel` decreases. Sounds: `beltDrop`
   (also on `beltReturned`), `beltHum` (the whole run, either way), `beltLand`, `buttonClick` / `buttonRefused` (on
   `beltButton`). The control hint reads «Espacio recoger / dejar / pulsar» only in a level with a button
   (`UIState.beltButton`).

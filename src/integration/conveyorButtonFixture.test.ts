@@ -6,11 +6,12 @@
  * ridden to B, the other box home, the button pressed (no move) and the first box lifted off A and home. It must stay
  * canonical and valid, with one complete assignment and no dead ends (the whole state space searched), and the
  * autopilot (./autopilot.ts) plays it to the end with the real controls at 60 fps and at Game's worst dt (1/20),
- * pressing the button once, facing it. The render draws the button (a post in the table's near-black, a cap in the
- * belt's identity colour) whose cap dips on a press and glows on an accepted one, and the stripes slide back while the
- * belt runs back.
+ * pressing the button once, standing on it. The render draws the button (H2b: a pad on the floor in the belt's
+ * identity colour, its input's pad's, with a cream back arrow), which brightens while the forklift stands on it, glows
+ * and dips on an accepted press and flashes, muted, on a refused one, and the stripes slide back while the belt runs
+ * back.
  */
-import { Box3, Color, Mesh, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
+import { Box3, Color, Mesh, Vector3, type BufferGeometry, type MeshStandardMaterial } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
 import { conveyorsOf } from '../core/conveyors';
@@ -23,7 +24,9 @@ import { checkLevelTargets, levelMetrics } from '../data/levels/metrics';
 import { LevelGrid, deadEnds, minMoves, replayMoves } from '../data/levels/solver';
 import { validateLevel } from '../data/validateLevel';
 import { GameState } from '../logic/GameState';
-import { BELT_BUTTON } from '../render/builders/conveyor';
+import { onButtonPad } from '../logic/conveyor';
+import { BELT_BUTTON, BELT_BUTTON_ICON } from '../render/builders/conveyor';
+import { BUTTON_FEEL } from '../render/views/ConveyorView';
 import { LevelView } from '../render/LevelView';
 import { defaultTheme } from '../themes/default';
 import { autopilot } from './autopilot';
@@ -34,6 +37,9 @@ const parsed = parseLevel(text, FILE);
 const { level } = parsed;
 const grid = new LevelGrid(level);
 const exit = grid.positionOfSlot('s1:0:1');
+
+/** World centre of map cell (x, z) of the fixture. */
+const centre = (x: number, z: number) => ({ x: x + 0.5 - level.size.width / 2, z: z + 0.5 - level.size.depth / 2 });
 
 type Picked = Extract<GameEvent, { type: 'boxPicked' }>;
 const picks = (events: readonly GameEvent[]) => events.filter((e): e is Picked => e.type === 'boxPicked');
@@ -47,13 +53,17 @@ describe('the belt button fixture (pruebas/cinta-boton.level)', () => {
     expect(parsed.notes.join('\n')).toMatch(/conveyorButtonFixture\.test\.ts/);
   });
 
-  it('one belt with its button: A (3,2), one floor cell, B (3,0) «libre»; the button (4,2) beside A, pressed from (4,3) only', () => {
+  it('one belt with its button: A (3,2), one floor cell, B (3,0) «libre»; the button (4,2) beside A, a pad driven onto from (4,3) only', () => {
     expect(conveyorsOf(level)).toEqual([{ id: 'c1', input: 'e1', output: 's1', cells: [{ x: 3, z: 1, piece: 'suelo', height: 1 }], button: { x: 4, z: 2 } }]);
     expect(level.storage!.map((u) => [u.id, u.skin, u.x, u.z, u.columns])).toEqual([
       ['e1', 'beltIn', 3, 2, [[null]]],
       ['s1', 'beltOut', 3, 0, [[null]]],
     ]);
-    expect(grid.pressFrom[exit]).toEqual([grid.index(4, 3)]);
+    // Pressed standing on it: floor, never a drop, never a pick or drop pose; its only free side is (4,3).
+    const pad = grid.index(4, 2);
+    expect(grid.pressFrom[exit]).toEqual([pad]);
+    expect([grid.solid[pad], grid.pads[pad]]).toEqual([0, 1]);
+    expect([0, 1, 2, 3].map((d) => grid.step(pad, d)).filter((c) => c >= 0 && grid.solid[c] === 0)).toEqual([grid.index(4, 3)]);
   });
 
   it('has exactly one complete assignment (the two zones; a «libre» end exit is never a target), and its «dificultad:» targets hold', () => {
@@ -84,17 +94,18 @@ describe('the belt button fixture (pruebas/cinta-boton.level)', () => {
   it.each([
     ['60 fps', 1 / 60],
     ['20 fps (Game dt clamp)', 1 / 20],
-  ] as const)('%s: the autopilot finishes it pressing the button once, facing it; the press and the ride back are no moves', (_, dt) => {
-    // Every fork press, with where the tines' tips stood then (past A's face, at z = 3, the forklift facing north).
+  ] as const)('%s: the autopilot finishes it pressing the button once, standing on it; the press and the ride back are no moves', (_, dt) => {
+    // Every fork press, with where the tines' tips stood then (past A's face, at z = 3, the forklift facing north); and
+    // where the forklift stood at every action pressed while the hint named the button.
     const presses: { step: number; tipDepth: number }[] = [];
+    const onButton: { x: number; z: number }[] = [];
     const update = GameState.prototype.update;
     const tip = GAME_CONFIG.forklift.forkReach + TINES.tip * GAME_CONFIG.box.size;
     const faceZ = 3 - level.size.depth / 2;
     GameState.prototype.update = function (this: GameState, step: number, frame: InputFrame) {
-      if (frame.forkStep) {
-        const f = this.getSnapshot().forklift;
-        presses.push({ step: frame.forkStep, tipDepth: faceZ - (f.pos.z + Math.cos(f.heading) * tip) });
-      }
+      const f = this.getSnapshot().forklift;
+      if (frame.forkStep) presses.push({ step: frame.forkStep, tipDepth: faceZ - (f.pos.z + Math.cos(f.heading) * tip) });
+      if (frame.actionPressed && this.getSnapshot().hint.button) onButton.push({ x: f.pos.x, z: f.pos.z });
       return update.call(this, step, frame);
     };
     let out: ReturnType<typeof autopilot>;
@@ -112,6 +123,9 @@ describe('the belt button fixture (pruebas/cinta-boton.level)', () => {
     expect(button).toEqual([{ type: 'beltButton', conveyorId: 'c1', accepted: true, boxId: 'b2', fromSlotId: 's1:0:1' }]);
     const pressedAt = out.events.indexOf(button[0]);
     expect(out.events.slice(pressedAt).find((e) => e.type === 'beltStarted')).toMatchObject({ boxId: 'b2', reverse: true });
+    // Pressed standing on the pad (4,2), driven straight onto it from (4,3).
+    expect(onButton).toHaveLength(1);
+    expect(onButtonPad(onButton[0].x, onButton[0].z, centre(4, 2))).toBe(true);
     const back = types.indexOf('beltReturned');
     expect(out.events[back]).toEqual({ type: 'beltReturned', conveyorId: 'c1', boxId: 'b2', slotId: 'e1:0:1', skin: 'beltIn', level: 1 });
     // Lifted off A at level 1, after it came back.
@@ -127,99 +141,136 @@ describe('the belt button fixture (pruebas/cinta-boton.level)', () => {
 
 describe('the belt button on screen', () => {
   const ANGLE = Math.PI / 4;
-  /** The level view with its snapshot, the input unit's group and the button's two meshes. */
+  /** The level view with its snapshot, the input unit's group, the button's pad and the arrow on it. */
   function view() {
     const snap = new GameState(level).getSnapshot();
     const v = new LevelView(snap, defaultTheme, GAME_CONFIG, ANGLE);
     v.update(snap, 1 / 60, 0, ANGLE, 0);
     const input = v.root.children.find((c) => c.userData.beltInId === 'e1')!;
-    const tagged = (group: Object3D, tag: string) => group.children.filter((c) => c.userData[tag] !== undefined) as Mesh[];
-    const [post] = tagged(input, 'beltButtonPost');
-    const [cap] = tagged(input, 'beltButtonCap') as Mesh<BufferGeometry, MeshStandardMaterial>[];
-    return { snap, v, input, post, cap };
+    const pad = input.children.find((c) => c.userData.beltButton !== undefined) as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const icon = pad.children.find((c) => c.userData.beltButtonIcon !== undefined) as Mesh<BufferGeometry, MeshStandardMaterial>;
+    return { snap, v, input, pad, icon };
   }
-  const centre = (x: number, z: number) => ({ x: x + 0.5 - level.size.width / 2, z: z + 0.5 - level.size.depth / 2 });
+  /** World bounds of a mesh's own geometry (not its children's). */
+  const boundsOf = (mesh: Mesh) => {
+    mesh.updateWorldMatrix(true, false);
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    return mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
+  };
 
-  it('on its own cell: a slim post in the table\'s near-black and a mushroom cap in the belt\'s identity colour (its input\'s pad\'s), a little over the table', () => {
-    const { v, post, cap, input } = view();
-    expect(post.userData.beltButtonPost).toBe('c1');
-    expect(cap.userData.beltButtonCap).toBe('c1');
-    expect(paints(post, defaultTheme.conveyor.side)).toBe(true);
+  it('on its own floor cell: its input\'s pad again, in the belt\'s identity colour, with a cream back arrow on it; no post, no cap', () => {
+    const { v, pad, icon, input } = view();
+    expect(pad.userData.beltButton).toBe('c1');
+    expect(icon.userData.beltButtonIcon).toBe('c1');
     const identity = defaultTheme.conveyor.identity[0];
-    expect(paints(cap, identity)).toBe(true);
-    const pad = input.children.find((c) => c.userData.beltPad !== undefined) as Mesh;
+    const inputPad = input.children.find((c) => c.userData.beltPad !== undefined) as Mesh;
     expect(paints(pad, identity)).toBe(true);
-    // Centred on (4,2): the post from the floor up to its cap, the cap over the table top (0.78), under a box on A.
+    expect(paints(inputPad, identity)).toBe(true);
+    // The same rounded square as the input's pad, as thick, standing on the floor and centred on (4,2).
+    const own = boundsOf(pad);
+    const a = boundsOf(inputPad);
     const at = centre(4, 2);
-    const postBox = new Box3().setFromObject(post);
-    expect(postBox.min.y).toBeCloseTo(0, 6);
-    expect(postBox.max.y).toBeCloseTo(BELT_BUTTON.post.top, 6);
-    expect((postBox.min.x + postBox.max.x) / 2).toBeCloseTo(at.x, 6);
-    expect((postBox.min.z + postBox.max.z) / 2).toBeCloseTo(at.z, 6);
-    const capBox = new Box3().setFromObject(cap);
-    expect(capBox.min.y).toBeCloseTo(BELT_BUTTON.post.top, 6);
-    expect(capBox.max.y).toBeCloseTo(BELT_BUTTON.post.top + BELT_BUTTON.cap.height, 6);
-    expect(capBox.max.x - capBox.min.x).toBeLessThanOrEqual(2 * BELT_BUTTON.cap.radius + 1e-6);
-    expect(capBox.max.y).toBeGreaterThan(0.78);
-    expect(capBox.max.y).toBeLessThan(0.78 + 0.5 * 0.64);
-    // At rest: no glow.
-    expect(cap.material.emissiveIntensity).toBe(0);
-    expect(cap.material.emissive.getHex()).toBe(new Color(identity).getHex());
+    expect(own.max.x - own.min.x).toBeCloseTo(a.max.x - a.min.x, 6);
+    expect(own.max.z - own.min.z).toBeCloseTo(a.max.z - a.min.z, 6);
+    expect(own.max.y - own.min.y).toBeCloseTo(a.max.y - a.min.y, 6);
+    expect(own.max.x - own.min.x).toBeCloseTo(2 * BELT_BUTTON.half, 6);
+    expect([own.min.y, own.max.y]).toEqual([expect.closeTo(0, 6), expect.closeTo(BELT_BUTTON.height, 6)]);
+    expect((own.min.x + own.max.x) / 2).toBeCloseTo(at.x, 6);
+    expect((own.min.z + own.max.z) / 2).toBeCloseTo(at.z, 6);
+    // The arrow: cream, flat just over the pad's top, well inside it and centred on it, never glowing with it.
+    expect(paints(icon, defaultTheme.conveyor.icon)).toBe(true);
+    expect(icon.material).not.toBe(pad.material);
+    const arrow = boundsOf(icon);
+    expect(arrow.min.y).toBeGreaterThan(BELT_BUTTON.height);
+    expect(arrow.max.y).toBeLessThan(BELT_BUTTON.height + 0.01);
+    expect((arrow.min.x + arrow.max.x) / 2).toBeCloseTo(at.x, 2);
+    expect((arrow.min.z + arrow.max.z) / 2).toBeCloseTo(at.z, 2);
+    for (const span of [arrow.max.x - arrow.min.x, arrow.max.z - arrow.min.z]) {
+      expect(span).toBeGreaterThan(0.35);
+      expect(span).toBeLessThan(2 * BELT_BUTTON.half - 0.2);
+    }
+    // A back arrow, turned with its belt (here running north, from A to B): its turn toward B, the tip of its head
+    // pointing back toward A (south).
+    const { turn, head, tail } = BELT_BUTTON_ICON;
+    const outer = turn.radius + turn.width / 2;
+    const dx = -(turn.radius + head.half - outer) / 2;
+    const dz = -(tail + turn.z + outer) / 2;
+    // Turned by π (belt-local +z toward B, the north: world −z), a local point (x, z) lands at the centre minus it.
+    const tip = { x: at.x - (turn.radius + dx), z: at.z - (turn.z - head.length + dz) };
+    const positions = icon.geometry.getAttribute('position');
+    const world = new Vector3();
+    let hasTip = false;
+    let north = Infinity;
+    for (let i = 0; i < positions.count; i++) {
+      world.fromBufferAttribute(positions, i).applyMatrix4(icon.matrixWorld);
+      if (Math.abs(world.x - tip.x) < 1e-6 && Math.abs(world.z - tip.z) < 1e-6) hasTip = true;
+      north = Math.min(north, world.z);
+    }
+    expect(hasTip).toBe(true);
+    expect(tip.z).toBeGreaterThan(at.z - 0.05);
+    expect(north).toBeLessThan(at.z - 0.15);
+    // Nothing of the button stands up: no post, no cap, nothing over the pad but its arrow.
+    expect(input.children.some((c) => c.userData.beltButtonPost !== undefined || c.userData.beltButtonCap !== undefined)).toBe(false);
+    expect(new Box3().setFromObject(pad).max.y).toBeLessThan(BELT_BUTTON.height + 0.01);
     v.dispose();
   });
 
-  it('a press dips the cap and brings it back up; an accepted one also glows, in its own colour; while aimed at, a faint glow', () => {
-    const { snap, v, cap } = view();
-    const rest = cap.position.y;
+  it('standing on it the pad brightens a little; an accepted press lights it and sinks it softly; a refused one only flashes, muted', () => {
+    const { snap, v, pad } = view();
     const belt = snap.conveyors[0];
-    const frame = (t: number) => v.update(snap, 1 / 60, t, ANGLE, 0);
-    // A refused press: the dip, no glow.
+    const identity = defaultTheme.conveyor.identity[0];
+    let t = 0;
+    const frame = () => v.update(snap, 1 / 60, (t += 1 / 60), ANGLE, 0);
+    // At rest: no glow; its glow, when it comes, in its own colour.
+    expect(pad.material.emissiveIntensity).toBe(0);
+    expect(pad.material.emissive.getHex()).toBe(new Color(identity).getHex());
+    expect(pad.position.y).toBe(0);
+    // Standing on it (the hint names its belt): a slight, steady brightening, off again once it is left.
+    snap.hint.button = 'c1';
+    for (let i = 0; i < 60; i++) frame();
+    expect(pad.material.emissiveIntensity).toBeCloseTo(BUTTON_FEEL.standGlow, 2);
+    expect(pad.material.emissiveIntensity).toBeLessThan(0.3);
+    snap.hint.button = null;
+    for (let i = 0; i < 90; i++) frame();
+    expect(pad.material.emissiveIntensity).toBe(0);
+    // A refused press: a short, muted flash, no dip.
+    const sample = (frames: number) => {
+      const out = { glow: [] as number[], dip: [] as number[] };
+      for (let i = 0; i < frames; i++) {
+        frame();
+        out.glow.push(pad.material.emissiveIntensity);
+        out.dip.push(-pad.position.y);
+      }
+      return out;
+    };
     belt.presses = 1;
-    const dips: number[] = [];
-    const glows: number[] = [];
-    for (let i = 1; i <= 40; i++) {
-      frame(i / 60);
-      dips.push(rest - cap.position.y);
-      glows.push(cap.material.emissiveIntensity);
-    }
-    expect(Math.max(...dips)).toBeCloseTo(BELT_BUTTON.dip, 2);
-    expect(dips.at(-1)).toBeCloseTo(0, 9);
-    expect(Math.max(...glows)).toBe(0);
-    // An accepted one: the dip and the glow, both gone within a second.
+    const refused = sample(40);
+    expect(Math.max(...refused.dip)).toBeCloseTo(0, 12);
+    expect(Math.max(...refused.glow)).toBeGreaterThan(0.5 * BUTTON_FEEL.refusedFlash);
+    expect(Math.max(...refused.glow)).toBeLessThanOrEqual(BUTTON_FEEL.refusedFlash + 1e-9);
+    expect(refused.glow.at(-1)).toBe(0);
+    // An accepted one: it lights up (far brighter than the flash) and sinks into the floor a little, both gone within a
+    // second.
     belt.presses = 2;
     belt.accepted = 1;
-    dips.length = 0;
-    glows.length = 0;
-    for (let i = 1; i <= 60; i++) {
-      frame(1 + i / 60);
-      dips.push(rest - cap.position.y);
-      glows.push(cap.material.emissiveIntensity);
-    }
-    expect(Math.max(...dips)).toBeGreaterThan(0.5 * BELT_BUTTON.dip);
-    expect(Math.max(...glows)).toBeGreaterThan(0.4);
-    expect(glows.at(-1)).toBe(0);
-    expect(cap.position.y).toBe(rest);
-    // Aimed at (the hint names its belt): a faint steady glow, off again once it is not.
-    snap.hint.button = 'c1';
-    for (let i = 1; i <= 60; i++) frame(2 + i / 60);
-    expect(cap.material.emissiveIntensity).toBeGreaterThan(0.1);
-    expect(cap.material.emissiveIntensity).toBeLessThan(0.2);
-    snap.hint.button = null;
-    for (let i = 1; i <= 90; i++) frame(3 + i / 60);
-    expect(cap.material.emissiveIntensity).toBe(0);
+    const accepted = sample(60);
+    expect(Math.max(...accepted.dip)).toBeCloseTo(BELT_BUTTON.dip, 3);
+    expect(Math.max(...accepted.glow)).toBeGreaterThan(0.4);
+    expect(accepted.glow.at(-1)).toBe(0);
+    expect(pad.position.y).toBe(0);
     v.dispose();
   });
 
-  it('a level loaded with presses already counted shows the cap at rest (nothing replays)', () => {
+  it('a level loaded with presses already counted shows the pad at rest (nothing replays)', () => {
     const snap = new GameState(level).getSnapshot();
     snap.conveyors[0].presses = 4;
     snap.conveyors[0].accepted = 2;
     const v = new LevelView(snap, defaultTheme, GAME_CONFIG, ANGLE);
     const input = v.root.children.find((c) => c.userData.beltInId === 'e1')!;
-    const cap = input.children.find((c) => c.userData.beltButtonCap !== undefined) as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const pad = input.children.find((c) => c.userData.beltButton !== undefined) as Mesh<BufferGeometry, MeshStandardMaterial>;
     for (let i = 0; i < 10; i++) v.update(snap, 1 / 60, i / 60, ANGLE, 0);
-    expect(cap.position.y).toBe(BELT_BUTTON.post.top);
-    expect(cap.material.emissiveIntensity).toBe(0);
+    expect(pad.position.y).toBe(0);
+    expect(pad.material.emissiveIntensity).toBe(0);
     v.dispose();
   });
 

@@ -150,7 +150,7 @@ describe('validateLevel: conveyor belts', () => {
     );
   });
 
-  it('its button (H2): a cell of its own, an obstacle inside the warehouse, with a free floor cell beside it to be pressed from', () => {
+  it('its button (H2b): a pad on a floor cell of its own, never where a unit is loaded from, driven onto from a free cell beside it; nothing that holds a box starts on it', () => {
     // Beside the input (1,2): kept as given, the level given back as it is.
     const withButton = () => {
       const raw = base();
@@ -170,13 +170,22 @@ describe('validateLevel: conveyor belts', () => {
     expect(failsWithButton((raw) => (belt(raw).button = { x: 7, z: 2 }))).toBe('conveyors[0].button leaves the warehouse at 7,2');
     expect(failsWithButton((raw) => (belt(raw).button = { x: 0, z: 1 }))).toBe('conveyors[0].button overlaps another obstacle at 0,1');
     expect(failsWithButton((raw) => (raw.decor = { plants: [{ x: 1, z: 2 }], windows: [] }))).toBe('conveyors[0].button overlaps another obstacle at 1,2');
-    // An obstacle: nothing starts on it.
-    expect(failsWithButton((raw) => ((raw.boxes as Raw[])[0] = { id: 'b1', color: 'blue', symbol: 'circle', x: 1, z: 2 }))).toBe('box "b1" is inside an obstacle');
-    expect(failsWithButton((raw) => ((raw.zones as Raw[])[0] = { id: 'z1', color: 'mint', x: 1, z: 2 }))).toBe('zone "z1" is inside an obstacle');
-    expect(failsWithButton((raw) => (raw.forklift = { x: 1, z: 2, heading: 0 }))).toBe('forklift starts inside an obstacle');
-    // Shut in (the wall west, the belt's cell north of it… here: plants on its three free sides).
+    // Floor, never an obstacle, yet nothing starts on it: no box or zone (no box ever rests there), no forklift (it starts
+    // beside it: its first action would press it, and a .level map draws one thing per cell).
+    expect(failsWithButton((raw) => (raw.forklift = { x: 1, z: 2, heading: 0 }))).toBe('forklift starts on conveyors[0].button at 1,2: it starts beside the button');
+    expect(failsWithButton((raw) => ((raw.boxes as Raw[])[0] = { id: 'b1', color: 'blue', symbol: 'circle', x: 1, z: 2 }))).toBe(
+      'box "b1" starts on conveyors[0].button at 1,2: no box ever rests on a belt button (the forklift drives onto it to press it)',
+    );
+    expect(failsWithButton((raw) => ((raw.zones as Raw[])[0] = { id: 'z1', color: 'mint', x: 1, z: 2 }))).toBe(
+      'zone "z1" is on conveyors[0].button at 1,2: no box ever rests on a belt button (the forklift drives onto it to press it)',
+    );
+    // Never where a unit is loaded from: there the forklift stands to load it, and on the pad the action presses.
+    expect(failsWithButton((raw) => (belt(raw).button = { x: 0, z: 3 }))).toBe(
+      'conveyors[0].button at 0,3 is where beltInputs[0] column 0 is loaded from: the forklift stands there to load it, and standing on a button the action presses it',
+    );
+    // Shut in (here: plants on its three free sides, A on the fourth).
     expect(failsWithButton((raw) => (raw.decor = { plants: [{ x: 2, z: 2 }, { x: 1, z: 1 }, { x: 1, z: 3 }], windows: [] }))).toBe(
-      'conveyors[0].button at 1,2 has no free floor beside it to be pressed from',
+      'conveyors[0].button at 1,2 has no free floor beside it to drive onto it from',
     );
     // One free side is enough.
     expect(failsWithButton((raw) => (raw.decor = { plants: [{ x: 2, z: 2 }, { x: 1, z: 1 }], windows: [] }))).toBeNull();

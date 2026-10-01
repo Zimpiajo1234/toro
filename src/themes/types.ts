@@ -106,10 +106,10 @@ export interface Theme {
    * closed base and the closed guards on its input's sides (a soft near-black graphite, «negro», never a deep black).
    * On it, `belt` = the band's soft light-grey rubber (its surface and body), `stripe` = the white stripes across it
    * (they slide only while it runs: the motion cue), `edge` = the fine light rails along its sides, `icon` = the drop
-   * icon painted on its input's pad (a light cream). `identity` = one colour per belt in level order (cycling): its
-   * input's pad, its end exit's low skirting and its button's mushroom cap (H2; its post is `side`), so several belts
-   * pair up at a glance; none of the box colours (base, tape, locked), the rails' orange, the beacon's amber or the
-   * plants' sage, never red (src/integration/themes.test.ts).
+   * icon painted on its input's pad and the back arrow on its button's (a light cream). `identity` = one colour per belt
+   * in level order (cycling): its input's pad, its end exit's low skirting and its button's pad on the floor (H2b), so
+   * several belts pair up at a glance; none of the box colours (base, tape, locked), the rails' orange, the beacon's
+   * amber or the plants' sage, never red (src/integration/themes.test.ts).
    */
   conveyor: {
     belt: string;

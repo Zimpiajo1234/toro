@@ -224,17 +224,19 @@ salida ya llena, una caja dejada en la entrada se queda en ella (zumbido suave) 
 horquilla en el nivel 1. Dejarla en la entrada cuenta un movimiento; el viaje, ninguno; y la caja sigue contando en
 «Quedan N» hasta que llega.
 
-El **botón** de la cinta es una **seta en un poste** junto a la entrada: el poste, del negro de la mesa; la seta, del
-**mismo color que la almohadilla de la entrada** (así se sabe de qué cinta es cuando hay varias). Ponte **de frente**
-a él, como delante de una columna de estantería, con la horquilla vacía o con una caja, y pulsa **Espacio**: la seta
-se hunde y se ilumina, la cinta corre **al revés** (las rayas hacia atrás, con el mismo zumbido) y **devuelve a la
-entrada la última caja mal puesta**, que vuelves a coger con la horquilla en el nivel 1. Pulsarlo y la vuelta cuentan
-**0 movimientos** y «Quedan N» no cambia. Solo funciona con la cinta parada, la entrada vacía y nada de la carretilla
-dentro de ella, y si hay algo que devolver (una caja que ya está en su sitio nunca vuelve); si no, la seta se hunde
-con un «no» suave y nada se mueve. En los niveles con botón la pista de controles dice «Espacio recoger / dejar /
-pulsar». Sin teclas nuevas. Hoy solo el Benchmark lleva una cinta (de (8,2) a (8,0), junto a la estantería de madera
-del fondo, con el botón en (7,2), a la izquierda de la entrada); los niveles 1–3 no cambian. Detalle, decisiones e
-hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
+El **botón** de la cinta es una **almohadilla en el suelo** junto a la entrada, del **mismo color y estilo que la
+almohadilla de la entrada** (así se sabe de qué cinta es cuando hay varias), con una **flecha de vuelta** crema pintada
+encima. **Súbete a ella** con la carretilla (el centro de la carretilla dentro, con cualquier rumbo, con la horquilla
+vacía o con una caja; brilla un poco mientras estás encima) y pulsa **Espacio**: encima, Espacio siempre pulsa (nunca
+coge ni deja). La almohadilla se ilumina y se hunde un poco, la cinta corre **al revés** (las rayas hacia atrás, con el
+mismo zumbido) y **devuelve a la entrada la última caja mal puesta**, que vuelves a coger con la horquilla en el nivel
+1. Pulsarlo y la vuelta cuentan **0 movimientos** y «Quedan N» no cambia. Solo funciona con la cinta parada, la entrada
+vacía y nada de la carretilla dentro de ella, y si hay algo que devolver (una caja que ya está en su sitio nunca
+vuelve); si no, un destello apagado y un «no» suave, y nada se mueve. Se pasa por encima como por el suelo, pero nunca
+se deja una caja en ella. En los niveles con botón la pista de controles dice «Espacio recoger / dejar / pulsar». Sin
+teclas nuevas. Hoy solo el Benchmark lleva una cinta (de (8,2) a (8,0), junto a la estantería de madera del fondo, con
+el botón en (7,3), a la izquierda de la casilla de delante de la entrada); los niveles 1–3 no cambian. Detalle,
+decisiones e hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
 
 ## Sonidos de la carretilla
 
@@ -254,8 +256,8 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 - **Cinta**: un «tup» de goma al dejar la caja en su entrada, un zumbido eléctrico suave mientras corre (sube y baja
   con ella) y un golpe suave al llegar al final de la mesa, con la campana si es su caja. Su botón: un clic mecánico
-  suave de la seta; si no puede hacer nada, un clic más sordo y un «no» corto y suave (nunca una alarma). La caja que
-  vuelve suena con el mismo zumbido y el «tup» al llegar a la entrada.
+  suave de la almohadilla; si no puede hacer nada, un clic más sordo y un «no» corto y suave (nunca una alarma). La caja
+  que vuelve suena con el mismo zumbido y el «tup» al llegar a la entrada.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y
 `src/audio/sfx.ts`, listos para ajustar a oído.

@@ -4,12 +4,11 @@ import { baseLevelOf } from '../../core/storage';
 import { cellToWorld, isFrontUnit, type GameSnapshot, type LevelStorage, type StorageSlotState } from '../../core/types';
 import {
   BELT_BURST,
-  BELT_BUTTON,
   beltPlacement,
   beltTopY,
   buildBeltBand,
-  buildBeltButtonCap,
-  buildBeltButtonPost,
+  buildBeltButtonIcon,
+  buildBeltButtonPad,
   buildBeltCue,
   buildBeltDeck,
   buildBeltGlowGeometry,
@@ -35,9 +34,10 @@ import type { BurstPlace, MarkerPlace, StorageBuildContext, StorageSkinRender, S
  * colour with the drop icon painted on it, its closed black side guards (loaded from its front only) and, painted on
  * the floor in front of it, a rack's loading line; worked like a rack slot (F up to the table top), so it shows the
  * chosen-level marker, flat on the pad's rim, when the forks are set to its slot (none at the table's face, below it).
- * With a button (H2), the input also draws it on its own cell: a slim near-black post and a mushroom cap in the belt's
- * identity colour, which dips on every press, glows on an accepted one and glows faintly while aimed at
- * (views/ConveyorView BeltButton); while the belt runs back its stripes slide backwards.
+ * With a button (H2b), the input also draws it on its own cell: a pad on the floor like its own, in the belt's identity
+ * colour, with a cream back arrow turned with the belt, which brightens while the forklift stands on it, glows and dips
+ * on an accepted press and flashes, muted, on a refused one (views/ConveyorView BeltButton); while the belt runs back
+ * its stripes slide backwards.
  * `beltOut`, the end exit: the table's last stretch, its deck with the cue sticker of its level painted flat on it and
  * its low skirting in the belt's identity colour; it lights like a rack slot (views/RackView SlotLight: only with its
  * destined box; it pulses while a box that fits its cue is carried, with the target hints) — at once as the box slides
@@ -112,12 +112,12 @@ abstract class BeltUnit implements StorageUnitView {
 
 /**
  * A belt's input: the belt's table, its band (whose stripes slide with its surface), on the table top its pad with the
- * drop icon and its side guards, and the belt's button if it has one (H2: on its own cell, the cap dipping on a press).
+ * drop icon and its side guards, and the belt's button if it has one (H2b: a pad on its own floor cell).
  */
 class BeltInputUnit extends BeltUnit {
   private readonly stripes: BeltStripes | null;
   private readonly button: BeltButton | null = null;
-  /** Its belt's id (the hint names the button aimed at by it), or '' without a belt. */
+  /** Its belt's id (the hint names its button while the forklift stands on it), or '' without a belt. */
   private readonly beltId: string;
 
   constructor(
@@ -136,8 +136,8 @@ class BeltInputUnit extends BeltUnit {
     const top = beltTopY(baseLevelOf(unit));
     const conveyor = conveyorsOf(level)[belt];
     this.beltId = conveyor?.id ?? '';
-    if (conveyor && unit.access.kind === 'front') {
-      const placement = beltPlacement(conveyor, unit, unit.access.facing, level);
+    const placement = conveyor && unit.access.kind === 'front' ? beltPlacement(conveyor, unit, unit.access.facing, level) : null;
+    if (conveyor && placement) {
       const table = this.add(ctx.bag.track(buildBeltTable(placement, top, theme)), painted, true);
       table.userData.beltTable = conveyor.id;
       const band = this.add(ctx.bag.track(buildBeltBand(placement, top, theme)), rubber, false);
@@ -147,20 +147,22 @@ class BeltInputUnit extends BeltUnit {
       this.group.add(this.stripes.mesh);
     } else this.stripes = null;
     if (conveyor?.button) {
-      // Its button: the post in the table's near-black, the cap in the belt's identity colour (its own material: it
-      // glows in that colour on an accepted press).
+      // Its button: a pad on the floor in the belt's identity colour, in its input's pad's rubber but a material of its
+      // own (it glows in that colour), and on it the back arrow in the icon's cream, turned with the belt (a child of
+      // the pad: it dips with it).
       const at = cellToWorld(conveyor.button, level.size);
-      const identity = identityOf(ctx, belt);
-      const post = this.add(ctx.bag.track(buildBeltButtonPost(theme)), painted, true);
-      post.position.set(at.x, 0, at.z);
-      post.userData.beltButtonPost = conveyor.id;
-      const material = ctx.bag.track(ctx.mats.painted.clone());
-      material.emissive.set(identity);
+      const material = ctx.bag.track(rubber.clone());
+      material.emissive.set(identityOf(ctx, belt));
       material.emissiveIntensity = 0;
-      const cap = this.add(ctx.bag.track(buildBeltButtonCap(identity)), material, true);
-      cap.position.set(at.x, BELT_BUTTON.post.top, at.z);
-      cap.userData.beltButtonCap = conveyor.id;
-      this.button = new BeltButton(cap, material, BELT_BUTTON.post.top);
+      const pad = this.add(ctx.bag.track(buildBeltButtonPad(identityOf(ctx, belt))), material, false);
+      pad.position.set(at.x, 0, at.z);
+      pad.userData.beltButton = conveyor.id;
+      const icon = new Mesh(ctx.bag.track(buildBeltButtonIcon(theme.conveyor.icon)), rubber);
+      icon.receiveShadow = true;
+      icon.rotation.y = placement?.ry ?? 0;
+      icon.userData.beltButtonIcon = conveyor.id;
+      pad.add(icon);
+      this.button = new BeltButton(pad, material);
     }
     const pad = this.add(ctx.bag.track(buildBeltPad(unit, level, top, identityOf(ctx, belt))), rubber, false);
     pad.userData.beltPad = unit.id;

@@ -257,7 +257,7 @@ describe('a belt\'s button in the .level format (H2)', () => {
   it('reads a button: «cinta botón» on a cell of its own, the belt\'s (the only one: no id needed)', () => {
     const level = levelOf(WITH_BUTTON);
     expect(conveyorsOf(level)).toStrictEqual([{ id: 'c1', input: 'e1', output: 's1', cells: [{ x: 0, z: 1, piece: 'suelo', height: 1 }], button: { x: 1, z: 2 } }]);
-    // It validates (an obstacle with a free side to be pressed from) and comes back as it is.
+    // It validates (a pad on the floor with a free side to drive onto it from) and comes back as it is.
     const valid = parseLevel(text(WITH_BUTTON), 'x.level').level;
     expect(conveyorsOf(valid)[0].button).toEqual({ x: 1, z: 2 });
     expect(parseLevel(renderLevel(valid), 'x.level').level).toStrictEqual(valid);
@@ -297,10 +297,13 @@ describe('a belt\'s button in the .level format (H2)', () => {
     expectError(extra, LEGEND, columnOf(extra[LEGEND - 1], 'azul', columnOf(extra[LEGEND - 1], 'botón')), /^«azul» sobra: el botón de una cinta se escribe «cinta botón»/);
   });
 
-  it('validateLevel, in Spanish at the button: it needs a free floor cell beside it to be pressed from', () => {
+  it('validateLevel, in Spanish at the button (H2b, a pad): a free floor cell beside it to drive onto it from; never where a unit is loaded from', () => {
     // Shut in: the wall north, A west, plants east and south.
     const shut = [...BASE.slice(0, 5), '0 Bop....', '1 ~p.....', '2 A..a.1.', '3 ...^.b.', '', ...BASE.slice(10, 12), 'A = cinta entrada        B = cinta final: azul    ~ = cinta    o = cinta botón'];
-    expectInvalid(shut, ...at(1, 0), /^el botón de la cinta se pulsa de frente desde una casilla de suelo a su lado, y no le queda ninguna libre/);
+    expectInvalid(shut, ...at(1, 0), /^el botón de la cinta es una almohadilla del suelo a la que la carretilla se sube desde una casilla de suelo a su lado, y no le queda ninguna libre/);
+    // On A's front cell, where the forklift stands to load A.
+    const front = [...BASE.slice(0, 8), '3 o..^.b.', '', ...BASE.slice(10, 12), 'A = cinta entrada        B = cinta final: azul    ~ = cinta    o = cinta botón'];
+    expectInvalid(front, ...at(0, 3), /^el botón de la cinta no va en la casilla desde la que se carga una unidad .*sobre el botón Espacio lo pulsa/);
   });
 });
 
