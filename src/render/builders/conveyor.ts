@@ -1,24 +1,26 @@
-import { ShapeGeometry, type BufferGeometry } from 'three';
+import { Path, Shape, ShapeGeometry, Vector2, type BufferGeometry } from 'three';
 import { FACING_X, FACING_Z } from '../../core/racks';
+import { BASE_GUARD } from '../../core/storage';
 import { cellToWorld, type Facing, type LevelConveyor, type LevelData, type LevelStorage } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { rackSlotY } from '../dims';
 import { PartList, type Placement } from '../paint';
-import { extrudedShapeGeometry, roundedRectShape } from '../shapes';
+import { extrudedShapeGeometry, roundedRectPoints, roundedRectShape } from '../shapes';
 import { buildCueFace, buildGlowFrameGeometry, rectRingShape, type CueDims, type CueLook, type GlowFrameDims } from './rack';
 
 /*
  * Conveyor belt (docs/CONVEYOR.md): a piece clearly apart from the rest of the furniture, clear and minimalist. A table
- * (H1b, «como una mesa con la cinta»): a light top on four slim graphite legs (a pair more every few cells of a long
- * belt) with a plain frame, an apron under the top and low stretchers between the legs, from its input's front to its
- * end exit's back. Its top stands at the floor of the slot of its belt's height (dims rackSlotY of the belt's level: a
- * floor belt's level 1, a rack's level-1 slot), where the boxes rest, so a box goes in at the forks' level 1 and rides
- * level. On it, over the belt's cells, a band of soft light-grey rubber between two fine light rails, its white stripes
- * sliding only while it runs (views/ConveyorView); no rollers, nothing over it. Its input is a pad in the belt's
- * identity colour on the table top, where the box is set down. Its end exit is the table's last stretch: a deck with
- * the cue sticker of its level (the rack's, builders/rack buildCueFace) painted flat on it, and a very low orange fence
- * (the look of the docks' guard rails, builders/truck buildDockRails, at a much lower scale: the same orange and cream
- * caps) along its three open edges, never on the side joined to the belt.
+ * (H1b, «como una mesa con la cinta») standing on a closed base (H1c, «que no tenga patas, sea como una pared lateral
+ * cerrada, así visualmente ocupa más»): a light top over a solid block whose side walls, a soft near-black, go down to
+ * the floor all round, from its input's front to its end exit's back. Its top stands at the floor of the slot of its
+ * belt's height (dims rackSlotY of the belt's level: a floor belt's level 1, a rack's level-1 slot), where the boxes
+ * rest, so a box goes in at the forks' level 1 and rides level. On it, over the belt's cells, a band of soft light-grey
+ * rubber between two fine light rails, its white stripes sliding only while it runs (views/ConveyorView); no rollers,
+ * nothing over it. Its input is a pad in the belt's identity colour on the table top, where the box is set down, with
+ * the drop icon painted on it and closed black guards on its two sides (it is loaded from its front only). Its end exit
+ * is the table's last stretch: a deck with the cue sticker of its level (the rack's, builders/rack buildCueFace) painted
+ * flat on it and a low solid skirting in the belt's identity colour along its three open edges, never on the side
+ * joined to the belt.
  */
 
 /**
@@ -39,34 +41,52 @@ export const BELT = {
   edge: { width: 0.03, height: 0.025 },
   /** White stripes across the band: one every `period` along the belt, `width` wide, `lift` over it. */
   stripe: { period: 0.25, width: 0.07, lift: 0.0015 },
-  /** Square legs `side` thick, `inset` inside the top's corners; a pair at least every `span` cells along the belt. */
-  leg: { side: 0.06, inset: 0.03, span: 3 },
-  /** The apron under the top, `height` tall and `depth` thick, its outer face flush with the legs'. */
-  apron: { height: 0.07, depth: 0.025 },
-  /** The low stretchers between the legs, on the same line as the apron, from `y0` to `y1` (clear of the tines). */
-  stretcher: { y0: 0.1, y1: 0.135 },
-  /** The input's pad on the table top: a rounded square. */
+  /** The closed base under the top, from the floor up: its walls this far inside the top's edges (a slim shadow line). */
+  base: { inset: 0.012 },
+  /** The input's pad on the table top: a rounded square, just inside its side guards. */
   pad: { half: 0.43, radius: 0.08 },
 } as const;
 
 /**
- * The very low fence round an end exit's three open edges (slot-local, heights over the table top): the look of a dock
- * guard rail (builders/truck RAIL) at a much smaller scale. Square posts `post` thick at the far corners and at the
- * near ends of the sides (by the belt), up to `top`, each with a cream cap `cap` high overhanging it by `capOver`; one
- * bar per edge between them, `bar` high from `barY`, `barDepth` thick. Its top is a fifth of a box's height: it never
- * hides the box or the cue.
+ * The closed side guards of a belt's input (buildBeltGuards, slot-local, heights over the table top): solid panels on
+ * its two side edges, from the table's front end to the belt, in the colour of the closed base (Theme.conveyor.side),
+ * so it reads «no se carga por aquí». Their outer face flush with the top's edge, their inner one BASE_GUARD.inset in
+ * from the cell's (the tines meet them there: logic/collision SolidBase); `top` high, under a fifth of a box: they never
+ * hide the box being set down, nor the pad's icon.
  */
-export const BELT_FENCE = { post: 0.032, top: 0.12, cap: 0.014, capOver: 0.005, bar: 0.022, barY: 0.055, barDepth: 0.016 } as const;
+export const BELT_GUARD = { top: 0.12 } as const;
+
+/**
+ * The low skirting («rodapié») round an end exit's three open edges (buildBeltSkirting, slot-local, heights over its
+ * deck): one continuous solid strip `thickness` thick and `top` high, in the belt's identity colour (its input's pad's:
+ * several belts pair up by colour), never on the side joined to the belt. A tenth of a box high: it never hides the box
+ * or the painted cue.
+ */
+export const BELT_SKIRTING = { top: 0.06, thickness: 0.03 } as const;
+
+/**
+ * The drop icon painted flat on a belt input's pad (buildBeltIcon, slot-local: +z toward its loading face): «deja aquí
+ * una caja», light cream (Theme.conveyor.icon) on its identity colour. A bold arrow from the loading face pointing in
+ * (the way the forklift drives and the box goes on, toward the belt) at the outline of a box seen from above: turned
+ * with the input, so it says the same from every camera turn. A box resting on the pad hides it.
+ */
+export const BELT_ICON = {
+  lift: 0.003,
+  /** The box outline: centred at `z`, `half` its outer half side, a `ring` wide line, `radius` corners. */
+  box: { z: -0.1, half: 0.2, ring: 0.05, radius: 0.05 },
+  /** The arrow: its `tip` (nearest the box), the base of its head and its `tail` (z), head and shaft half widths. */
+  arrow: { tip: 0.13, head: 0.25, tail: 0.4, halfHead: 0.12, halfShaft: 0.045 },
+} as const;
 
 /**
  * The cue sticker painted flat on an end exit's deck (the rack's sticker, builders/rack buildCueFace, lying face up):
- * well inside the fence, so it reads from any camera turn over the fence.
+ * well inside the skirting, so it reads from any camera turn over it.
  */
 export const BELT_CUE: CueDims = { halfW: 0.28, halfH: 0.28, radius: 0.07, rim: 0.026, glyph: 0.34, lift: 0.003 };
 
 /**
  * Glow band of an end exit (views/RackView SlotLight): a feathered frame of light flat on its deck, round the spot
- * where its box rests (a box is 0.39 across each side) and inside the fence, `lift` over the deck.
+ * where its box rests (a box is 0.39 across each side) and inside the skirting, `lift` over the deck.
  */
 export const BELT_GLOW: GlowFrameDims & { halfH: number; lift: number } = {
   halfW: 0.395,
@@ -84,9 +104,10 @@ export const BELT_BURST = { halfW: 0.44 } as const;
 
 /**
  * Chosen-level marker on a belt's input (views/SlotMarker; render/storage conveyor `markerAt`): a thin rounded frame
- * flat on the table top, round the input's pad (`halfW` its outer half extent, `width` its band), `lift` over it.
+ * flat on the input's pad, along its rim, between its side guards (`halfW` its outer half extent, `width` its band),
+ * `lift` over it.
  */
-export const BELT_MARKER = { halfW: 0.47, width: 0.03, radius: 0.07, lift: 0.004 } as const;
+export const BELT_MARKER = { halfW: 0.43, width: 0.03, radius: 0.07, lift: 0.004 } as const;
 
 /** World y of a belt's table top at `level` (its cells' height): the floor of a slot there (dims rackSlotY). */
 export function beltTopY(level: number): number {
@@ -109,49 +130,19 @@ export function beltPlacement(conveyor: LevelConveyor, input: Pick<LevelStorage,
 
 /**
  * The table of a belt, in world space (its top at `top`, dims beltTopY): the light slab from the input's front to the
- * end exit's back, the graphite legs at its corners (and a pair at least every BELT.leg.span cells), the apron under
- * the slab and the low stretchers between the legs, both on the legs' outer line, all round. Plain: no rollers, no
- * clutter.
+ * end exit's back, on its closed base: one solid block from the floor up to the slab, its side walls all round in a
+ * soft near-black (Theme.conveyor.side), BELT.base.inset inside the slab's edges. No legs: it occupies its cells, and
+ * below its top the forks meet its face (docs/STORAGE.md «Nivel base»). Plain: no rollers, no clutter.
  */
 export function buildBeltTable(placement: Placement & { cells: number }, top: number, theme: Theme): BufferGeometry {
   const c = theme.conveyor;
-  const L = BELT.leg;
-  const A = BELT.apron;
-  const S = BELT.stretcher;
   const local = new PartList();
   const z0 = -0.5 + BELT.endGap;
   const z1 = placement.cells + 1.5 - BELT.endGap;
   const under = top - BELT.skin - BELT.slab;
+  const i = BELT.base.inset;
   local.block(c.top, -BELT.halfW, BELT.halfW, under, top - BELT.skin, z0, z1);
-  // Legs: their outer faces `inset` inside the slab's edges, evenly along it, never more than `span` cells apart.
-  const outer = BELT.halfW - L.inset;
-  const first = z0 + L.inset;
-  const last = z1 - L.inset;
-  const spans = Math.max(1, Math.ceil((last - first) / L.span));
-  for (let k = 0; k <= spans; k++) {
-    const z = first + ((last - first - L.side) * k) / spans;
-    for (const side of [-1, 1]) {
-      const x = side * (outer - L.side / 2);
-      local.block(c.frame, x - L.side / 2, x + L.side / 2, 0, under, z, z + L.side);
-    }
-  }
-  // The apron under the slab and the stretchers near the floor: a frame on the legs' outer line, all round.
-  for (const [y0, y1] of [
-    [under - A.height, under],
-    [S.y0, S.y1],
-  ] as const) {
-    for (const side of [-1, 1]) {
-      const a = side * outer;
-      const b = side * (outer - A.depth);
-      local.block(c.frame, Math.min(a, b), Math.max(a, b), y0, y1, first + L.side, last - L.side);
-    }
-    for (const [za, zb] of [
-      [first, first + A.depth],
-      [last - A.depth, last],
-    ] as const) {
-      local.block(c.frame, -outer + L.side, outer - L.side, y0, y1, za, zb);
-    }
-  }
+  local.block(c.side, -BELT.halfW + i, BELT.halfW - i, 0, under, z0 + i, z1 - i);
   return new PartList().append(local, placement).build();
 }
 
@@ -182,6 +173,50 @@ export function buildBeltPad(input: Pick<LevelStorage, 'x' | 'z'>, level: Pick<L
 }
 
 /**
+ * The closed side guards of a belt's input (BELT_GUARD), in its slot-local space (origin = its cell's centre on the
+ * floor, +z toward its loading face: builders/rack outwardYaw of its facing): a solid panel on each side edge, from the
+ * belt (z = −0.5) to the table's front end, from the slab up to BELT_GUARD.top over the table top, in the base's
+ * near-black. Its own mesh: it casts and takes shadows like the table.
+ */
+export function buildBeltGuards(top: number, theme: Theme): BufferGeometry {
+  const parts = new PartList();
+  const inner = 0.5 - BASE_GUARD.inset;
+  for (const side of [-1, 1]) {
+    const a = side * inner;
+    const b = side * BELT.halfW;
+    parts.block(theme.conveyor.side, Math.min(a, b), Math.max(a, b), top - BELT.skin, top + BELT_GUARD.top, -0.5, 0.5 - BELT.endGap);
+  }
+  return parts.build();
+}
+
+/**
+ * The drop icon of a belt's input (BELT_ICON), slot-local like buildBeltGuards: flat on its pad at `top`, face up, its
+ * arrow pointing in from the loading face to the box outline, in `color` (Theme.conveyor.icon).
+ */
+export function buildBeltIcon(top: number, color: string): BufferGeometry {
+  const I = BELT_ICON;
+  const B = I.box;
+  const A = I.arrow;
+  const parts = new PartList();
+  // Drawn in the XY plane and laid face up (rx −π/2), so a shape's y is −z.
+  const flat = (shape: Shape) => parts.add(new ShapeGeometry(shape, 4), color, { y: top + I.lift, rx: -Math.PI / 2 });
+  const at = (points: Vector2[], y: number) => points.map((p) => new Vector2(p.x, p.y + y));
+  // The box: its outline, a rounded ring.
+  const outline = new Shape(at(roundedRectPoints(B.half, B.half, B.radius, 4), -B.z));
+  outline.holes.push(new Path(at(roundedRectPoints(B.half - B.ring, B.half - B.ring, Math.max(0.01, B.radius - B.ring), 4), -B.z)));
+  flat(outline);
+  // The arrow: its shaft from the tail to its head, the head pointing in to the box.
+  flat(rectShape(-A.halfShaft, -A.tail, A.halfShaft, -A.head));
+  flat(new Shape([new Vector2(-A.halfHead, -A.head), new Vector2(A.halfHead, -A.head), new Vector2(0, -A.tip)]));
+  return parts.build();
+}
+
+/** An axis-aligned rectangle as a shape (x0 < x1, y0 < y1). */
+function rectShape(x0: number, y0: number, x1: number, y1: number): Shape {
+  return new Shape([new Vector2(x0, y0), new Vector2(x1, y0), new Vector2(x1, y1), new Vector2(x0, y1)]);
+}
+
+/**
  * An end exit's deck, in slot-local space (origin = its cell's centre on the floor, +z toward its belt: builders/rack
  * outwardYaw of its facing): its stretch of the table top, from its back (the table's end) to its belt, its top at
  * `top`. Its own mesh so it can glow (views/RackView SlotLight).
@@ -191,49 +226,20 @@ export function buildBeltDeck(top: number, theme: Theme): BufferGeometry {
 }
 
 /**
- * The very low fence of an end exit (BELT_FENCE), slot-local like buildBeltDeck, on its deck at `top`: along its back
- * and both sides, open toward its belt; posts and bars in the docks' guard-rail orange (Theme.truck.rail), cream caps
- * (railCap). Static; it casts and takes shadows like the other props.
+ * The low skirting of an end exit (BELT_SKIRTING), slot-local like buildBeltDeck, on its deck at `top`: one solid strip
+ * along its back and both sides, open toward its belt, in `identity` (its belt's identity colour, the one of its
+ * input's pad). Static; it casts and takes shadows like the other props.
  */
-export function buildBeltFence(top: number, theme: Theme): BufferGeometry {
-  const F = BELT_FENCE;
-  const rail = theme.truck.rail;
+export function buildBeltSkirting(top: number, identity: string): BufferGeometry {
+  const S = BELT_SKIRTING;
   const parts = new PartList();
   const x1 = BELT.halfW;
   const back = -0.5 + BELT.endGap;
-  const near = 0.5;
-  const y = (h: number) => top + h;
-  // Posts at the back corners and at the sides' near ends (by the belt), each under its cap, which overhangs it only
-  // over the deck (never past the table's edges, nor into the belt).
-  const clampX = (u: number) => Math.min(x1, Math.max(-x1, u));
-  const clampZ = (z: number) => Math.min(near, Math.max(back, z));
-  for (const sx of [-1, 1]) {
-    for (const [z0, z1] of [
-      [back, back + F.post],
-      [near - F.post, near],
-    ] as const) {
-      const xa = sx * x1;
-      const xb = sx * (x1 - F.post);
-      const [u0, u1] = [Math.min(xa, xb), Math.max(xa, xb)];
-      parts.block(rail, u0, u1, y(0), y(F.top), z0, z1);
-      parts.block(
-        theme.truck.railCap,
-        clampX(u0 - F.capOver),
-        clampX(u1 + F.capOver),
-        y(F.top),
-        y(F.top + F.cap),
-        clampZ(z0 - F.capOver),
-        clampZ(z1 + F.capOver),
-      );
-    }
-  }
-  // One bar per edge, centred on the posts' line.
-  const mid = (F.post - F.barDepth) / 2;
-  parts.block(rail, -x1 + F.post, x1 - F.post, y(F.barY), y(F.barY + F.bar), back + mid, back + F.post - mid);
-  for (const sx of [-1, 1]) {
-    const xa = sx * (x1 - mid);
-    const xb = sx * (x1 - F.post + mid);
-    parts.block(rail, Math.min(xa, xb), Math.max(xa, xb), y(F.barY), y(F.barY + F.bar), back + F.post, near - F.post);
+  parts.block(identity, -x1, x1, top, top + S.top, back, back + S.thickness);
+  for (const side of [-1, 1]) {
+    const a = side * x1;
+    const b = side * (x1 - S.thickness);
+    parts.block(identity, Math.min(a, b), Math.max(a, b), top, top + S.top, back + S.thickness, 0.5);
   }
   return parts.build();
 }

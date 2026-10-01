@@ -146,7 +146,10 @@ export interface StorageUnitBuilder {
  * aspecto nuevo»).
  */
 export interface StorageSkinRender {
-  /** Paint on the floor for a unit (a rack's loading lines), merged into the level's floor mesh; absent = none. */
+  /**
+   * Paint on the floor for a unit (the loading lines of a rack, a belt's input), merged into the level's floor mesh;
+   * absent = none.
+   */
   paintFloor?(floor: PartList, unit: LevelStorage, level: LevelData, theme: Theme): void;
   /**
    * The chosen-level marker's geometry (views/SlotMarker: one per skin and level, shared by its units, in its local

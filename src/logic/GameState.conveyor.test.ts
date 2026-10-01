@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { GAME_CONFIG } from '../config';
 import { angleDelta } from '../core/math';
-import type { GameEvent, InputFrame } from '../core/types';
+import { TINES, type GameEvent, type InputFrame } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
 import { CONVEYOR, ConveyorSystem, type ConveyorHost } from './conveyor';
 import { GameState } from './GameState';
@@ -9,14 +10,16 @@ import { objectivesLeft } from './objectives';
 import { IDLE, press, run, types } from './testUtils';
 
 /*
- * Conveyor belts (docs/CONVEYOR.md, H1 and H1b): a box set down on a belt's input (a «libre» slot on the belt's
+ * Conveyor belts (docs/CONVEYOR.md, H1, H1b and H1c): a box set down on a belt's input (a «libre» slot on the belt's
  * table, at level 1: loaded from the front like a rack's level-1 slot, the forks raised with F, nothing automatic; at
  * level 0 the load meets the table's face) rests there a moment, then rides the belt into its end exit, the table's
  * last stretch at the same level, which the forklift never works. One box at a time: while it settles or rides, the
  * input holds it out of reach; with the end exit full a box set down on the input stays there (soft buzz, pickable
  * again, at level 1). At the end exit its destined box satisfies the slot and locks; any other box there buzzes. The
- * drop on the input is the move; the ride counts none, and a box on its way still counts in «Quedan N». Deterministic
- * at 60 and 20 fps.
+ * drop on the input is the move; the ride counts none, and a box on its way still counts in «Quedan N». The forks never
+ * go through the table (H1c: its closed base): below its top its face stops the empty tines and the load, and while
+ * either reaches in over it F / V do nothing, the forks never sink and the heading holds, so the rig backs out first.
+ * Deterministic at 60 and 20 fps.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -46,6 +49,52 @@ a = caja azul ●     b = caja menta ▲
 A = cinta entrada   B = cinta final: ${exit}   ~ = cinta
 `);
 
+/** The same belt with A's front cell free, for the empty tines: the forklift faces A from two cells off. */
+const OPEN = level(`
+# 1 · Cinta abierta
+id: cinta-abierta
+limit: 1
+
+  0123456
+0 ..pBp..
+1 ...~...
+2 ...A...
+3 .......
+4 ...^...
+5 .a.b.1.
+6 .......
+
+1 = zona menta
+a = caja azul ●     b = caja menta ▲
+A = cinta entrada   B = cinta final: azul   ~ = cinta
+`);
+
+/** The belt alone: B is the only target, so blue ●'s ride from A completes the level. */
+const ALONE = level(`
+# 1 · Cinta sola
+id: cinta-sola
+limit: 1
+
+  0123456
+0 ..pBp..
+1 ...~...
+2 ...A...
+3 ...a...
+4 ...^...
+5 .......
+6 .......
+
+a = caja azul ●
+A = cinta entrada   B = cinta final: azul   ~ = cinta
+`);
+
+/** How far (u) the tines' tips reach past A's front face (negative: still in front of it), the forklift facing north. */
+function tipDepth(state: GameState): number {
+  const f = state.getSnapshot().forklift;
+  const tip = GAME_CONFIG.forklift.forkReach + TINES.tip * GAME_CONFIG.box.size;
+  return INPUT_FACE_Z - (f.pos.z + Math.cos(f.heading) * tip);
+}
+
 type Dropped = Extract<GameEvent, { type: 'boxDropped' }>;
 type Delivered = Extract<GameEvent, { type: 'beltDelivered' }>;
 const dropped = (events: readonly GameEvent[]) => events.find((e): e is Dropped => e.type === 'boxDropped');
@@ -55,11 +104,16 @@ const delivered = (events: readonly GameEvent[]) => events.find((e): e is Delive
 const forward = (state: GameState, seconds: number, dt: number) => run(state, seconds, input(1), dt);
 const backward = (state: GameState, seconds: number, dt: number) => run(state, seconds, input(-1), dt);
 
-/** One press of F (+1) or V (−1), then the forks left to reach the level chosen (hint.storage). */
+/**
+ * One press of F (+1) or V (−1), then the forks left to reach the level chosen (hint.storage), and one frame more: the
+ * hint sees them there (it is measured before the forks move in a frame; at a belt's input the forks act only once
+ * they stand on its table, never a little under it).
+ */
 function forkTo(state: GameState, step: -1 | 1, dt: number): GameEvent[] {
   const events = [...state.update(dt, input(0, 0, step))];
   const target = state.getSnapshot().hint.storage?.level ?? 0;
   for (let t = 0; t < 3 && state.getSnapshot().forklift.forkHeight !== target; t += dt) events.push(...state.update(dt, IDLE));
+  events.push(...state.update(dt, IDLE));
   return events;
 }
 
@@ -322,6 +376,157 @@ describe.each([
     run(state, 1, IDLE, dt);
     expect(snap.hint.targetBoxId).toBeNull();
     expect(snap.boxes[0].slotId).toBe('s1:0:1');
+  });
+});
+
+describe.each([
+  ['60 fps', 1 / 60],
+  ['20 fps', 1 / 20],
+] as const)('the forks never go through the table at a belt\'s input (H1c, %s)', (_, dt) => {
+  it('empty tines at level 0 meet its closed base: its face stops them, never under the table; F raises them outside, and only up there do they go in', () => {
+    const state = new GameState(OPEN);
+    const snap = state.getSnapshot();
+    forward(state, 2, dt);
+    // The tips at A's face (not under the table), the forks at level 0 (never raised by themselves), no slot there.
+    expect(tipDepth(state)).toBeLessThanOrEqual(1e-6);
+    expect(tipDepth(state)).toBeGreaterThan(-0.02);
+    expect(snap.forklift.forkHeight).toBe(0);
+    expect(snap.hint.storage).toMatchObject({ unitId: 'e1', level: 0, slotId: null });
+    forward(state, 1, dt);
+    expect(tipDepth(state)).toBeLessThanOrEqual(1e-6);
+    // F with W held: the forks rise at the face, the tines go in only once they stand on the table top.
+    let before = snap.forklift.forkHeight;
+    let went = false;
+    for (let i = 0; i < Math.round(2 / dt); i++) {
+      state.update(dt, input(1, 0, i === 0 ? 1 : 0));
+      if (tipDepth(state) > 1e-6) {
+        expect(before, `frame ${i}`).toBe(1);
+        went = true;
+      }
+      before = snap.forklift.forkHeight;
+    }
+    expect(went).toBe(true);
+    // In over the table (the body against A's face) at its slot's level.
+    expect(tipDepth(state)).toBeGreaterThan(0.5);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([1, 1]);
+  });
+
+  it('with the empty tines in over the table F / V do nothing and the heading holds: S backs straight out, then V lowers them in front of it', () => {
+    const state = new GameState(OPEN);
+    const snap = state.getSnapshot();
+    forward(state, 2, dt);
+    forkTo(state, 1, dt);
+    forward(state, 1.5, dt);
+    expect(tipDepth(state)).toBeGreaterThan(0.5);
+    const heading = snap.forklift.heading;
+    // V, F, V: the level stays, so do the forks (no click: the hint's level never changes).
+    for (const step of [-1, 1, -1] as const) {
+      state.update(dt, input(0, 0, step));
+      run(state, 0.5, IDLE, dt);
+      expect([snap.hint.storage?.level, snap.forklift.forkHeight], `step ${step}`).toEqual([1, 1]);
+    }
+    // A / D: nothing turns while the tines are in.
+    run(state, 0.5, input(0, 1), dt);
+    run(state, 0.5, input(0, -1), dt);
+    expect(Math.abs(angleDelta(snap.forklift.heading, heading))).toBeLessThan(1e-9);
+    // S: straight out, the forks up all the way.
+    for (let i = 0; i < Math.round(2 / dt) && tipDepth(state) > -0.2; i++) {
+      state.update(dt, input(-1));
+      expect(snap.forklift.forkHeight).toBe(1);
+      expect(Math.abs(angleDelta(snap.forklift.heading, heading))).toBeLessThan(1e-9);
+    }
+    expect(tipDepth(state)).toBeLessThan(0);
+    // Out of A: V brings them down to the floor, in front of the table.
+    run(state, 0.3, IDLE, dt);
+    forkTo(state, -1, dt);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([0, 0]);
+  });
+
+  it('a load waits at the table\'s face while the forks rise: nothing goes in or drops until they stand on its top', () => {
+    const state = new GameState(LINE());
+    const snap = state.getSnapshot();
+    press(state, dt);
+    forward(state, 2, dt);
+    // F, then W and Space on every frame while the forks rise.
+    state.update(dt, input(1, 0, 1));
+    const space: InputFrame = { ...input(1), actionPressed: true };
+    for (let i = 0; i < 100 && snap.forklift.forkHeight < 1; i++) {
+      expect(types(state.update(dt, space)), `frame ${i}`).not.toContain('boxDropped');
+      expect(snap.boxes[0].pos.z).toBeGreaterThan(INPUT_FACE_Z + GAME_CONFIG.forklift.carriedBoxRadius - 1e-3);
+    }
+    expect(snap.forklift.forkHeight).toBe(1);
+    // Up there (once the rig has seen them there, the frame after) it goes in.
+    state.update(dt, input(1));
+    expect(dropped(state.update(dt, space))).toMatchObject({ boxId: 'b1', slotId: 'e1:0:1', level: 1 });
+  });
+
+  it('setting a box down from inside A leaves the empty tines in over the table: F / V do nothing until the rig backs out', () => {
+    const state = new GameState(LINE());
+    const snap = state.getSnapshot();
+    press(state, dt);
+    forward(state, 2, dt);
+    forkTo(state, 1, dt);
+    // The load right into A's slot (the body against the table), and down there.
+    forward(state, 1.5, dt);
+    expect(snap.boxes[0].pos.z).toBeLessThan(INPUT_FACE_Z);
+    expect(dropped(press(state, dt))).toMatchObject({ boxId: 'b1', slotId: 'e1:0:1', level: 1 });
+    expect(tipDepth(state)).toBeGreaterThan(0.5);
+    state.update(dt, input(0, 0, -1));
+    run(state, 0.5, IDLE, dt);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([1, 1]);
+    // S until they are out: V, pressed on the way, still does nothing; out, it lowers them.
+    for (let i = 0; i < Math.round(2 / dt) && tipDepth(state) > -0.1; i++) state.update(dt, input(-1, 0, tipDepth(state) > 0 ? -1 : 0));
+    expect(tipDepth(state)).toBeLessThan(0);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([1, 1]);
+    forkTo(state, -1, dt);
+    expect(snap.forklift.forkHeight).toBe(0);
+  });
+
+  it('a box picked back from A (its end exit full) keeps the forks up while it is still over the table', () => {
+    const state = new GameState(LINE());
+    const snap = state.getSnapshot();
+    loadInput(state, dt);
+    framesUntil(state, dt, (events) => events.some((e) => e.type === 'beltDelivered'), () => null);
+    backward(state, 1, dt);
+    face(state, 0, 1, dt);
+    press(state, dt);
+    face(state, 0, -1, dt);
+    forward(state, 2.5, dt);
+    forkTo(state, 1, dt);
+    expect(types(press(state, dt))).toEqual(['boxDropped', 'beltBlocked']);
+    // In under it (the empty tines over the table) and up with it: V does nothing while the load is in.
+    forward(state, 1, dt);
+    expect(press(state, dt)).toEqual([{ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' }]);
+    state.update(dt, input(0, 0, -1));
+    run(state, 0.3, IDLE, dt);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([1, 1]);
+    // Backing out: never lower while any of it is still over the table (its collider in A's cell, z −1.5 ‥ −0.5).
+    const radius = GAME_CONFIG.forklift.carriedBoxRadius;
+    for (let i = 0; i < Math.round(2 / dt); i++) {
+      state.update(dt, input(-1));
+      if (snap.boxes[1].pos.z < INPUT_FACE_Z + radius - 1e-6) expect(snap.forklift.forkHeight).toBe(1);
+    }
+    expect(snap.boxes[1].pos.z).toBeGreaterThan(INPUT_FACE_Z + radius);
+    forkTo(state, -1, dt);
+    expect(snap.forklift.forkHeight).toBe(0);
+  });
+
+  it('completing the level with the tines in over the table leaves the forks up there, never down through it', () => {
+    const state = new GameState(ALONE);
+    const snap = state.getSnapshot();
+    // Blue ● right into A's slot at level 1 and down: its ride completes the level, the tines still in.
+    press(state, dt);
+    forward(state, 2, dt);
+    forkTo(state, 1, dt);
+    forward(state, 1.5, dt);
+    expect(dropped(press(state, dt))).toMatchObject({ boxId: 'b1', slotId: 'e1:0:1' });
+    const events = framesUntil(state, dt, (e) => e.some((x) => x.type === 'levelComplete'), () => null).flatMap((f) => f.events);
+    expect(types(events)).toContain('beltDelivered');
+    expect(snap.completed).toBe(true);
+    // Done, the forklift coasts to rest and the forks go back to automatic: not through the table while it is in.
+    run(state, 2, input(-1), dt);
+    expect(tipDepth(state)).toBeGreaterThan(0.5);
+    expect(snap.forklift.forkHeight).toBe(1);
   });
 });
 

@@ -75,8 +75,7 @@ export interface Theme {
    * pit and its painted guide lines; `doorFrame` / `shutter` = the door opening's frame (and the dock sign's frame)
    * and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black); `rail` / `railCap` =
    * the low guard rails on both sides of the door (posts and bars: a soft cozy orange, clearly none of the box colours
-   * and never red) and the cream caps of their posts — one orange for every guard rail: also the very low fence round a
-   * conveyor belt's end exit (docs/CONVEYOR.md).
+   * and never red) and the cream caps of their posts.
    */
   truck: {
     cab: string;
@@ -102,13 +101,14 @@ export interface Theme {
   };
   /**
    * Conveyor belts (docs/CONVEYOR.md): their own material, unlike the shelves' wood, the racks' slate metal and the
-   * truck. A table (H1b): `top` = its light top (the slab's edges, and the end exit's deck, where its cue sticker is
-   * painted flat: Theme.rack.cue* stickers, like a rack slot's), `frame` = its quiet graphite legs, apron and low
-   * stretchers. On it, `belt` = the band's soft light-grey rubber (its surface and body), `stripe` = the white stripes
-   * across it (they slide only while it runs: the motion cue), `edge` = the fine light rails along its sides. The end
-   * exit's very low fence is the docks' guard-rail orange (Theme.truck.rail / railCap). `identity` = one colour per
-   * belt in level order (cycling): its input's pad (later its button too), so several belts pair up at a glance; none
-   * of the box colours (base, tape, locked), the rails' orange, the beacon's amber or the plants' sage, never red
+   * truck. A table (H1b) on a closed base (H1c): `top` = its light top (the slab's edges, and the end exit's deck, where
+   * its cue sticker is painted flat: Theme.rack.cue* stickers, like a rack slot's), `side` = the side walls of its
+   * closed base and the closed guards on its input's sides (a soft near-black graphite, «negro», never a deep black).
+   * On it, `belt` = the band's soft light-grey rubber (its surface and body), `stripe` = the white stripes across it
+   * (they slide only while it runs: the motion cue), `edge` = the fine light rails along its sides, `icon` = the drop
+   * icon painted on its input's pad (a light cream). `identity` = one colour per belt in level order (cycling): its
+   * input's pad and its end exit's low skirting (later its button too), so several belts pair up at a glance; none of the
+   * box colours (base, tape, locked), the rails' orange, the beacon's amber or the plants' sage, never red
    * (src/integration/themes.test.ts).
    */
   conveyor: {
@@ -116,7 +116,8 @@ export interface Theme {
     stripe: string;
     edge: string;
     top: string;
-    frame: string;
+    side: string;
+    icon: string;
     identity: readonly string[];
   };
   plant: { pot: string; soil: string; leaves: string[] };

@@ -139,7 +139,8 @@ El adaptador `render/storage/rack.ts` (`RACK_RENDER`) construye cada estantería
   de arriba de la columna del extremo), una geometría aparte al final de las de `buildRackBays` (marcada con su columna,
   `endPlateColumn`; una sola para las dos puntas de una estantería de una columna). Colores en `Theme.rack` (`frame`,
   `beam`, `panel` —también la placa—, `deck`, `line`, y los de la pista `cueFill`, `cueRim`, `cueInk`; nunca un tono
-  funcional). La línea de carga del frente (`addRackLines`, `paintFloor`) es pintura del suelo. Medidas en `dims.ts`
+  funcional). La línea de carga del frente (`addLoadingLines`, `paintFloor`; la misma delante de la entrada de una cinta,
+  docs/CONVEYOR.md) es pintura del suelo. Medidas en `dims.ts`
   `RACK` (`base`, `pitch` 0,74, `beam`, `forkRest`, `forkCarry`) y `rackSlotY(nivel)`: el suelo del hueco n está a
   `base + n·pitch` (más alto que un piso de pila, así la carga pasa sobre la viga del hueco de encima).
 - **Pista** (`buildSlotCue`, `CUE`): una **pegatina** plana, grande (casi todo el panel) y **sin iluminar**

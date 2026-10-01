@@ -5,8 +5,9 @@
  * storage model left it unchanged and phase 7 must too: when a phase renames an API, it ports storageCharacterization.ts,
  * never the JSON. Phase 6 (the rule changes) regenerated it on purpose, with the command in storageCharacterization.ts,
  * which runs the last test below instead of the comparisons; so did the conveyor belt's H1 (docs/CONVEYOR.md: the
- * Benchmark gained a belt, its coral ✚ box and one target) and H1b (the belt a table at level 1: its ends' slots and
- * base level, the F press at its input).
+ * Benchmark gained a belt, its coral ✚ box and one target), H1b (the belt a table at level 1: its ends' slots and
+ * base level, the F press at its input) and H1c (its closed base: the autopilot backs out of the input after the drop
+ * and lowers the forks with V out there).
  */
 import { describe, expect, it } from 'vitest';
 import stored from './storageCharacterization.json';
@@ -58,10 +59,11 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
       ['s1', 1],
     ]);
     for (const run of [benchmark.autopilot60, benchmark.autopilot20]) {
-      // The ride counts no move: the counter is the box moves driven; F once at the belt's input.
+      // The ride counts no move: the counter is the box moves driven; at the belt's input F once up to its slot and, once
+      // backed out of it, V once down (H1c).
       expect(run).toMatchObject({ solved: true, moves: 15, counter: 15 });
       expect(run.forkStepsAt.truck).toBeGreaterThan(0);
-      expect(run.forkStepsAt.beltIn).toBe(1);
+      expect(run.forkStepsAt.beltIn).toBe(2);
       expect(run.log.filter((line) => line.endsWith('(cinta)'))).toEqual(['b9 e1:0:1 → s1:0:1 ok 8/13 (cinta)']);
     }
   });

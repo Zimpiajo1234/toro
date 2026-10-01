@@ -3,7 +3,7 @@ import { isFrontUnit, type FrontUnit, type LevelStorage, type StorageSlotState }
 import {
   PANEL_HEIGHT,
   SLOT_GLOW,
-  addRackLines,
+  addLoadingLines,
   buildRackBays,
   buildSlotCue,
   buildSlotGlowGeometry,
@@ -95,7 +95,7 @@ class RackUnit implements StorageUnitView {
 export const RACK_RENDER: StorageSkinRender = {
   /** The loading line in front of every column is paint on the floor. */
   paintFloor(floor, unit, level, theme) {
-    addRackLines(floor, rackOf(unit), level, theme);
+    addLoadingLines(floor, rackOf(unit), level, theme);
   },
   markerGeometry: buildSlotMarkerGeometry,
   builder(ctx) {

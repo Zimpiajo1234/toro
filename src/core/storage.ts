@@ -217,6 +217,15 @@ export function baseLevelOf(unit: Pick<LevelStorage, 'baseLevel'>): number {
 }
 
 /**
+ * The closed sides of a front column standing above the floor (docs/STORAGE.md «Nivel base»: a belt's input, its black
+ * side guards, docs/CONVEYOR.md): over its solid base it is open toward its front only, its two side edges closed
+ * `inset` (u) into its cell. The render draws its guards up to there (render/builders/conveyor) and the empty tines meet
+ * them there (logic/collision SolidBase); a load meets its slot's walls as at a rack (RACK_WALL, at the cell's edges),
+ * its drawn box well clear of the guards.
+ */
+export const BASE_GUARD = { inset: 0.06 } as const;
+
+/**
  * The side a unit is loaded from: its front's facing (a belt's end exit: the side its belt comes in from); through a
  * door, TRUCK_FACING[wall] (into the room).
  */

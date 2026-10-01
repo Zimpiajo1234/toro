@@ -19,12 +19,15 @@
  * (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for the forks there (a rack's shelf
  * or a stack's level: logic counts both in levels), then drives in and drops, or lifts the box there.
  * Conveyor belts (docs/CONVEYOR.md): a box the plan sends to a belt's end exit is set down on the belt's input (on its
- * table: its slot's level is the belt's height, so F raises the forks to it, as at a rack's level-1 slot), and the belt
- * brings it there; while it is on its way the planner already sees it in the end exit (liveStacks), and the next move
- * at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
+ * table: its slot's level is the belt's height, so F raises the forks to it one cell short, outside it, as at a rack's
+ * level-1 slot), and the belt brings it there; then, as at any unit standing above the floor (docs/STORAGE.md «Nivel
+ * base»: F / V do nothing while the tines reach over it), it backs straight out to the cell it came from and only there
+ * lowers the forks with V. While the box is on its way the planner already sees it in the end exit (liveStacks), and
+ * the next move at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
  */
 import { angleDelta } from '../core/math';
-import { storageSlotsOf, type StorageSlotRef } from '../core/storage';
+import { FACING_X, FACING_Z } from '../core/racks';
+import { baseLevelOf, storageSlotsOf, type StorageSlotRef } from '../core/storage';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type StorageSkin, type Vec2 } from '../core/types';
 import {
   DIR_X,
@@ -457,6 +460,14 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
       return fail(`drop of ${box.id} refused (hint ${hint ? `${hint.x},${hint.z}` : 'none'})`);
     moves++;
     for (let k = 0; k < 20; k++) pilot.tick(0, 0);
+    // A unit standing above the floor (a belt's input on its table, docs/STORAGE.md «Nivel base»): the forks keep their
+    // level while the tines reach over it, so back straight out to the cell the carry stepped in from (behind its
+    // front) and only then lower the forks there, with V.
+    if (toSlot && baseLevelOf(toSlot.unit) > 0) {
+      const behind = grid.index(toSlot.front.x + FACING_X[toSlot.facing], toSlot.front.z + FACING_Z[toSlot.facing]);
+      if (!pilot.back(grid.center(behind))) return fail(`cannot back out of ${toSlot.id} after ${box.id}`);
+      if (!pilot.selectLevel(0)) return fail(`cannot lower the forks after backing out of ${toSlot.id}`);
+    }
   }
   return fail('too many moves');
 }

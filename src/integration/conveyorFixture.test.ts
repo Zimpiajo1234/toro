@@ -1,12 +1,14 @@
 /**
  * The conveyor belt fixture (src/data/levels/pruebas/cinta.level, docs/CONVEYOR.md «Nivel de prueba»): a test-only
- * level that neither the registry nor `npm run levels` reads. A belt of two floor cells, a table at level 1 (H1b), runs
- * north from its input A to its end exit B, between two potted plants: the forklift can only send a box there along
- * the belt. It must stay canonical and valid, with one complete assignment and no dead ends, exactly solvable (3 moves:
- * the ride counts none) and played to the end by the autopilot (./autopilot.ts) with the real controls at 60 fps and at
- * Game's worst dt (1/20), raising the forks with F at A as at a rack's level-1 slot; and the render builds the belt's
- * table, its band (whose white stripes slide only while it runs), A's pad and B's deck with its cue painted flat and
- * its very low orange fence.
+ * level that neither the registry nor `npm run levels` reads. A belt of two floor cells, a table at level 1 (H1b) on a
+ * closed base (H1c), runs north from its input A to its end exit B, between two potted plants: the forklift can only
+ * send a box there along the belt. It must stay canonical and valid, with one complete assignment and no dead ends,
+ * exactly solvable (3 moves: the ride counts none) and played to the end by the autopilot (./autopilot.ts) with the
+ * real controls at 60 fps and at Game's worst dt (1/20), raising the forks with F at A as at a rack's level-1 slot
+ * (outside it), backing out after the drop and only then lowering them with V; and the render builds the belt's table
+ * on its closed near-black base, its band (whose white stripes slide only while it runs), A's pad with its drop icon,
+ * its black side guards and the loading line in front of it, and B's deck with its cue painted flat and its low
+ * skirting in the belt's colour.
  */
 import { Box3, Color, Mesh, Vector3, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
@@ -14,7 +16,7 @@ import { GAME_CONFIG } from '../config';
 import { beltPathOf, conveyorsOf } from '../core/conveyors';
 import { assignmentsOf, sortableOf, targetsOf } from '../core/sorting';
 import { storageOf, storageSlotsOf } from '../core/storage';
-import type { GameEvent } from '../core/types';
+import { TINES, type GameEvent, type InputFrame } from '../core/types';
 import { formatLevel, parseLevel, renderLevel } from '../data/asciiLevel';
 import { formatRange, formatTarget } from '../data/difficulty';
 import { LEVEL_SOURCES, SPECIAL_LEVEL_SOURCES } from '../data/levels';
@@ -23,7 +25,7 @@ import { LevelGrid, deadEnds, minMoves, replayMoves } from '../data/levels/solve
 import { validateLevel } from '../data/validateLevel';
 import { CONVEYOR } from '../logic/conveyor';
 import { GameState } from '../logic/GameState';
-import { BELT, BELT_CUE } from '../render/builders/conveyor';
+import { BELT, BELT_CUE, BELT_SKIRTING } from '../render/builders/conveyor';
 import { boxDims, rackSlotY } from '../render/dims';
 import { LevelView } from '../render/LevelView';
 import { STORAGE_RENDER } from '../render/storage';
@@ -129,14 +131,34 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     ['60 fps', 1 / 60],
     ['20 fps (Game dt clamp)', 1 / 20],
   ] as const)('%s: the autopilot finishes it, F at A, the belt carrying blue ● into B; the ride is no move', (_, dt) => {
-    const out = autopilot(level, dt);
+    // Every fork press, with where the tines' tips stood then (past A's face, the forklift facing it from the south).
+    const presses: { step: number; tipDepth: number }[] = [];
+    const update = GameState.prototype.update;
+    const tip = GAME_CONFIG.forklift.forkReach + TINES.tip * GAME_CONFIG.box.size;
+    const faceZ = 4 - level.size.depth / 2;
+    GameState.prototype.update = function (this: GameState, step: number, frame: InputFrame) {
+      if (frame.forkStep) {
+        const f = this.getSnapshot().forklift;
+        presses.push({ step: frame.forkStep, tipDepth: faceZ - (f.pos.z + Math.cos(f.heading) * tip) });
+      }
+      return update.call(this, step, frame);
+    };
+    let out: ReturnType<typeof autopilot>;
+    try {
+      out = autopilot(level, dt);
+    } finally {
+      GameState.prototype.update = update;
+    }
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     expect(out.moves).toBe(3);
     expect(out.snapshot.moves).toBe(3);
-    // The forks go up to A's slot on the table with one press of F, as to a rack's level-1 slot (nothing else stores).
-    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: 0, beltIn: 1, beltOut: 0 });
-    expect(out.controls.forkSteps).toBe(1);
+    // The forks go up to A's slot on the table with one press of F, as to a rack's level-1 slot (nothing else stores),
+    // with the tines still outside A; after the drop it backs out, and only out there V brings them down.
+    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: 0, beltIn: 2, beltOut: 0 });
+    expect(out.controls.forkSteps).toBe(2);
+    expect(presses.map((p) => p.step)).toEqual([1, -1]);
+    for (const p of presses) expect(p.tipDepth).toBeLessThan(0);
     const types = out.events.map((e) => e.type);
     expect(types.filter((t) => t === 'levelComplete')).toHaveLength(1);
     const onInput = drops(out.events).filter((d) => d.skin === 'beltIn');
@@ -152,7 +174,7 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     expect(out.snapshot.boxes.find((b) => b.id === 'b1')).toMatchObject({ slotId: 's1:0:1', level: 1, correct: true, locked: true });
   });
 
-  it('the render builds the belt as a table at level 1: its band, A\'s pad on the table top, B\'s deck with its cue painted flat and a very low orange fence', () => {
+  it('the render builds the belt as a table at level 1 on a closed base: its band, A\'s pad with its icon between its guards, B\'s deck with its cue painted flat and its low skirting', () => {
     const snap = new GameState(level).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
     view.update(snap, 1 / 60, 0, Math.PI / 4, 0);
@@ -181,11 +203,23 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     expect(band.max.y).toBeCloseTo(top + BELT.edge.height, 6);
     const pad = one(input, 'beltPad');
     expect(boxOf(pad).max.y).toBeCloseTo(top, 6);
-    // A keeps the belt's identity colour (its pad); nothing of B wears it (its fence is the docks' orange instead).
+    // The table's closed base: no legs, its sides the near-black from the floor up (one block: storage.test.ts).
+    expect(paints(one(input, 'beltTable'), defaultTheme.conveyor.side)).toBe(true);
+    // A's closed guards in the same near-black, on its two side edges (x), the length of its cell up to the table's
+    // front end: its loading face (south) stays open.
+    const a = centre(3, 3);
+    const guards = boxOf(one(input, 'beltGuards'));
+    expect(paints(one(input, 'beltGuards'), defaultTheme.conveyor.side)).toBe(true);
+    expect([guards.min.x, guards.max.x]).toEqual([expect.closeTo(a.x - BELT.halfW, 6), expect.closeTo(a.x + BELT.halfW, 6)]);
+    expect([guards.min.z, guards.max.z]).toEqual([expect.closeTo(a.z - 0.5, 6), expect.closeTo(a.z + 0.5 - BELT.endGap, 6)]);
+    expect(guards.max.y - top).toBeLessThan(0.25 * height);
+    // The drop icon on the pad, light cream.
+    expect(paints(one(input, 'beltIcon'), defaultTheme.conveyor.icon)).toBe(true);
+    // The belt's identity colour on A's pad and on B's skirting only (they pair up), never on B's deck or its cue.
     const identity = defaultTheme.conveyor.identity[0];
     expect(paints(pad, identity)).toBe(true);
     exit.traverse((o) => {
-      if (o instanceof Mesh) expect(paints(o, identity), String(o.userData.beltDeck ?? o.userData.beltFence ?? o.userData.beltCue)).toBe(false);
+      if (o instanceof Mesh) expect(paints(o, identity), String(o.userData.beltDeck ?? o.userData.beltSkirting ?? o.userData.beltCue)).toBe(o.userData.beltSkirting !== undefined);
     });
     // B: its deck at the same level, its cue sticker painted flat on it (face up, well inside the fence), its glow.
     const deck = boxOf(one(exit, 'beltDeck'));
@@ -199,22 +233,21 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     const normals = (cue.geometry as BufferGeometry).getAttribute('normal');
     for (let i = 0; i < normals.count; i++) expect(normals.getY(i)).toBeCloseTo(1, 6);
     expect(one(exit, 'beltGlow').userData.beltGlow).toBe('s1:0:1');
-    // Its very low fence: the docks' guard-rail orange with cream caps, a fifth of a box high, round B's back and sides
-    // only (open toward the belt, where the box slides in).
-    const fenceMesh = one(exit, 'beltFence');
-    expect(paints(fenceMesh, defaultTheme.truck.rail)).toBe(true);
-    expect(paints(fenceMesh, defaultTheme.truck.railCap)).toBe(true);
-    const fence = boxOf(fenceMesh);
-    expect(fence.min.y).toBeCloseTo(top, 6);
-    expect(fence.max.y - top).toBeLessThan(0.25 * height);
+    // Its low skirting: one solid strip of the belt's colour on its deck, a tenth of a box high, round B's back and
+    // sides only (open toward the belt, where the box slides in).
+    const skirtingMesh = one(exit, 'beltSkirting');
+    const skirting = boxOf(skirtingMesh);
+    expect(skirting.min.y).toBeCloseTo(top, 6);
+    expect(skirting.max.y - top).toBeCloseTo(BELT_SKIRTING.top, 6);
+    expect(skirting.max.y - top).toBeLessThan(0.15 * height);
     const b = centre(3, 0);
-    expect(fence.min.x).toBeGreaterThan(b.x - 0.5);
-    expect(fence.max.x).toBeLessThan(b.x + 0.5);
-    expect(fence.min.z).toBeGreaterThan(b.z - 0.5);
-    expect(fence.max.z).toBeLessThanOrEqual(b.z + 0.5 + 1e-6);
-    const pos = (fenceMesh.geometry as BufferGeometry).getAttribute('position');
+    expect(skirting.min.x).toBeGreaterThan(b.x - 0.5);
+    expect(skirting.max.x).toBeLessThan(b.x + 0.5);
+    expect(skirting.min.z).toBeGreaterThan(b.z - 0.5);
+    expect(skirting.max.z).toBeLessThanOrEqual(b.z + 0.5 + 1e-6);
+    const pos = (skirtingMesh.geometry as BufferGeometry).getAttribute('position');
     for (let i = 0; i < pos.count; i++) {
-      const [x, z] = [pos.getX(i) + fenceMesh.position.x - b.x, pos.getZ(i) + fenceMesh.position.z - b.z];
+      const [x, z] = [pos.getX(i) + skirtingMesh.position.x - b.x, pos.getZ(i) + skirtingMesh.position.z - b.z];
       // Never across the box's way in: nothing of it in the middle of B's near edge (toward the belt, +z here).
       if (z > 0) expect(Math.abs(x), `${x},${z}`).toBeGreaterThan(0.4);
       // Never over the box resting on B (0.39 across each side): only round it.

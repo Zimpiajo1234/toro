@@ -2,7 +2,7 @@ import { angleDelta, approach, clamp, damp, degToRad, TAU, wrapAngle } from '../
 import { nextReversing, signedSpeed01 } from '../core/reversing';
 import type { ForkliftState, Vec2 } from '../core/types';
 import type { GameConfig } from '../config';
-import type { CollisionWorld } from './collision';
+import type { CollisionWorld, TineCircle } from './collision';
 
 export type ForkliftTuning = GameConfig['forklift'];
 
@@ -120,11 +120,19 @@ export class ForkliftController {
   /** The carried load is inside a storage opening (a rack slot, a dock door): the heading holds (straight in or out). */
   private headingLocked = false;
   private readonly probe: Vec2 = { x: 0, z: 0 };
+  /**
+   * The empty tines' circle (collision TineCircle), at the forks' height: only a solid base meets it (a belt's input on
+   * its table, docs/STORAGE.md «Nivel base»); null = none (the tines meet nothing). While carrying, the load meets that
+   * base instead.
+   */
+  private readonly tines: TineCircle | null;
 
-  constructor(state: ForkliftState, world: CollisionWorld, tuning: ForkliftTuning) {
+  /** `tines`: where the empty tines' circle stands (ahead of the body centre) and its radius; omitted = never met. */
+  constructor(state: ForkliftState, world: CollisionWorld, tuning: ForkliftTuning, tines: Omit<TineCircle, 'height'> | null = null) {
     this.state = state;
     this.world = world;
     this.tuning = tuning;
+    this.tines = tines ? { ahead: tines.ahead, radius: tines.radius, height: 0 } : null;
   }
 
   /** Start carrying. The load collider starts at `freeSpace` (clearance at the fork point) and eases to full. */
@@ -160,6 +168,14 @@ export class ForkliftController {
     out.x = s.pos.x + Math.sin(s.heading) * this.tuning.forkReach;
     out.z = s.pos.z + Math.cos(s.heading) * this.tuning.forkReach;
     return out;
+  }
+
+  /** The empty tines' circle at the forks' current height, or null (none, or carrying: the load meets what it would). */
+  private tineCircle(): TineCircle | null {
+    const t = this.tines;
+    if (t === null || this.carrying) return null;
+    t.height = this.state.forkHeight;
+    return t;
   }
 
   /** Advance `dt` seconds toward the world-space move vector (length 0‥1; longer is clamped). */
@@ -307,7 +323,7 @@ export class ForkliftController {
     const x = s.pos.x;
     const z = s.pos.z;
     this.loadRadius = Math.min(t.carriedBoxRadius, prevLoad + LOAD_SETTLE_SPEED * dt);
-    const grown = this.world.resolve(s.pos, Math.sin(s.heading), Math.cos(s.heading), t.bodyRadius, t.forkReach, this.loadRadius);
+    const grown = this.world.resolve(s.pos, Math.sin(s.heading), Math.cos(s.heading), t.bodyRadius, t.forkReach, this.loadRadius, this.tineCircle());
     if (grown > WEDGE_TOLERANCE && grown > residual) {
       this.loadRadius = prevLoad;
       s.pos.x = x;
@@ -351,7 +367,7 @@ export class ForkliftController {
     const p = this.probe;
     p.x = s.pos.x;
     p.z = s.pos.z;
-    return this.world.resolve(p, Math.sin(h), Math.cos(h), t.bodyRadius, t.forkReach, this.loadRadius) <= WEDGE_TOLERANCE;
+    return this.world.resolve(p, Math.sin(h), Math.cos(h), t.bodyRadius, t.forkReach, this.loadRadius, this.tineCircle()) <= WEDGE_TOLERANCE;
   }
 
   /** Signed heading error toward `target`: the shortest way, or the long way round during a detour. */
@@ -428,7 +444,7 @@ export class ForkliftController {
     const fz = Math.cos(s.heading);
     s.pos.x += fx * s.speed * dt;
     s.pos.z += fz * s.speed * dt;
-    return this.world.resolve(s.pos, fx, fz, t.bodyRadius, t.forkReach, this.loadRadius);
+    return this.world.resolve(s.pos, fx, fz, t.bodyRadius, t.forkReach, this.loadRadius, this.tineCircle());
   }
 
   /**
@@ -446,7 +462,7 @@ export class ForkliftController {
     const p = this.probe;
     p.x = s.pos.x + mx * PROBE_DISTANCE;
     p.z = s.pos.z + mz * PROBE_DISTANCE;
-    this.world.resolve(p, fx, fz, t.bodyRadius, t.forkReach, this.loadRadius);
+    this.world.resolve(p, fx, fz, t.bodyRadius, t.forkReach, this.loadRadius, this.tineCircle());
     const progress = ((p.x - s.pos.x) * mx + (p.z - s.pos.z) * mz) / PROBE_DISTANCE;
     const k = clamp(progress / FREE_PROGRESS, 0, 1);
     return k * k * (3 - 2 * k);

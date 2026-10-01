@@ -207,13 +207,17 @@ Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas co
 
 ## Cinta transportadora (Benchmark, Modo prueba)
 
-Una **cinta** es una **mesa** recta, con la superficie a la altura del **nivel 1** de una estantería y encima una banda
-de goma gris clara con **rayas blancas**, que lleva sola una caja desde su **entrada** (una almohadilla del color de la
-cinta, sobre la mesa) hasta su **salida final**, el último tramo de la mesa, adonde la carretilla no llega: su pista va
-**pintada encima** y la rodea una **vallita naranja** muy baja por los tres lados que no dan a la cinta. Deja la caja en
-la entrada **de frente**, como en el hueco de nivel 1 de una estantería: sube la horquilla una vez con **F** y Espacio
-(con la horquilla abajo la caja choca con la mesa; nada sube solo). Se asienta un momento, la cinta arranca suave con
-un zumbido eléctrico, sus rayas se deslizan (solo mientras corre) y la caja viaja nivelada hasta el final de la mesa.
+Una **cinta** es una **mesa** recta sobre una **base cerrada** negra (sin patas: ocupa sus casillas), con la superficie
+a la altura del **nivel 1** de una estantería y encima una banda de goma gris clara con **rayas blancas**, que lleva sola
+una caja desde su **entrada** (una almohadilla del color de la cinta con un **icono de dejar la caja**, una flecha hacia
+dentro y una caja, entre dos **barandillas cerradas negras**: por los lados no se carga; delante, en el suelo, la misma
+**línea de carga** que las estanterías) hasta su **salida final**, el último tramo de la mesa, adonde la carretilla no
+llega: su pista va **pintada encima** y la rodea un **rodapié** bajo del color de la cinta por los tres lados que no dan
+a la cinta. Deja la caja en la entrada **de frente**, como en el hueco de nivel 1 de una estantería: sube la horquilla
+una vez con **F** antes de entrar y Espacio (con la horquilla abajo la caja, y también las púas vacías, chocan con la
+mesa; nada sube solo). Con las púas dentro de la entrada **F / V no hacen nada** y la carretilla no gira: sal marcha
+atrás y entonces baja la horquilla (nunca atraviesa la mesa). Se asienta un momento, la cinta arranca suave con un
+zumbido eléctrico, sus rayas se deslizan (solo mientras corre) y la caja viaja nivelada hasta el final de la mesa.
 Si es **su** caja, la salida brilla y la caja queda fija, como en un hueco; si no, suena el zumbido suave y la caja se
 queda allí (el botón que la devuelve llega en el próximo hito: R reinicia). **Una caja a la vez**: mientras viaja, la
 entrada no admite otra; con la salida ya llena, una caja dejada en la entrada se queda en ella (zumbido suave) y se

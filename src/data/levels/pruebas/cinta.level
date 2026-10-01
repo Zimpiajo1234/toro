@@ -3,7 +3,7 @@ id: cinta-prueba
 limit: 1
 dificultad: movimientos=3, repartos=1, cinta=1
 nota: Nivel de prueba (docs/CONVEYOR.md), fuera del juego: ni el registro ni npm run levels leen src/data/levels/pruebas/. Lo usa src/integration/conveyorFixture.test.ts.
-nota: La cinta es una mesa a la altura del nivel 1 de una estantería: en A se sube la horquilla una vez con F y se deja la caja; B, el final de la mesa, lleva su pista pintada encima y una vallita naranja baja.
+nota: La cinta es una mesa sobre una base cerrada negra, a la altura del nivel 1 de una estantería: en A (barandillas negras a los lados, el icono de dejar en su almohadilla, la línea de carga delante) se sube la horquilla una vez con F, se deja la caja y se sale marcha atrás antes de bajarla (dentro de A, F / V no hacen nada); B, el final de la mesa, lleva su pista pintada encima y un rodapié del color de la cinta.
 
   0123456789
 0 ..pBp....p

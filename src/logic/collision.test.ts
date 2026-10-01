@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DOCK_RAIL, dockRailsOf } from '../core/docks';
-import type { BoxState, LevelData, LevelStorage, WallSide } from '../core/types';
+import { BASE_GUARD } from '../core/storage';
+import { TINES, type BoxState, type LevelData, type LevelStorage, type WallSide } from '../core/types';
+import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
 import {
   BOX_SETTLE_SPEED,
@@ -10,6 +12,7 @@ import {
   DOOR_JAMB,
   PLANT_SIZE,
   RACK_WALL,
+  TINE_CATCH,
   pointRectDistance,
   railRect,
   type Rect,
@@ -444,5 +447,97 @@ describe('CollisionWorld passable stack bases', () => {
     world.setPassable(0, true);
     world.setBoxes([box('a', 1, 0)]);
     expect(world.isPassable(0)).toBe(false);
+  });
+});
+
+describe('CollisionWorld solid bases: what the empty tines meet (docs/STORAGE.md «Nivel base»)', () => {
+  // A belt from its input A (3,2) north to its end exit B (3,0), a table at level 1, in a 7 × 7 room (world −3.5‥3.5):
+  // A's cell is x −0.5‥0.5, z −1.5‥−0.5, loaded from the south (its face at z = −0.5); the belt cell (3,1), B (3,0).
+  const level = parseLevel(
+    [
+      '# 1 · Cinta',
+      'id: cinta',
+      'limit: 1',
+      '',
+      '  0123456',
+      '0 ..pBp..',
+      '1 ...~...',
+      '2 ...A...',
+      '3 ...a...',
+      '4 ...^...',
+      '5 ...b.1.',
+      '6 .......',
+      '',
+      '1 = zona menta',
+      'a = caja azul ●     b = caja menta ▲',
+      'A = cinta entrada   B = cinta final: azul   ~ = cinta',
+      '',
+    ].join('\n'),
+    'prueba.level',
+  ).level;
+  const world = CollisionWorld.fromLevel(level, 0.78);
+  const hit = createContact();
+  // The tines' circle round their tips (as GameState builds it from TINES): its radius and how far ahead of the body.
+  const R = TINES.spread + TINES.width / 2;
+  const ahead = 0.92 + TINES.tip * 0.78 - R;
+
+  it('only a front column standing above the floor has one (a belt\'s input): never its belt cells or its end exit, nor any other level', () => {
+    expect(world.hasSolidBases).toBe(true);
+    // Beside the belt cell (3,1) and B (3,0), reaching into their sides at the floor: nothing.
+    for (const [x, z] of [
+      [-0.5 - R + 0.05, -2],
+      [0.5 + R - 0.05, -2],
+      [0.5 + R - 0.05, -3],
+    ])
+      expect(world.tineContact(x, z, R, 0, hit), `${x},${z}`).toBe(0);
+    for (const lvl of LEVELS) expect(CollisionWorld.fromLevel(lvl, 0.78).hasSolidBases, lvl.id).toBe(false);
+  });
+
+  it('below its top its face stops tines coming at it (a touch, pushed straight back); from a side, already in, or deep, they pass', () => {
+    expect(world.tineContact(0, -0.5 + R - 0.01, R, 0, hit)).toBeCloseTo(0.01, 9);
+    expect([hit.nx, hit.nz]).toEqual([0, 1]);
+    expect(world.tineContact(0, -0.5 + R + 0.001, R, 0, hit)).toBe(0);
+    // Solid up to its top: a little under it, the same.
+    expect(world.tineContact(0.2, -0.5 + R - 0.01, R, 0.999, hit)).toBeCloseTo(0.01, 9);
+    // In from the west side, through the closed base as through a wall: the face is not in the way.
+    expect(world.tineContact(-0.5 - R + 0.05, -1, R, 0, hit)).toBe(0);
+    // Already inside its cell, or found deeper than a touch (TINE_CATCH): let out, never with a jolt.
+    expect(world.tineContact(0, -0.7, R, 0, hit)).toBe(0);
+    expect(world.tineContact(0, -0.5 + R - TINE_CATCH - 0.01, R, 0, hit)).toBe(0);
+  });
+
+  it('at or over its top only its side guards (BASE_GUARD.inset into its sides): the tines go in over the table and stay between them', () => {
+    expect(world.tineContact(0, -1, R, 1, hit)).toBe(0);
+    expect(world.tineContact(0, -0.5 + R - 0.01, R, 1, hit)).toBe(0);
+    const inner = 0.5 - BASE_GUARD.inset;
+    expect(world.tineContact(inner - R + 0.01, -1, R, 1, hit)).toBeCloseTo(0.01, 9);
+    expect([hit.nx, hit.nz]).toEqual([-1, 0]);
+    expect(world.tineContact(-inner + R - 0.01, -1, R, 1.5, hit)).toBeCloseTo(0.01, 9);
+    expect([hit.nx, hit.nz]).toEqual([1, 0]);
+  });
+
+  it('resolve: the rig pushed back off the face with its tines down, in over the table with them up; without tines, as before', () => {
+    // Facing north (forward (0, −1)), the tines 0.02 into the face.
+    const z = -0.5 + R - 0.02 + ahead;
+    const down = { x: 0, z };
+    expect(world.resolve(down, 0, -1, 0.42, 0.92, 0, { ahead, radius: R, height: 0 })).toBe(0);
+    expect(down.z).toBeCloseTo(z + 0.02, 5);
+    const up = { x: 0, z };
+    world.resolve(up, 0, -1, 0.42, 0.92, 0, { ahead, radius: R, height: 1 });
+    expect(up).toEqual({ x: 0, z });
+    const plain = { x: 0, z };
+    world.resolve(plain, 0, -1, 0.42, 0.92, 0);
+    expect(plain).toEqual({ x: 0, z });
+  });
+
+  it('solidTopUnder: its top while the tines or a load reach into its cell at or over it; −1 otherwise', () => {
+    expect(world.solidTopUnder(0, -1, R, 1)).toBe(1);
+    expect(world.solidTopUnder(0, -0.5 + R - 0.01, R, 1)).toBe(1);
+    expect(world.solidTopUnder(0, -0.5 + R + 0.01, R, 1)).toBe(-1);
+    // Below its top it keeps them out instead.
+    expect(world.solidTopUnder(0, -1, R, 0)).toBe(-1);
+    // A load's collider just over its front edge, then just off it.
+    expect(world.solidTopUnder(0, -0.5 + 0.45, 0.46, 1)).toBe(1);
+    expect(world.solidTopUnder(0, -0.5 + 0.47, 0.46, 1)).toBe(-1);
   });
 });

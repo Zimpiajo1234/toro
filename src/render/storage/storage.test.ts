@@ -1,19 +1,20 @@
 import { Box3, Color, Mesh, MeshBasicMaterial, Vector3, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../config';
-import { STORAGE_SKINS, STORAGE_SKIN_ORDER, storageOf } from '../../core/storage';
+import { BASE_GUARD, STORAGE_SKINS, STORAGE_SKIN_ORDER, storageOf } from '../../core/storage';
 import { COLOR_IDS, type ForkliftState, type GameSnapshot, type LevelData, type StorageSlotState } from '../../core/types';
 import { parseLevel } from '../../data/asciiLevel';
 import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
-import { BELT, BELT_FENCE, BELT_MARKER } from '../builders/conveyor';
+import { BELT, BELT_GUARD, BELT_ICON, BELT_MARKER, BELT_SKIRTING } from '../builders/conveyor';
 import { buildForkliftGeometry } from '../builders/forklift';
-import { PANEL_HEIGHT, outwardYaw } from '../builders/rack';
+import { LOADING_LINE, PANEL_HEIGHT, outwardYaw } from '../builders/rack';
 import { DOCK_SIGN, SIGN_MARKER, dockColumnX, dockToWorld, signMidZ, signRowY } from '../builders/truck';
 import { wallLayouts } from '../builders/walls';
 import { RACK, boxDims, rackSlotY } from '../dims';
 import { LevelView } from '../LevelView';
 import { createSharedMaterials } from '../materials';
+import { PartList } from '../paint';
 import { ResourceBag } from '../resources';
 import { ForkliftView } from '../views/ForkliftView';
 import { WallView } from '../views/WallView';
@@ -352,8 +353,8 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
 });
 
 /**
- * Two conveyor belts (docs/CONVEYOR.md, H1b), one running north along the west wall, one running east across the room:
- * every belt a table at its height (level 1), whichever way it runs.
+ * Two conveyor belts (docs/CONVEYOR.md, H1b and H1c), one running north along the west wall, one running east across
+ * the room: every belt a table at its height (level 1) on a closed base, whichever way it runs.
  */
 const BELTS = level(`
 # 1 · Dos cintas
@@ -372,56 +373,171 @@ a = caja azul ●     c = caja menta ▲
 A = cinta entrada   B = cinta final: azul   D = cinta entrada   E = cinta final: menta   ~ = cinta
 `);
 
-describe('render/storage: conveyor belts, a table at level 1 whichever way they run', () => {
-  it('stands every belt on its table, its two ends at level 1: A\'s marker and burst there, B fenced on its open sides only', () => {
+/** A mesh's vertices in world space, each with its vertex colour (as PartList paints them). */
+function verticesOf(mesh: Mesh): { p: Vector3; color: Color }[] {
+  mesh.updateWorldMatrix(true, false);
+  const pos = mesh.geometry.getAttribute('position');
+  const col = mesh.geometry.getAttribute('color');
+  return Array.from({ length: pos.count }, (_, i) => ({
+    p: new Vector3().fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld),
+    color: new Color(col.getX(i), col.getY(i), col.getZ(i)),
+  }));
+}
+
+/** The colour `hex` as a vertex colour (linear, like PartList paints it). */
+const sameColor = (a: Color, hex: string) => {
+  const b = new Color(hex);
+  return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b) < 1e-4;
+};
+
+describe('render/storage: conveyor belts, a table at level 1 on a closed base whichever way they run', () => {
+  const meshOf = (unit: StorageUnitView, tag: string) => unit.group.children.find((c) => c.userData[tag] !== undefined) as Mesh<BufferGeometry> | undefined;
+  const top = rackSlotY(1);
+
+  it('stands every belt on a closed base: no legs, one solid near-black block from the floor up to its light top; its two ends at level 1', () => {
     const { snap, units, bag } = buildAll(BELTS);
     expect(units.map((u) => u.id)).toEqual(['e1', 'e2', 's1', 's2']);
     const slot = (id: string) => snap.storageSlots.find((s) => s.id === id)!;
-    const top = rackSlotY(1);
     const place: MarkerPlace = { x: 0, y: 0, z: 0, yaw: 0 };
     const burst: BurstPlace = { x: 0, y: 0, z: 0, yaw: 0, halfW: 0, halfH: 0 };
-    const meshOf = (unit: StorageUnitView, tag: string) => unit.group.children.find((c) => c.userData[tag] !== undefined) as Mesh<BufferGeometry> | undefined;
+    // One block as PartList builds it: the base must be exactly that, nothing more (no legs, apron or stretchers).
+    const oneBlock = new PartList().block('#000000', 0, 1, 0, 1, 0, 1).build();
+    const blockVertices = oneBlock.getAttribute('position').count;
+    oneBlock.dispose();
     for (const [input, exit, along] of [
       ['e1', 's1', 'z'],
       ['e2', 's2', 'x'],
     ] as const) {
       const a = units.find((u) => u.id === input)!;
       const b = units.find((u) => u.id === exit)!;
-      // The table under the whole belt, its top under the band at the slot floor of level 1.
-      const table = new Box3().setFromObject(meshOf(a, 'beltTable')!);
+      // The table under the whole belt, from the floor; its top under the band at the slot floor of level 1.
+      const tableMesh = meshOf(a, 'beltTable')!;
+      const table = new Box3().setFromObject(tableMesh);
       expect(table.max.y, input).toBeCloseTo(top - BELT.skin, 6);
+      expect(table.min.y, input).toBeCloseTo(0, 6);
       expect(new Box3().setFromObject(meshOf(a, 'beltBand')!).max.y, input).toBeCloseTo(top + BELT.edge.height, 6);
-      // A: the marker flat on its table top round its slot, turned to its front; its burst at that level too.
+      // Its base: one solid block of the side colour, from the floor up to the slab, the whole table's length and width
+      // (a slim shadow line inside its edges); the rest of it is the light top.
+      const base = verticesOf(tableMesh).filter((v) => sameColor(v.color, defaultTheme.conveyor.side));
+      expect(base, input).toHaveLength(blockVertices);
+      const box = new Box3().setFromPoints(base.map((v) => v.p));
+      expect(box.min.y).toBeCloseTo(0, 6);
+      expect(box.max.y).toBeCloseTo(top - BELT.skin - BELT.slab, 6);
+      const [w, l] = along === 'z' ? ['x', 'z'] as const : ['z', 'x'] as const;
+      expect(box.max[w] - box.min[w], input).toBeCloseTo(table.max[w] - table.min[w] - 2 * BELT.base.inset, 6);
+      expect(box.max[l] - box.min[l], input).toBeCloseTo(table.max[l] - table.min[l] - 2 * BELT.base.inset, 6);
+      expect(verticesOf(tableMesh).every((v) => sameColor(v.color, defaultTheme.conveyor.side) || sameColor(v.color, defaultTheme.conveyor.top))).toBe(true);
+      // A: the marker flat on its pad at its slot, turned to its front; its burst at that level too.
       const at = slot(`${input}:0:1`);
       expect(a.markerAt(at, place), input).toEqual({ x: at.pos.x, y: top, z: at.pos.z, yaw: outwardYaw(at.facing) });
       expect(b.markerAt(slot(`${exit}:0:1`), place)).toBeNull();
       expect(b.burstAt(slot(`${exit}:0:1`), YAW, burst).y).toBeCloseTo(top, 9);
-      // B: its fence low on the table top, round its back and sides; open toward its belt (where its box comes from).
-      const exitSlot = slot(`${exit}:0:1`);
-      const fence = meshOf(b, 'beltFence')!;
-      fence.updateMatrixWorld(true);
-      const pos = fence.geometry.getAttribute('position');
-      const v = new Vector3();
-      // Toward the belt from B's centre: its facing (the side its belt comes in from).
-      const toBelt = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] }[exitSlot.facing];
-      let maxY = -Infinity;
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(fence.matrixWorld);
-        const dx = v.x - exitSlot.pos.x;
-        const dz = v.z - exitSlot.pos.z;
-        const ahead = dx * toBelt[0] + dz * toBelt[1];
-        const across = Math.abs(dx * toBelt[1] - dz * toBelt[0]);
-        if (ahead > 0) expect(across, `${exit} ${dx.toFixed(3)},${dz.toFixed(3)}`).toBeGreaterThan(0.4);
-        expect(Math.max(Math.abs(dx), Math.abs(dz))).toBeLessThanOrEqual(0.5 + 1e-6);
-        maxY = Math.max(maxY, v.y);
-      }
-      expect(maxY - top).toBeCloseTo(BELT_FENCE.top + BELT_FENCE.cap, 6);
-      expect(maxY - top).toBeLessThan(0.25 * height);
       // The two belts' tables run their own way.
       const size = table.getSize(new Vector3());
       expect(along === 'z' ? size.z > size.x : size.x > size.z, input).toBe(true);
     }
     bag.dispose();
+  });
+
+  it('closes A\'s two side edges with near-black guards (its loading face and its join to the belt stay open) and edges B with a low skirting of its belt\'s colour on its open sides, never over its box', () => {
+    const { snap, units, bag } = buildAll(BELTS);
+    const slot = (id: string) => snap.storageSlots.find((s) => s.id === id)!;
+    // Outward unit vector of each facing (from a cell toward its front).
+    const out = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] } as const;
+    const inner = 0.5 - BASE_GUARD.inset;
+    [
+      ['e1', 's1'],
+      ['e2', 's2'],
+    ].forEach(([input, exit], belt) => {
+      const identity = defaultTheme.conveyor.identity[belt];
+      const a = units.find((u) => u.id === input)!;
+      const b = units.find((u) => u.id === exit)!;
+      // A's guards: on its two side edges only, from its join to the belt to the table's front end; low.
+      const inSlot = slot(`${input}:0:1`);
+      const [fx, fz] = out[inSlot.facing];
+      const guards = verticesOf(meshOf(a, 'beltGuards')!);
+      expect(guards.length).toBeGreaterThan(0);
+      for (const { p, color } of guards) {
+        const dx = p.x - inSlot.pos.x;
+        const dz = p.z - inSlot.pos.z;
+        const front = dx * fx + dz * fz;
+        const across = Math.abs(dx * fz - dz * fx);
+        expect(sameColor(color, defaultTheme.conveyor.side)).toBe(true);
+        expect(across, `${input} ${dx.toFixed(3)},${dz.toFixed(3)}`).toBeGreaterThanOrEqual(inner - 1e-6);
+        expect(across).toBeLessThanOrEqual(BELT.halfW + 1e-6);
+        expect(front).toBeGreaterThanOrEqual(-0.5 - 1e-6);
+        expect(front).toBeLessThanOrEqual(0.5 - BELT.endGap + 1e-6);
+        expect(p.y).toBeGreaterThanOrEqual(top - BELT.skin - 1e-6);
+        expect(p.y - top).toBeLessThanOrEqual(BELT_GUARD.top + 1e-6);
+      }
+      expect(BELT_GUARD.top).toBeLessThan(0.25 * height);
+      // Their inner faces clear the pad (and the marker on its rim) and a box going in (0.39 a side, a few cm of play).
+      expect(inner).toBeGreaterThan(BELT.pad.half);
+      expect(inner).toBeGreaterThan(BELT_MARKER.halfW);
+      expect(inner).toBeGreaterThan(GAME_CONFIG.box.size / 2 + 0.03);
+      // B's skirting: its belt's identity colour (the pad's), low, on its back and sides, open toward its belt.
+      const exitSlot = slot(`${exit}:0:1`);
+      const [bx, bz] = out[exitSlot.facing];
+      const skirting = verticesOf(meshOf(b, 'beltSkirting')!);
+      expect(skirting.length).toBeGreaterThan(0);
+      let maxY = -Infinity;
+      for (const { p, color } of skirting) {
+        const dx = p.x - exitSlot.pos.x;
+        const dz = p.z - exitSlot.pos.z;
+        const ahead = dx * bx + dz * bz;
+        const across = Math.abs(dx * bz - dz * bx);
+        expect(sameColor(color, identity), exit).toBe(true);
+        // Nothing of it across the box's way in, nor over the box resting there (0.39 a side): only round it.
+        if (ahead > 0) expect(across, `${exit} ${dx.toFixed(3)},${dz.toFixed(3)}`).toBeGreaterThan(0.4);
+        expect(Math.max(Math.abs(dx), Math.abs(dz))).toBeGreaterThan(0.4);
+        expect(Math.max(Math.abs(dx), Math.abs(dz))).toBeLessThanOrEqual(0.5 + 1e-6);
+        maxY = Math.max(maxY, p.y);
+      }
+      expect(maxY - top).toBeCloseTo(BELT_SKIRTING.top, 6);
+      expect(maxY - top).toBeLessThan(0.15 * height);
+      // The pad wears the same colour: A and B pair up by it.
+      expect(verticesOf(meshOf(a, 'beltPad')!).every((v) => sameColor(v.color, identity))).toBe(true);
+    });
+    bag.dispose();
+  });
+
+  it('paints a rack\'s loading line on the floor in front of A, and the drop icon flat on its pad, light cream, pointing in', () => {
+    const snap = new GameState(BELTS).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
+    view.update(snap, 1 / 60, 0, YAW, 0);
+    const floor = view.root.children[0] as Mesh;
+    const lines = verticesOf(floor).filter((v) => sameColor(v.color, defaultTheme.rack.line));
+    const out = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] } as const;
+    for (const id of ['e1', 'e2']) {
+      const inSlot = snap.storageSlots.find((s) => s.id === `${id}:0:1`)!;
+      const [fx, fz] = out[inSlot.facing];
+      // On A's front cell: within half a cell in front of its face (LOADING_LINE.far), across its width.
+      const mine = lines.filter((v) => {
+        const front = (v.p.x - inSlot.pos.x) * fx + (v.p.z - inSlot.pos.z) * fz;
+        const across = Math.abs((v.p.x - inSlot.pos.x) * fz - (v.p.z - inSlot.pos.z) * fx);
+        return front > 0.5 && front <= 0.5 + LOADING_LINE.far + 1e-6 && across <= 0.5;
+      });
+      expect(mine.length, id).toBeGreaterThan(0);
+      for (const v of mine) expect(v.p.y).toBeCloseTo(LOADING_LINE.y, 5);
+      // The icon: flat on the pad (face up, just over it), light cream, within it, its arrow toward the belt.
+      const input = view.root.children.find((c) => c.userData.beltInId === id)!;
+      const icon = input.children.find((c) => c.userData.beltIcon === id) as Mesh<BufferGeometry>;
+      const points = verticesOf(icon);
+      expect(points.every((v) => sameColor(v.color, defaultTheme.conveyor.icon))).toBe(true);
+      for (const { p } of points) {
+        expect(p.y - top).toBeCloseTo(BELT_ICON.lift, 6);
+        const dx = p.x - inSlot.pos.x;
+        const dz = p.z - inSlot.pos.z;
+        expect(Math.max(Math.abs(dx), Math.abs(dz))).toBeLessThan(BELT.pad.half);
+      }
+      const normals = icon.geometry.getAttribute('normal');
+      for (let i = 0; i < normals.count; i++) expect(normals.getY(i)).toBeCloseTo(1, 6);
+      // The arrowhead's tip (the arrow's innermost point on its axis) points in: toward the belt, away from the front.
+      const fronts = points.map(({ p }) => (p.x - inSlot.pos.x) * fx + (p.z - inSlot.pos.z) * fz);
+      expect(Math.max(...fronts)).toBeCloseTo(BELT_ICON.arrow.tail, 6);
+      expect(Math.min(...fronts)).toBeCloseTo(BELT_ICON.box.z - BELT_ICON.box.half, 6);
+    }
+    view.dispose();
   });
 
   it('frames A\'s slot on its table top at level 1 only: none at its face, below (the hint has no slot there)', () => {

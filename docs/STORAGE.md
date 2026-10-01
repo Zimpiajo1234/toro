@@ -7,7 +7,8 @@ documento es la referencia: el modelo, sus reglas, los contratos por capa, cómo
 seguridad. Lo propio de cada aspecto (dibujo, medidas, detalles de su acceso, el Benchmark) está en docs/RACKS.md
 (estanterías almacenables), docs/DOCKS.md (muelles de carga) y docs/CONVEYOR.md (la cinta transportadora: sus dos
 puntas son los aspectos `beltIn` y `beltOut`, con el acceso nuevo `belt`, el primer aspecto añadido sobre el modelo
-común, y desde H1b las primeras unidades con **nivel base**: sus huecos sobre la mesa de su cinta, a nivel 1).
+común, y desde H1b las primeras unidades con **nivel base**: sus huecos sobre la mesa de su cinta, a nivel 1; desde
+H1c, macizas por debajo para la horquilla).
 
 Ojo con el nombre: `src/storage/` es el progreso guardado (ProgressStore), nada que ver con esto. El almacenaje vive en
 `src/core/storage.ts` (sobre la geometría de sus accesos: `core/racks.ts` y `core/docks.ts`), `src/logic/storageAccess.ts`
@@ -159,6 +160,22 @@ estantería, y ninguna capa distingue el aspecto:
   (`slotOf` = −1): `hint.storage.slotId` es null, nada se coge ni se deja (`canStore`, `liftableAt`), la celda no se
   abre para la carga (`refreshStoragePassage`) y la carga choca con su cara, como con un hueco lleno; sin vista previa
   ni marcador.
+- **La base maciza** (H1c de docs/CONVEYOR.md: «no debe dejarte bajar las palas si están arriba, y tampoco subirlas si
+  estás abajo, ya que ahora traspasa»). Lo que hay bajo el nivel base de una unidad que se trabaja **de frente** es
+  macizo para la horquilla, sale solo del nivel base (ningún aspecto lo declara: hoy, la entrada de una cinta) y ni las
+  estanterías ni los camiones cambian:
+  - **Las púas vacías** chocan con su **cara de carga** mientras la horquilla está por debajo del nivel base (un círculo
+    en sus puntas, `TineCircle`, en `CollisionWorld.resolve`, contra la `SolidBase` de la columna; las púas se
+    describen una vez en core/types `TINES`, que también dibuja builders/forklift): nunca se meten debajo ni dentro.
+    Solo la cara por la que se carga y solo como un roce desde fuera (`TINE_CATCH`): por los lados pasan como por una
+    pared (si no, la carretilla no podría ponerse de morro en la casilla de al lado, que el solver y el piloto dan por
+    buena). Por encima del nivel base, solo encuentran sus lados cerrados (`BASE_GUARD.inset`: las barandillas).
+  - **La carga** no entra mientras la horquilla está por debajo del nivel base, tampoco subiendo: el enganche solo actúa
+    con la horquilla ya en él (`atLevel` de `refreshStorageAim`: `forkHeight` ≥ `baseLevel`; con base 0, como siempre).
+  - **Dentro, quietas**: mientras las púas o la carga están dentro de su celda a la altura de su base o más
+    (`GameState.forksOverSolid`, `CollisionWorld.solidTopUnder`), F / V / rueda no hacen nada (`stepForkLevel`), la
+    horquilla nunca baja de la base (`stepForkHeight`, también al completar el nivel) y las púas vacías mantienen el
+    rumbo (como la carga en un hueco, `setHeadingLock`): se sale marcha atrás y entonces se cambia de nivel.
 - **Solver**: una posición por hueco, como siempre; la altura no cambia sus jugadas (un hueco de baldas se carga con un
   paso adelante a cualquier nivel); `levelAt` da el nivel (con su base), `slotAt` el índice, `positionOfSlot` por id.
 - **Dibujo**: las alturas ya salían del nivel (`SUPPORT_LOOK.shelves.levelY` = `rackSlotY(level)`): la caja, la
@@ -246,8 +263,9 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
 ## Contratos por capa
 
 - **core**: `core/types.ts` (los tipos de «Modelo», `FrontUnit` / `DoorUnit` con `isFrontUnit` / `isDoorUnit`,
-  `TRUCK_FACING`). `core/storage.ts`: `STORAGE_SKINS`, `STORAGE_SKIN_ORDER`, `STORAGE_WORDS`, `storageOf`,
-  `hasStorage`, `slotIdOf`, `baseLevelOf`, `facingOf`, `cellOf`, `frontOf`, `storageColumnsOf` (con el nivel base de
+  `TRUCK_FACING`, `TINES`: dónde llegan las púas, para el dibujo y la colisión). `core/storage.ts`: `STORAGE_SKINS`,
+  `STORAGE_SKIN_ORDER`, `STORAGE_WORDS`, `storageOf`, `hasStorage`, `slotIdOf`, `baseLevelOf`, `BASE_GUARD` (los lados
+  cerrados sobre una base maciza), `facingOf`, `cellOf`, `frontOf`, `storageColumnsOf` (con el nivel base de
   cada columna), `storageSlotsOf` (sus niveles desde ahí). Debajo, sin ciclos, la
   geometría de cada acceso: `core/racks.ts` (`front`: `rackCellOf`, `frontCellOf`, `runsAlongX`, `FACING_X` /
   `FACING_Z`, `inwardHeading`, `columnFrame`) y `core/docks.ts` (`door`: `truckCellOf`, `truckFrontOf`, las barandillas
@@ -278,8 +296,12 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   `setOpen`, `isOpen`, `opening`, `soften`, `openingInset`), una medida de «la carga está dentro» (`loadInOpening`), un
   camino de coger / dejar (`Interaction.findPickTarget` / `findDrop` sobre `StorageAim`: `column`, `level`, `reach`,
   `blocked`; `GameState.pick` / `dropInStorage`) y `refreshColumn` según el soporte. La horquilla: `forkLevel` con F / V
-  (`stepForkLevel`; con la carga dentro de un hueco no cambia, y nunca hunde la carga en una pila: `sinksIntoStack`);
-  fuera de una columna, automática (`clearLevel`, que en una pila de almacenaje no sube por adelantado). El orden de la
+  (`stepForkLevel`; con la carga dentro de un hueco no cambia, ni con las púas o la carga sobre una base maciza,
+  `forksOverSolid`, y nunca hunde la carga en una pila: `sinksIntoStack`); fuera de una columna, automática
+  (`clearLevel`, que en una pila de almacenaje no sube por adelantado). La base maciza («Nivel base»): `SolidBase` (una
+  por columna de frente con nivel base: su celda, su cara, sus lados), `TineCircle` (las púas vacías, un argumento
+  opcional de `resolve` que pasa `ForkliftController`), `tineContact`, `solidTopUnder`, `hasSolidBases`, `TINE_CATCH`;
+  sin bases, `resolve` es exactamente el de antes. El orden de la
   colisión se conserva a propósito: los tramos de puerta cerrados justo tras los muros de carga, las celdas de estantería
   tras los estáticos (en un empate de hondura gana el primero, así que cambiarlo podría cambiar un empuje); `soften` solo
   vale para una abertura `front` (una puerta nunca se cierra sobre la carga).
@@ -333,8 +355,9 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
    ya son comunes (en una pila, solo encima; con `fillToMax`, implícito y fuera de la forma canónica). Forma canónica,
    un ejemplo en su doc y sus errores en español.
 3. **Validación**: solo lo propio de su sitio en el mapa; lo común sale de la fila. Si sus huecos no empiezan en el
-   suelo, su nivel base («Nivel base»: lo pone validateLevel, como a las puntas de una cinta). Si trae mensajes nuevos,
-   su sitio en `explainValidation`.
+   suelo, su nivel base («Nivel base»: lo pone validateLevel, como a las puntas de una cinta; si se trabaja de frente,
+   por debajo es macizo para la horquilla sin más, y su dibujo pone las barandillas en `BASE_GUARD.inset`). Si trae
+   mensajes nuevos, su sitio en `explainValidation`.
 4. **Acceso**: si es nuevo, una fila en `STORAGE_ACCESS` (encarar, mantener, alcance, paso de la carga), su abertura en
    `CollisionWorld` (`StorageOpening`) y su geometría (`cellOf` / `frontOf` / `facingOf`); si no, comparte la del suyo
    (core/racks para `front`, core/docks para `door`) y nada cambia en la lógica.
@@ -401,6 +424,18 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
     la horquilla suba al nivel 1), **9 pulsaciones** de F / V (antes 8; la vista escribe ya `forkStepsAt.beltIn`: 1, solo
     en un nivel con cintas), los frames marcha atrás iguales (2242 / 736); en el registro, «b9 7,7@0 → e1:0:1» y «b9
     e1:0:1 → s1:0:1 ok 8/13 (cinta)».
+- **Regenerada con la base cerrada** (H1c de docs/CONVEYOR.md, 2026-10-01: la base maciza bajo el nivel base, «Nivel
+  base»; el piloto sale marcha atrás de la entrada de la cinta antes de bajar la horquilla). Solo cambian
+  `autopilot60` / `autopilot20` del Benchmark (el nivel de prueba de los camiones, byte a byte igual; `storage`,
+  `targets`, `metrics`, `solver` y `start`, iguales: el mapa y el plan no cambian):
+  - **15229 / 5560** frames (antes 14984 / 5474: +245 / +86, la marcha atrás de A a la casilla de detrás de su frente y
+    la bajada con V allí);
+  - **10 pulsaciones** de F / V (antes 9): `forkStepsAt.beltIn` 1 → **2** (F arriba fuera de A, V abajo tras salir;
+    estanterías 7 y camión 1, iguales);
+  - frames marcha atrás **2348 / 772** (antes 2242 / 736: +106 / +36, esa marcha atrás);
+  - el registro de movimientos, el mismo (los 15 y la entrega de la cinta, «b9 e1:0:1 → s1:0:1 ok 8/13 (cinta)»).
+  Las púas vacías contra la cara de A no cambian ninguna otra trayectoria del piloto (nunca la toca de morro con la
+  horquilla abajo) ni nada de estanterías y camiones (sin bases macizas, `resolve` es el de antes).
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
   una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
   repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización
@@ -521,3 +556,8 @@ huecos y plataformas aparte en el solver, `buildRacks` / `buildTrucks`, constant
     pila por celda (`height`, `capacity`, el paso de la carga sobre una pila, `clearLevel`) cuentan cajas desde la
     plataforma: un aspecto de pila elevado tendría que sumar su base ahí (y en `SUPPORT_LOOK.stack`). validateLevel no
     lo permite (solo las puntas de una cinta llevan nivel base).
+11. **Las púas vacías por los lados de una base maciza** (H1c, docs/CONVEYOR.md decisión U, para revisar): solo la cara
+    de carga las para (y, por encima, los lados cerrados); por los lados, y en las otras casillas de una cinta y en su
+    salida, pasan como por una pared o una estantería. Que las parase toda la mesa pediría que el solver y el piloto
+    supieran que la carretilla no puede ponerse de morro junto a ella (sus caminos cuentan casillas, no la largura de las
+    púas).

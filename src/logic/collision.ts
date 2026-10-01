@@ -2,7 +2,7 @@ import type { BoxState, Facing, LevelData, Vec2, WallSide } from '../core/types'
 import { FACING_X, FACING_Z } from '../core/racks';
 import { DOOR_JAMB, dockRailsOf, type DockRail } from '../core/docks';
 import { conveyorsOf } from '../core/conveyors';
-import { STORAGE_SKINS, storageColumnsOf, storageOf, storageSlotsOf } from '../core/storage';
+import { BASE_GUARD, STORAGE_SKINS, storageColumnsOf, storageOf, storageSlotsOf } from '../core/storage';
 
 export { DOOR_JAMB };
 
@@ -139,6 +139,47 @@ export function railRect(rail: DockRail, hw: number, hd: number): Rect {
  */
 export type StorageOpening = { access: 'front'; cell: Rect; facing: Facing } | { access: 'door'; span: Rect } | { access: 'belt'; cell: Rect };
 
+/**
+ * The closed base of a storage column the forks work at from its front while it stands above the floor (docs/STORAGE.md
+ * «Nivel base»: a belt's input on its table): its cell `rect`, solid from the floor up to its base level `top`. The body
+ * and a load already meet the whole cell (a front column, shut below its slot); below its top the empty tines meet its
+ * `face` too, the edge they are worked through (CollisionWorld.resolve with a TineCircle), so they never slide under or
+ * into it. Over it the column is open toward its front and closed at its sides (BASE_GUARD: a belt input's side
+ * guards): at or above its top the tines meet only those `walls`. From its sides, below its top, and at a belt's other
+ * cells and its end exit (never worked at), empty tines pass as they pass a wall or a rack: meeting the whole table
+ * would keep the forklift from standing nose to it in the cell beside it (its tines reach 1.2 past its centre), which
+ * the routes of the solver and the autopilot, counted in cells, take for granted.
+ */
+export interface SolidBase {
+  rect: Rect;
+  /** Its top, in levels (0 = the floor): tines lower than this meet its face. */
+  top: number;
+  /** The edge of its cell on its front side (RACK_WALL thick): what the tines meet below its top. */
+  face: Rect;
+  /** At or above its top, what the tines still meet: its side guards. */
+  walls: readonly Rect[];
+}
+
+/**
+ * The empty tines as a solid base meets them (CollisionWorld.resolve; core/types TINES): a circle `radius` wide around
+ * their tips, its centre `ahead` of the body centre along the heading, at the forks' `height` (levels,
+ * ForkliftState.forkHeight). Nothing else meets empty tines: they pass under and through everything else, as always.
+ */
+export interface TineCircle {
+  ahead: number;
+  radius: number;
+  height: number;
+}
+
+/** A fork height within this (levels) of a solid base's top stands at it (the forks stop exactly on a level). */
+export const SOLID_TOP_EPSILON = 1e-6;
+/**
+ * The empty tines meet a solid base's face or walls only while touching them by at most this much (u): coming at them
+ * they never reach deeper within one sub-step (≈ 0.02 driving, ≈ 0.03 turning at full rate), so they are always
+ * caught; tines found deeper got there some other way (below its top, in from a side) and are let out without a jolt.
+ */
+export const TINE_CATCH = 0.05;
+
 /** The storage a collision world is built with (all optional: none by default). */
 export interface StorageColliders {
   /** Every storage column's opening, in storage column order (the indices of setOpen and the others). */
@@ -150,6 +191,8 @@ export interface StorageColliders {
    * do). A box in any other slot is a stack like the floor's (support `stack`: its base collides).
    */
   shelfSlots?: ReadonlySet<string>;
+  /** The closed bases of the front columns standing above the floor (SolidBase): what the empty tines meet. */
+  solidBases?: readonly SolidBase[];
 }
 
 /** A storage column's opening as the world keeps it: the rect the load reaches into, and a front one's slot walls. */
@@ -163,30 +206,42 @@ interface Opening {
 /** Cell rect and open-slot walls of a rack column whose front looks `facing`. */
 function slotOpening(cell: Rect, facing: Facing): Opening {
   const t = RACK_WALL;
-  const { minX, minZ, maxX, maxZ } = cell;
-  const ox = FACING_X[facing];
-  const oz = FACING_Z[facing];
   // Back panel: the side away from the front.
-  const back: Rect =
-    ox > 0
-      ? { minX, minZ, maxX: minX + t, maxZ }
-      : ox < 0
-        ? { minX: maxX - t, minZ, maxX, maxZ }
-        : oz > 0
-          ? { minX, minZ, maxX, maxZ: minZ + t }
-          : { minX, minZ: maxZ - t, maxX, maxZ };
+  const back = endStrip(cell, facing, false, t);
   // Side uprights: the two edges along the front direction.
-  const sides: [Rect, Rect] =
-    ox !== 0
-      ? [
-          { minX, minZ, maxX, maxZ: minZ + t },
-          { minX, minZ: maxZ - t, maxX, maxZ },
-        ]
-      : [
-          { minX, minZ, maxX: minX + t, maxZ },
-          { minX: maxX - t, minZ, maxX, maxZ },
-        ];
-  return { rect: cell, walls: [back, sides[0], sides[1]] };
+  const [left, right] = sideWalls(cell, facing, t);
+  return { rect: cell, walls: [back, left, right] };
+}
+
+/**
+ * The edge of a front column's cell whose front looks `facing`, `t` thick: on its front side (`front`: a closed base's
+ * face) or on the side away from it (a slot's back panel).
+ */
+function endStrip(cell: Rect, facing: Facing, front: boolean, t: number): Rect {
+  const { minX, minZ, maxX, maxZ } = cell;
+  const ox = front ? FACING_X[facing] : -FACING_X[facing];
+  const oz = front ? FACING_Z[facing] : -FACING_Z[facing];
+  return ox > 0
+    ? { minX: maxX - t, minZ, maxX, maxZ }
+    : ox < 0
+      ? { minX, minZ, maxX: minX + t, maxZ }
+      : oz > 0
+        ? { minX, minZ: maxZ - t, maxX, maxZ }
+        : { minX, minZ, maxX, maxZ: minZ + t };
+}
+
+/** The two side edges (along the front direction) of a front column's cell whose front looks `facing`, `t` thick. */
+function sideWalls(cell: Rect, facing: Facing, t: number): [Rect, Rect] {
+  const { minX, minZ, maxX, maxZ } = cell;
+  return FACING_X[facing] !== 0
+    ? [
+        { minX, minZ, maxX, maxZ: minZ + t },
+        { minX, minZ: maxZ - t, maxX, maxZ },
+      ]
+    : [
+        { minX, minZ, maxX: minX + t, maxZ },
+        { minX: maxX - t, minZ, maxX, maxZ },
+      ];
 }
 
 const NO_SLOTS: ReadonlySet<string> = new Set();
@@ -284,6 +339,9 @@ export function pointRectDistance(px: number, pz: number, minX: number, minZ: nu
  *   each door column's span stays shut like the wall until GameState opens it (the rig faces that column from its door
  *   cell); the fork point (empty tines) passes any door. Without docks the load meets the walls exactly as the body
  *   does.
+ * Solid bases (SolidBase: the closed base of a front column standing above the floor, a belt's input on its table,
+ * docs/STORAGE.md «Nivel base»; none in most levels): below its top the empty tines meet one (a TineCircle in resolve),
+ * as the body and a load already do; nothing else ever meets empty tines.
  */
 export class CollisionWorld {
   readonly bounds: Rect;
@@ -301,6 +359,8 @@ export class CollisionWorld {
   private readonly openingInsets: Float64Array;
   /** Storage slots whose boxes never collide on their own (StorageColliders.shelfSlots). */
   private readonly shelfSlots: ReadonlySet<string>;
+  /** The closed bases the forks work at (StorageColliders.solidBases): what the empty tines meet. */
+  private readonly bases: readonly SolidBase[];
   private readonly boxHalf: number;
   private boxes: readonly BoxState[] = [];
   /** Per box: how much its collider is currently shrunk on every side (settling after a drop), 0 = full size. */
@@ -316,6 +376,7 @@ export class CollisionWorld {
   private readonly hit = createContact();
   private readonly bodyHit = createContact();
   private readonly loadHit = createContact();
+  private readonly tineHit = createContact();
 
   constructor(bounds: Rect, statics: readonly Rect[], boxSize: number, storage: StorageColliders = {}) {
     const openings = storage.openings ?? [];
@@ -330,6 +391,7 @@ export class CollisionWorld {
     this.open = new Uint8Array(openings.length);
     this.openingInsets = new Float64Array(openings.length);
     this.shelfSlots = storage.shelfSlots ?? NO_SLOTS;
+    this.bases = storage.solidBases ?? [];
     this.boxHalf = boxSize / 2;
   }
 
@@ -373,7 +435,20 @@ export class CollisionWorld {
       return { access: 'front', cell: cellRect(c.x, c.z), facing: a.facing };
     });
     const shelfSlots = new Set(storageSlotsOf(level).filter((s) => STORAGE_SKINS[s.unit.skin].support === 'shelves').map((s) => s.id));
-    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, { openings, doors, shelfSlots });
+    // The closed bases the forks work at (none without belts): every front column standing above the floor, its cell up
+    // to its base level, closed at its sides over it (BASE_GUARD: a belt input's guards).
+    const solidBases: SolidBase[] = [];
+    for (const col of storageColumnsOf(level)) {
+      if (col.baseLevel <= 0 || col.unit.access.kind !== 'front') continue;
+      const rect = cellRect(col.cell.x, col.cell.z);
+      solidBases.push({ rect, top: col.baseLevel, face: endStrip(rect, col.facing, true, RACK_WALL), walls: sideWalls(rect, col.facing, BASE_GUARD.inset) });
+    }
+    return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, { openings, doors, shelfSlots, solidBases });
+  }
+
+  /** The level has solid bases (a belt's input on its table): the empty tines can meet something. */
+  get hasSolidBases(): boolean {
+    return this.bases.length > 0;
   }
 
   /** Number of storage columns (each with its opening). */
@@ -538,8 +613,9 @@ export class CollisionWorld {
 
   /**
    * Iterative push-out of a rigid rig: a body circle at `pos` plus an optional load circle `loadOffset` ahead
-   * along (fx, fz). Each pass resolves the single deepest contact of either circle (so the rig slides along
-   * walls and seams instead of catching on them). Mutates `pos`; returns the residual penetration (0 = clear).
+   * along (fx, fz) and, with `tines`, the empty tines' circle (TineCircle: only solid bases meet it). Each pass
+   * resolves the single deepest contact of any circle (so the rig slides along walls and seams instead of catching on
+   * them). Mutates `pos`; returns the residual penetration (0 = clear).
    */
   resolve(
     pos: Vec2,
@@ -548,8 +624,11 @@ export class CollisionWorld {
     bodyRadius: number,
     loadOffset: number,
     loadRadius: number,
+    tines: TineCircle | null = null,
     iterations = RESOLVE_ITERATIONS,
   ): number {
+    // Without solid bases nothing meets empty tines: the rig resolves exactly as it always did.
+    const t = this.bases.length > 0 ? tines : null;
     for (let i = 0; ; i++) {
       let depth = this.deepestContact(pos.x, pos.z, bodyRadius, this.bodyHit);
       let nx = this.bodyHit.nx;
@@ -562,11 +641,70 @@ export class CollisionWorld {
           nz = this.loadHit.nz;
         }
       }
+      if (t !== null) {
+        const d = this.tineContact(pos.x + fx * t.ahead, pos.z + fz * t.ahead, t.radius, t.height, this.tineHit);
+        if (d > depth) {
+          depth = d;
+          nx = this.tineHit.nx;
+          nz = this.tineHit.nz;
+        }
+      }
       if (depth <= CONTACT_EPSILON) return 0;
       if (i >= iterations) return depth;
       pos.x += nx * (depth + SKIN);
       pos.z += nz * (depth + SKIN);
     }
+  }
+
+  /**
+   * Deepest overlap of the empty tines' circle (TineCircle at (cx, cz), radius `r`) with the solid bases, the forks at
+   * `height` levels: below a base's top its face, met from outside its cell (its closed base: the tines never slide under
+   * or into it from where it is worked); at or above it only its walls (a belt input's side guards). Only a touch counts
+   * (TINE_CATCH: tines coming at them never reach deeper in a substep): tines found deeper got there some other way (in
+   * from a side, below the top, as through a wall) and leave freely, never with a jolt. Same contract as deepestContact;
+   * 0 = free.
+   */
+  tineContact(cx: number, cz: number, r: number, height: number, out: Contact): number {
+    out.depth = 0;
+    out.nx = 0;
+    out.nz = 0;
+    if (!(r > 0)) return 0;
+    const bases = this.bases;
+    for (let k = 0; k < bases.length; k++) {
+      const base = bases[k];
+      if (height < base.top - SOLID_TOP_EPSILON) {
+        const c = base.rect;
+        if (pointRectDistance(cx, cz, c.minX, c.minZ, c.maxX, c.maxZ) >= 0) this.catchTines(cx, cz, r, base.face, out);
+        continue;
+      }
+      const walls = base.walls;
+      for (let w = 0; w < walls.length; w++) this.catchTines(cx, cz, r, walls[w], out);
+    }
+    return out.depth;
+  }
+
+  /** The tines' circle touching `s` (TINE_CATCH at most) deeper than `out` so far: `out` takes that contact. */
+  private catchTines(cx: number, cz: number, r: number, s: Rect, out: Contact): void {
+    const d = circleRectContact(cx, cz, r, s.minX, s.minZ, s.maxX, s.maxZ, this.hit);
+    if (d > out.depth && d <= TINE_CATCH) copyContact(this.hit, out);
+  }
+
+  /**
+   * The top (levels) of the highest solid base whose cell a circle at (cx, cz), radius `r`, reaches into (deeper than
+   * touching) while standing at or over it at `height` levels; -1 = none (clear of every one, or only against one it
+   * stands below: its face keeps it out). GameState: the forks keep their level while the tines or a load reach over a
+   * belt's table.
+   */
+  solidTopUnder(cx: number, cz: number, r: number, height: number): number {
+    let top = -1;
+    const bases = this.bases;
+    for (let k = 0; k < bases.length; k++) {
+      const base = bases[k];
+      if (base.top <= top || base.top > height + SOLID_TOP_EPSILON) continue;
+      const s = base.rect;
+      if (pointRectDistance(cx, cz, s.minX, s.minZ, s.maxX, s.maxZ) < r - CONTACT_EPSILON) top = base.top;
+    }
+    return top;
   }
 
   /**

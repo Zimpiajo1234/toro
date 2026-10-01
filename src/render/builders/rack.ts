@@ -237,12 +237,13 @@ export function endPlateColumn(geometry: BufferGeometry): number | null {
 }
 
 /**
- * Loading line on the floor in front of each column (the `facing` side), in world space: a stop line along the face
- * and two short bay marks, the rack's own soft slate (never a functional hue).
+ * Loading line on the floor in front of each column (the `facing` side) of a unit loaded from its front (a rack, a
+ * belt's input: docs/CONVEYOR.md), in world space: a stop line along the face and two short bay marks, the rack's own
+ * soft slate (never a functional hue).
  */
-export function addRackLines(parts: PartList, rack: FrontUnit, level: Pick<LevelData, 'size'>, theme: Theme): void {
+export function addLoadingLines(parts: PartList, unit: FrontUnit, level: Pick<LevelData, 'size'>, theme: Theme): void {
   const local = new PartList();
-  const out = outwardZ(rack.access.facing);
+  const out = outwardZ(unit.access.facing);
   const L = LOADING_LINE;
   const flat = (u0: number, u1: number, d0: number, d1: number) => {
     const za = out * (0.5 - d0);
@@ -254,11 +255,11 @@ export function addRackLines(parts: PartList, rack: FrontUnit, level: Pick<Level
       rx: -Math.PI / 2,
     });
   };
-  for (let col = 0; col < rack.columns.length; col++) {
+  for (let col = 0; col < unit.columns.length; col++) {
     flat(col + L.inset, col + 1 - L.inset, -L.near - L.width, -L.near);
     for (const u of [col + L.inset, col + 1 - L.inset - L.width]) flat(u, u + L.width, -L.far, -L.near - L.width);
   }
-  parts.append(local, rackPlacement(rack, level));
+  parts.append(local, rackPlacement(unit, level));
 }
 
 /**

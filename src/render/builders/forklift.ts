@@ -1,6 +1,7 @@
 import { BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, SphereGeometry, TorusGeometry } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { TAU, clamp } from '../../core/math';
+import { TINES } from '../../core/types';
 import type { Theme } from '../../themes/types';
 import { PartList } from '../paint';
 
@@ -84,7 +85,7 @@ export interface ForkliftSizes {
 export function buildForkliftGeometry(theme: Theme, sizes: ForkliftSizes): ForkliftGeometry {
   return {
     chassis: buildChassis(theme),
-    carriage: buildCarriage(theme, sizes.forkReach + sizes.boxSize * 0.38),
+    carriage: buildCarriage(theme, sizes.forkReach + sizes.boxSize * TINES.tip),
     innerMast: buildInnerMast(theme),
     wheel: buildWheel(theme, sizes.wheelRadius),
     eyes: buildEyes(theme),
@@ -156,14 +157,18 @@ function buildInnerMast(theme: Theme): BufferGeometry {
   return p.build();
 }
 
-/** Backplate + two tines reaching to `tineEnd` (local z). Local y = 0 is the fork top surface. */
+/**
+ * Backplate + two tines reaching to `tineEnd` (local z), where core/types TINES puts them (the logic's empty tines meet
+ * a belt's table there). Local y = 0 is the fork top surface.
+ */
 function buildCarriage(theme: Theme, tineEnd: number): BufferGeometry {
   const c = theme.forklift;
   const p = new PartList();
+  const half = TINES.width / 2;
   p.block(c.mast, -0.22, 0.22, -0.03, 0.2, 0.44, 0.472);
-  for (const x of [-0.15, 0.15]) {
-    p.block(c.fork, x - 0.038, x + 0.038, -0.03, 0, 0.47, tineEnd);
-    p.block(c.fork, x - 0.038, x + 0.038, -0.03, 0.14, 0.472, 0.5);
+  for (const x of [-TINES.spread, TINES.spread]) {
+    p.block(c.fork, x - half, x + half, -0.03, 0, 0.47, tineEnd);
+    p.block(c.fork, x - half, x + half, -0.03, 0.14, 0.472, 0.5);
   }
   return p.build();
 }

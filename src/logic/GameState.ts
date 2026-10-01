@@ -1,5 +1,6 @@
 import { angleDelta, approach, clamp, degToRad, wrapAngle } from '../core/math';
 import {
+  TINES,
   cellToWorld,
   type BoxState,
   type ForkliftState,
@@ -16,7 +17,7 @@ import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from
 import { FACING_X, columnFrame, inwardHeading } from '../core/racks';
 import { hasStorage, storageSlotsOf } from '../core/storage';
 import { GAME_CONFIG, type GameConfig } from '../config';
-import { CollisionWorld, pointRectDistance } from './collision';
+import { CollisionWorld, SOLID_TOP_EPSILON, pointRectDistance } from './collision';
 import { CONVEYOR, ConveyorSystem, type ConveyorHost } from './conveyor';
 import { forkRiseRate } from './forkRise';
 import { ForkliftController, MOVE_EPSILON } from './forklift';
@@ -115,6 +116,13 @@ export class GameState {
    * snapshot.moves (see countMove).
    */
   private readonly origin = { x: -1, z: -1, level: 0, slotId: null as string | null };
+  /**
+   * The empty tines' circle (core/types TINES; logic/collision TineCircle): its centre this far ahead of the body centre,
+   * round their tips. A solid base (a belt's table, docs/STORAGE.md «Nivel base») meets it below its top, and while it
+   * reaches over one the forks keep their level (forksOverSolid).
+   */
+  private readonly tineAhead: number;
+  private readonly tineRadius: number;
   /** Conveyor belts (docs/CONVEYOR.md; none in most levels): a box set down on an input rides into its end exit. */
   private readonly belts: ConveyorSystem;
   /** What the belts call back (built once: nothing allocated per frame). */
@@ -211,7 +219,10 @@ export class GameState {
 
     this.world = CollisionWorld.fromLevel(level, config.box.size);
     this.world.setBoxes(boxes);
-    this.driver = new ForkliftController(forklift, this.world, config.forklift);
+    // The tines' tips stand TINES.tip box sizes past the fork point; the circle hugs them, as wide as the pair.
+    this.tineRadius = TINES.spread + TINES.width / 2;
+    this.tineAhead = config.forklift.forkReach + TINES.tip * config.box.size - this.tineRadius;
+    this.driver = new ForkliftController(forklift, this.world, config.forklift, { ahead: this.tineAhead, radius: this.tineRadius });
     this.motion.x = forklift.pos.x;
     this.motion.z = forklift.pos.z;
     this.motion.heading = forklift.heading;
@@ -270,8 +281,9 @@ export class GameState {
     const driving = Math.abs(throttle) > MOVE_EPSILON || Math.abs(steer) > MOVE_EPSILON;
     const moving = moveX * moveX + moveZ * moveZ > MOVE_EPSILON * MOVE_EPSILON;
     // A load inside a storage opening (a rack slot, a dock door: only ever the one of the column the rig works at, as
-    // the aim saw it at the end of last frame; a box just lifted out of it counts at once): straight in or out only.
-    if (this.grid.columns.length > 0) this.driver.setHeadingLock(this.loadInOpening());
+    // the aim saw it at the end of last frame; a box just lifted out of it counts at once), or the empty tines reaching
+    // over a solid base (a belt's input on its table): straight in or out only.
+    if (this.grid.columns.length > 0) this.driver.setHeadingLock(this.loadInOpening() || (this.carriedIndex < 0 && this.forksOverSolid() >= 0));
     if (driving) this.lastInputWasDrive = true;
     else if (moving) this.lastInputWasDrive = false;
     if (driving || (!moving && this.lastInputWasDrive)) this.driver.stepDrive(step, throttle, steer);
@@ -649,8 +661,11 @@ export class GameState {
     if (engaged >= 0) this.forkLevel = clamp(this.forkLevel, 0, this.grid.topLevel(engaged));
     const row = engaged >= 0 ? STORAGE_ACCESS[columns[engaged].access] : null;
     const carrying = this.carriedIndex >= 0;
-    // The forks act on the column only once they stand at its selected level (the tines / the load fit its opening).
-    const atLevel = Math.abs(f.forkHeight - this.forkLevel) <= LOAD_PASS_CLEARANCE;
+    // The forks act on the column only once they stand at its selected level (the tines / the load fit its opening), and
+    // never below its base level: under it the unit is solid (a belt's table), so the load waits at its face until the
+    // forks are up over it (docs/STORAGE.md «Nivel base»).
+    const base = engaged >= 0 ? columns[engaged].baseLevel : 0;
+    const atLevel = Math.abs(f.forkHeight - this.forkLevel) <= LOAD_PASS_CLEARANCE && f.forkHeight >= base - SOLID_TOP_EPSILON;
     const acting = row !== null && (facing || row.actsHeld) && atLevel;
     aim.column = row !== null && acting && depth >= row.pickReach ? engaged : -1;
     aim.level = this.forkLevel;
@@ -783,13 +798,15 @@ export class GameState {
   /**
    * F / V, wheel, gamepad X / B: one level up or down at the storage column the rig works at, any unit (hint.storage:
    * not while it lifts a floor box there), from level 0 up to its top slot (below a unit's base level, its solid face:
-   * a belt's table), never through a board (a load inside a rack slot keeps its level) and never down into the boxes
-   * of a stack (a truck bed) the load is over.
+   * a belt's table), never through a board (a load inside a rack slot keeps its level), never through a solid base (the
+   * empty tines or a load reaching over a belt's table: the rig backs out first) and never down into the boxes of a
+   * stack (a truck bed) the load is over.
    */
   private stepForkLevel(step: -1 | 1): void {
     const engaged = this.engaged;
     if (engaged < 0 || !this.atColumn()) return;
     if (this.grid.columns[engaged].support === 'shelves' && this.loadInOpening()) return;
+    if (this.forksOverSolid() >= 0) return;
     const level = clamp(this.forkLevel + step, 0, this.grid.topLevel(engaged));
     if (level === this.forkLevel || this.sinksIntoStack(engaged, level)) return;
     this.forkLevel = level;
@@ -801,6 +818,25 @@ export class GameState {
   /** The rig works at a storage column (it shows in hint.storage): the forks follow the level selected there. */
   private atColumn(): boolean {
     return this.engaged >= 0 && this.snapshot.hint.storage !== null;
+  }
+
+  /**
+   * The top (levels) of the solid base the forks reach over (docs/STORAGE.md «Nivel base»: a belt's input on its
+   * table), standing at or over it: the carried load (its collider) or the empty tines (their circle) inside its cell;
+   * -1 = none (always, in a level without one). While they do, F / V do nothing (stepForkLevel), the forks never sink
+   * below its top (stepForkHeight) and empty tines keep their heading (a load inside an opening already does): the rig
+   * backs out first. Below its top the solid base keeps them out (collision TineCircle, the shut cell).
+   */
+  private forksOverSolid(): number {
+    if (!this.world.hasSolidBases) return -1;
+    const f = this.snapshot.forklift;
+    if (this.carriedIndex >= 0) {
+      const load = this.snapshot.boxes[this.carriedIndex].pos;
+      return this.world.solidTopUnder(load.x, load.z, this.config.forklift.carriedBoxRadius, f.forkHeight);
+    }
+    const x = f.pos.x + Math.sin(f.heading) * this.tineAhead;
+    const z = f.pos.z + Math.cos(f.heading) * this.tineAhead;
+    return this.world.solidTopUnder(x, z, this.tineRadius, f.forkHeight);
   }
 
   /**
@@ -993,7 +1029,8 @@ export class GameState {
   /**
    * Carriage height in stack levels: toward the drop height while carrying, the target box's level while empty.
    * Discrete targets, reached at a steady rate that is slower the higher the forks go (always 0 in classic levels).
-   * Never below what clearLevel asks for, so neither the load nor the empty forks sink into a stack.
+   * Never below what clearLevel asks for, so neither the load nor the empty forks sink into a stack, and never below a
+   * solid base the forks reach over (a belt's table: forksOverSolid), even once the level is complete.
    */
   private stepForkHeight(dt: number): void {
     const snap = this.snapshot;
@@ -1007,6 +1044,7 @@ export class GameState {
       else if (this.carriedIndex >= 0) target = Math.max(snap.hint.dropCell ? snap.hint.dropLevel : 0, this.clearLevel(true));
       else target = snap.hint.targetBoxId ? this.pickLevel : this.clearLevel(false);
     }
+    target = Math.max(target, this.forksOverSolid());
     if (target === f.forkHeight || !(dt > 0)) return;
     f.forkHeight = approach(f.forkHeight, target, this.forkRate(Math.max(f.forkHeight, target)) * dt);
   }

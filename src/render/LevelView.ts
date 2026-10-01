@@ -748,7 +748,7 @@ export class LevelView {
     const rng = createRng(`${level.id}:decor`);
     const floor = new PartList();
     addFloor(floor, level, theme);
-    // What storage paints on the floor (a rack's loading line in front of every column), unit by unit.
+    // What storage paints on the floor (the loading line in front of every rack column and belt input), unit by unit.
     for (const unit of storageOf(level)) STORAGE_RENDER[unit.skin].paintFloor?.(floor, unit, level, theme);
     this.root.add(this.mesh(floor.build(), mats.painted, false));
 

@@ -210,8 +210,9 @@ export interface LevelStorage {
    * The level of its bottom slot (docs/STORAGE.md «Nivel base»): its columns' levels are baseLevel, baseLevel + 1, …
    * (a slot's id and level, a stored box's `level`, the forks' level that reaches it). Omitted = 0, at the floor: every
    * rack and truck. A conveyor belt's input and end exit stand on its table (docs/CONVEYOR.md): at their belt's height
-   * (validateLevel fills it from the belt's cells; a `.level` never writes it). Below it the unit is solid (the table
-   * under its top): the forks can still be set there with the keys, and nothing is picked or dropped there.
+   * (validateLevel fills it from the belt's cells; a `.level` never writes it). Below it the unit is solid (a closed
+   * base: the table under its top): the forks can still be set there with the keys, but nothing is picked or dropped
+   * there and neither the tines nor a load go in; while they reach over it the forks keep their level (logic/GameState).
    */
   baseLevel?: number;
 }
@@ -308,6 +309,14 @@ export interface LevelData {
 /* ------------------------------------------------------------------ */
 /* Runtime state (owned by logic, read by render / audio / game)       */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The two tines of the forks, as the render draws them (render/builders/forklift) and the logic meets them (the empty
+ * tines against a solid base, docs/STORAGE.md «Nivel base»): their tips reach `tip` box sizes past the fork point (the
+ * centre of a carried box, forkReach ahead of the body); each is `width` wide, centred `spread` to either side of the
+ * heading.
+ */
+export const TINES = { tip: 0.38, spread: 0.15, width: 0.076 } as const;
 
 export interface ForkliftState {
   /** Center of the body collider, world units. */

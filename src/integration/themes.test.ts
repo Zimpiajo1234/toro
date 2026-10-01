@@ -102,13 +102,18 @@ describe('themes', () => {
       // Never red: its hue well away from red's, whatever its saturation.
       const hue = hslHue(c);
       expect(Math.min(hue, 360 - hue), c).toBeGreaterThan(30);
+      // H1c: the input's pad sits between its near-black guards and the end exit's skirting stands on the light deck:
+      // clearly apart from both; and the drop icon painted on the pad, a light cream, reads on it (≥ 30 points of L).
+      expect(deltaE2000(c, t.conveyor.side), c).toBeGreaterThan(15);
+      expect(deltaE2000(c, t.conveyor.top), c).toBeGreaterThan(20);
+      expect(lab(t.conveyor.icon)[0] - lab(c)[0], c).toBeGreaterThan(30);
     }
     palette.forEach((a, i) => palette.slice(i + 1).forEach((b) => expect(deltaE2000(a, b), `${a} ${b}`).toBeGreaterThan(20)));
   });
 
-  it('gives a conveyor belt a quiet light-grey band with white stripes that read as motion, on a neutral table', () => {
+  it('gives a conveyor belt a quiet light-grey band with white stripes that read as motion, on a neutral table with a closed near-black base', () => {
     const t = defaultTheme;
-    const { belt, stripe, top, frame, identity } = t.conveyor;
+    const { belt, stripe, top, side, icon, identity } = t.conveyor;
     const boxFaces = COLOR_IDS.flatMap((c) => [t.boxes[c].base, t.boxes[c].tape, t.boxes[c].glyph, t.boxes[c].locked]);
     const faces = [...boxFaces, ...COLOR_IDS.flatMap((c) => Object.values(t.zones[c]))];
     // The band (H1b: «un gris algo más claro») is a quiet grey, nothing like a box: low chroma, still darker than every
@@ -122,11 +127,18 @@ describe('themes', () => {
     expect(chroma(stripe)).toBeLessThan(6);
     expect(lab(stripe)[0]).toBeGreaterThan(90);
     expect(lab(stripe)[0] - lab(belt)[0]).toBeGreaterThan(30);
-    // The table is neutral (never a functional hue): its top light (the end exit's deck, where its cue is painted), its
-    // frame a quiet graphite under the band.
-    for (const c of [top, frame]) expect(chroma(c), c).toBeLessThan(6);
+    // The table is neutral (never a functional hue): its top light (the end exit's deck, where its cue is painted); its
+    // closed base and its input's side guards a soft near-black (H1c, «negro»): far darker than the band, so the table
+    // reads as a solid block, yet never a deep black (the palette has none).
+    for (const c of [top, side]) expect(chroma(c), c).toBeLessThan(6);
     expect(lab(top)[0]).toBeGreaterThan(85);
-    expect(lab(frame)[0]).toBeLessThan(lab(belt)[0]);
+    expect(lab(side)[0]).toBeLessThan(lab(belt)[0] - 20);
+    expect(lab(side)[0]).toBeLessThan(35);
+    expect(lab(side)[0]).toBeGreaterThan(18);
+    // The drop icon: a light cream, warm and soft (low chroma), never the stripes' white.
+    expect(chroma(icon)).toBeLessThan(10);
+    expect(lab(icon)[0]).toBeGreaterThan(90);
+    expect(icon).not.toBe(stripe);
   });
 
   it('maps the background and every UI token to a CSS custom property', () => {

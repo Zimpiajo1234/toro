@@ -1,7 +1,7 @@
 import { Box3, Group, Mesh, MeshStandardMaterial, type BufferGeometry, type Material } from 'three';
 import { conveyorOfUnit, conveyorsOf } from '../../core/conveyors';
 import { baseLevelOf } from '../../core/storage';
-import type { GameSnapshot, LevelStorage, StorageSlotState } from '../../core/types';
+import { cellToWorld, isFrontUnit, type GameSnapshot, type LevelStorage, type StorageSlotState } from '../../core/types';
 import {
   BELT_BURST,
   beltPlacement,
@@ -9,13 +9,15 @@ import {
   buildBeltBand,
   buildBeltCue,
   buildBeltDeck,
-  buildBeltFence,
   buildBeltGlowGeometry,
+  buildBeltGuards,
+  buildBeltIcon,
   buildBeltMarkerGeometry,
   buildBeltPad,
+  buildBeltSkirting,
   buildBeltTable,
 } from '../builders/conveyor';
-import { outwardYaw } from '../builders/rack';
+import { addLoadingLines, outwardYaw } from '../builders/rack';
 import type { FitBox } from '../CameraRig';
 import { BeltStripes } from '../views/ConveyorView';
 import { SlotLight, type SlotTone } from '../views/RackView';
@@ -24,15 +26,17 @@ import type { BurstPlace, MarkerPlace, StorageBuildContext, StorageSkinRender, S
 
 /*
  * The conveyor belt (docs/CONVEYOR.md): one adapter for its two skins over builders/conveyor and views/ConveyorView,
- * the belt a table at its height (H1b: its unit's base level, dims rackSlotY: a floor belt's level 1). `beltIn`, the
- * input: the belt's table, its band with the white stripes that slide (it moves: `animate` follows
- * snapshot.conveyors) and its pad in the belt's identity colour; worked like a rack slot (F up to the table top), so it
- * shows the chosen-level marker, flat round the pad, when the forks are set to its slot (none at the table's face,
- * below it). `beltOut`, the end exit: the table's last stretch, its deck with the cue sticker of its level painted flat
- * on it and its very low orange fence; it lights like a rack slot (views/RackView SlotLight: only with its destined
- * box; it pulses while a box that fits its cue is carried, with the target hints) — at once as the box slides in, no
- * drop glide to wait for (`landDelay` 0). Nothing of a belt ever ghosts (an open frame: the top, the legs, a low fence)
- * or keeps the camera from it; the forklift never works at the end exit (no marker).
+ * the belt a table at its height (H1b: its unit's base level, dims rackSlotY: a floor belt's level 1) on a closed base
+ * (H1c: no legs, its side walls a soft near-black down to the floor). `beltIn`, the input: the belt's table, its band
+ * with the white stripes that slide (it moves: `animate` follows snapshot.conveyors), its pad in the belt's identity
+ * colour with the drop icon painted on it, its closed black side guards (loaded from its front only) and, painted on
+ * the floor in front of it, a rack's loading line; worked like a rack slot (F up to the table top), so it shows the
+ * chosen-level marker, flat on the pad's rim, when the forks are set to its slot (none at the table's face, below it).
+ * `beltOut`, the end exit: the table's last stretch, its deck with the cue sticker of its level painted flat on it and
+ * its low skirting in the belt's identity colour; it lights like a rack slot (views/RackView SlotLight: only with its
+ * destined box; it pulses while a box that fits its cue is carried, with the target hints) — at once as the box slides
+ * in, no drop glide to wait for (`landDelay` 0). Nothing of a belt ever ghosts (a table lower than the forklift) or
+ * keeps the camera from it; the forklift never works at the end exit (no marker).
  */
 
 /** The belt's identity colour (Theme.conveyor.identity, by its place among the level's belts). */
@@ -100,7 +104,10 @@ abstract class BeltUnit implements StorageUnitView {
   }
 }
 
-/** A belt's input: the belt's table, its band (whose stripes slide with its surface) and its pad, on the table top. */
+/**
+ * A belt's input: the belt's table, its band (whose stripes slide with its surface), and on the table top its pad with
+ * the drop icon and its side guards.
+ */
 class BeltInputUnit extends BeltUnit {
   private readonly stripes: BeltStripes | null;
 
@@ -131,6 +138,20 @@ class BeltInputUnit extends BeltUnit {
     } else this.stripes = null;
     const pad = this.add(ctx.bag.track(buildBeltPad(unit, level, top, identityOf(ctx, belt))), rubber, false);
     pad.userData.beltPad = unit.id;
+    if (unit.access.kind === 'front') {
+      // Turned with its front (slot-local +z toward its loading face): the guards on its sides, the icon's arrow in.
+      const at = cellToWorld(unit, level.size);
+      const yaw = outwardYaw(unit.access.facing);
+      const place = (mesh: Mesh) => {
+        mesh.position.set(at.x, 0, at.z);
+        mesh.rotation.y = yaw;
+        return mesh;
+      };
+      const guards = place(this.add(ctx.bag.track(buildBeltGuards(top, theme)), painted, true));
+      guards.userData.beltGuards = unit.id;
+      const icon = place(this.add(ctx.bag.track(buildBeltIcon(top, theme.conveyor.icon)), rubber, false));
+      icon.userData.beltIcon = unit.id;
+    }
     this.seal();
   }
 
@@ -150,26 +171,36 @@ class BeltInputUnit extends BeltUnit {
   }
 }
 
-/** A belt's end exit: its deck, the cue painted flat on it (lit like a rack slot, at once) and its low fence. */
+/**
+ * A belt's end exit: its deck, the cue painted flat on it (lit like a rack slot, at once) and its low skirting in its
+ * belt's identity colour.
+ */
 class BeltExitUnit extends BeltUnit {
   readonly landDelay = 0;
   private readonly light: SlotLight | null = null;
 
-  constructor(ctx: StorageBuildContext, unit: LevelStorage, slot: StorageSlotState | undefined, painted: Material) {
+  constructor(
+    ctx: StorageBuildContext,
+    unit: LevelStorage,
+    slot: StorageSlotState | undefined,
+    /** Its belt's index in level.conveyors, -1 when it has none (validateLevel refuses that). */
+    belt: number,
+    painted: Material,
+  ) {
     super(unit.id, ctx.boxHeight);
     this.group.userData.beltOutId = unit.id;
     const { theme } = ctx;
     const facing = unit.access.kind === 'door' ? 'south' : unit.access.facing;
     const top = beltTopY(slot?.level ?? baseLevelOf(unit));
     const at = { x: slot?.pos.x ?? 0, z: slot?.pos.z ?? 0 };
-    // Its deck and fence turn with the belt (open toward it); the sticker and its glow keep the world's axes.
+    // Its deck and skirting turn with the belt (open toward it); the sticker and its glow keep the world's axes.
     const place = (mesh: Mesh, turned: boolean) => {
       mesh.position.set(at.x, 0, at.z);
       if (turned) mesh.rotation.y = outwardYaw(facing);
       return mesh;
     };
-    const fence = place(this.add(ctx.bag.track(buildBeltFence(top, theme)), painted, true), true);
-    fence.userData.beltFence = unit.id;
+    const skirting = place(this.add(ctx.bag.track(buildBeltSkirting(top, identityOf(ctx, belt))), painted, true), true);
+    skirting.userData.beltSkirting = unit.id;
     const cue = slot?.accepts ?? null;
     if (slot && cue) {
       // A cue: the deck glows (its panel), the sticker brightens, a band of light round it (views/RackView SlotLight).
@@ -216,6 +247,10 @@ function stripeMaterial(ctx: StorageBuildContext): MeshStandardMaterial {
 }
 
 export const BELT_IN_RENDER: StorageSkinRender = {
+  /** Loaded like a rack column: the same loading line painted on the floor in front of it. */
+  paintFloor(floor, unit, level, theme) {
+    if (isFrontUnit(unit)) addLoadingLines(floor, unit, level, theme);
+  },
   /** Worked like a rack slot: the marker frames its slot on the table top when the forks are set to it. */
   markerGeometry: buildBeltMarkerGeometry,
   builder(ctx) {
@@ -233,7 +268,7 @@ export const BELT_OUT_RENDER: StorageSkinRender = {
   builder(ctx) {
     return {
       build(unit, slots) {
-        return new BeltExitUnit(ctx, unit, slots[0], ctx.mats.painted);
+        return new BeltExitUnit(ctx, unit, slots[0], conveyorOfUnit(ctx.level, unit.id), ctx.mats.painted);
       },
     };
   },

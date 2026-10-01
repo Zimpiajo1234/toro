@@ -165,8 +165,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `slotId` plus the unit's `skin`. Levels count from the floor: a unit's slots start at its base level
   (`LevelStorage.baseLevel`, omitted = 0; a belt's two ends stand on its table at 1, docs/STORAGE.md «Nivel base»), the
   forks reach 0 up to its top slot and below the base there is no slot (`hint.storage.slotId` null, nothing picked or
-  dropped, the load meets the unit's face). Targets = zones + storage levels with a cue (`LevelTarget { kind: 'zone' |
-  'slot', skin }`, `LevelDestinies { zones, slots }`): validateLevel needs one box per target and exactly one complete
+  dropped, the load meets the unit's face). A front unit's base is solid (H1c): below it the empty tines meet its face
+  too (`CollisionWorld` `SolidBase`, the tines' `TineCircle` in `resolve`, their reach in `core/types` `TINES`) and the
+  load waits there until the forks stand at the base; while the tines or a load reach over it, F / V do nothing, the
+  forks never sink below it and the heading holds (`GameState.forksOverSolid`). Targets = zones + storage levels with
+  a cue (`LevelTarget { kind: 'zone' | 'slot', skin }`, `LevelDestinies { zones, slots }`): validateLevel needs one box
+  per target and exactly one complete
   assignment (up to identical boxes, `core/sorting` `assignmentsOf`), and every target is satisfied only by its
   destined kind (`ZoneState.destined`, `StorageSlotState.destined`; in a stack also on satisfied levels below). A box on
   its destined target is locked (`BoxState.locked`: never picked, picking at it gives the gentle `actionIdle`; nothing
@@ -201,13 +205,14 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°, past
   the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design decision;
   `GameState.docksDriving.test.ts` measures it).
-- **Conveyor belts** (spec: `docs/CONVEYOR.md`, H1 + H1b done: a straight floor belt, a table at level 1; only the
-  «Benchmark» has one): `LevelData.conveyors?: LevelConveyor[]` (`{ id, input, output, cells }`, each cell `{ x, z,
-  piece, height }` with pieces `suelo` / `rampa` / `techo`, only `suelo` built so far, at height 1:
+- **Conveyor belts** (spec: `docs/CONVEYOR.md`, H1 + H1b + H1c done: a straight floor belt, a table at level 1 on a
+  closed base; only the «Benchmark» has one): `LevelData.conveyors?: LevelConveyor[]` (`{ id, input, output, cells }`,
+  each cell `{ x, z, piece, height }` with pieces `suelo` / `rampa` / `techo`, only `suelo` built so far, at height 1:
   `core/conveyors` `FLOOR_BELT_LEVEL`) links two storage units standing on it, at its height (`LevelStorage.baseLevel`
   = 1, filled by validateLevel: docs/STORAGE.md «Nivel base»; their slots `e1:0:1` / `s1:0:1`): its input (skin
   `beltIn`, access `front`: a «libre» slot loaded from the side away from the belt like a rack's level-1 slot, the forks
-  raised with F; at level 0 the load meets the table's face) and its end exit (skin `beltOut`, access `belt`: never
+  raised with F outside it; at level 0 the load and the empty tines meet the table's face, and with the tines or the
+  load in, F / V do nothing until the rig backs out) and its end exit (skin `beltOut`, access `belt`: never
   engaged, `STORAGE_ACCESS.belt.engages` false, its slot sealed for good). Belt cells and both ends are statics.
   `logic/conveyor.ts` `ConveyorSystem` (run from `GameState.update`): a box set down on an input whose end exit is free
   settles (`CONVEYOR.settleSec`), rides along a closed-form eased curve (deterministic at any frame rate) and lands in
@@ -438,16 +443,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (hints or not); the chosen-level marker frames the level's sign cell (`SIGN_MARKER`). A level with trucks and no
   racks switches on the same target feedback (`hasStorage`); without storage nothing changes.
 - Conveyor belts (docs/CONVEYOR.md, «Dibujo»): one adapter for both skins (`render/storage/conveyor.ts` over
-  `builders/conveyor.ts` and `views/ConveyorView.ts`, `Theme.conveyor`), an open table that never ghosts or moves the
-  frame: a light top on slim graphite legs (an apron and low stretchers), its top at the floor of a slot of the belt's
-  level (`beltTopY` = `rackSlotY`, 0.78 at level 1, from the data), with a light-grey rubber band between fine light
-  rails and white stripes sliding only while it runs (`BeltStripes.sync(ConveyorState.travel)` through the optional
-  `StorageUnitView.animate`); the input a pad in the belt's identity colour (`Theme.conveyor.identity`, never a box,
-  rail or beacon tone, never red) with the chosen-level marker flat round it (`markerGeometry`, only with the forks at
-  its slot's level); the end exit the table's last stretch, its cue sticker painted flat on its deck (`buildCueFace`,
-  face up, world-aligned like a zone's glyph) and a very low fence on its three open sides in the docks' guard-rail
-  orange (`Theme.truck.rail` / `railCap`), which lights as the box slides in (`landDelay` 0). Sounds: `beltDrop`,
-  `beltHum` (the whole run), `beltLand`.
+  `builders/conveyor.ts` and `views/ConveyorView.ts`, `Theme.conveyor`), a table that never ghosts or moves the frame:
+  a light top on a closed base (one solid block down to the floor, its side walls a soft near-black, `side`; no legs),
+  its top at the floor of a slot of the belt's level (`beltTopY` = `rackSlotY`, 0.78 at level 1, from the data), with a
+  light-grey rubber band between fine light rails and white stripes sliding only while it runs
+  (`BeltStripes.sync(ConveyorState.travel)` through the optional `StorageUnitView.animate`); the input a pad in the
+  belt's identity colour (`Theme.conveyor.identity`, never a box, rail or beacon tone, never red) with a cream drop
+  icon painted on it (`buildBeltIcon`: an arrow pointing in at a box outline, turned with the input), closed
+  near-black guards on its two sides (`buildBeltGuards`, inner faces at `core/storage` `BASE_GUARD.inset`, where the
+  tines meet them too), a rack's loading line on the floor in front (`paintFloor` → `builders/rack` `addLoadingLines`)
+  and the chosen-level marker on the pad's rim (`markerGeometry`, only with the forks at its slot's level); the end exit
+  the table's last stretch, its cue sticker painted flat on its deck (`buildCueFace`, face up, world-aligned like a
+  zone's glyph) and a low solid skirting on its three open sides in the belt's identity colour (`buildBeltSkirting`: it
+  pairs with its input's pad), which lights as the box slides in (`landDelay` 0). Sounds: `beltDrop`, `beltHum` (the
+  whole run), `beltLand`.
 - Target hints (`Settings.targetHints`, persisted, additive, default off; P on the title and while playing,
   `Game.toggleHints` → `GameRenderer.setTargetHints` → `LevelView.setTargetHints`, set at mount and on every toggle,
   handed to each level built afterwards): the one switch for the light that answers a carried box. On, the zones that
