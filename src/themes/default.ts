@@ -32,7 +32,9 @@ export const defaultTheme: Theme = {
   /**
    * A cream cab with a soft slate stripe (the forklift's family, never a box hue), light wooden bed planks, slate trim
    * and a warm stone driveway a step below the warehouse floor. The dock sign's cells are a touch deeper than the
-   * «any colour» sticker fill, so a symbol-only sticker still reads on them.
+   * «any colour» sticker fill, so a symbol-only sticker still reads on them. The door's guard rails are a soft apricot
+   * orange (hue ≈ 27°, between coral and yellow and far from both: ΔE ≥ 21 to every box tone), their post caps
+   * cream.
    */
   truck: {
     cab: '#f3ece0',
@@ -53,6 +55,8 @@ export const defaultTheme: Theme = {
     doorFrame: '#a9b4be',
     shutter: '#e6e1d8',
     rubber: '#8a8178',
+    rail: '#eca060',
+    railCap: '#f7f0e4',
   },
   plant: { pot: '#e4d8c6', soil: '#b9a488', leaves: ['#9db592', '#8aa981', '#a9c09c'] },
   forklift: {
@@ -64,6 +68,10 @@ export const defaultTheme: Theme = {
     hub: '#d7d2c8',
     seat: '#b3a58f',
     light: '#fff5d6',
+    // Amber (hue ≈ 33°): a pale peach glass (lit, the light reads against it), and a warm light far from the yellow box
+    // (#f3d47c, hue ≈ 44°) and from coral.
+    beacon: '#f3d2aa',
+    beaconLight: '#ffc378',
   },
   // `ink` (the large lid symbol of the sorting levels) and `engrave` (a symbol cut into a pad) are deeper tones of the
   // same hue: readable from the default camera, never black, coral kept pink so it never reads as red. `locked` (a box

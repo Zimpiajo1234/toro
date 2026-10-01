@@ -598,6 +598,7 @@ describe('rack cues: the «leyenda» of each slot', () => {
 describe('rack slots: light only with the destined box, breathe for a fitting one', () => {
   it('a box that fits the cue but is not the destined one leaves the slot neutral; the destined one lights it', () => {
     const { snap, view } = setup();
+    view.setTargetHints(true); // the optional target hints (P): the slot breathes while mint ▲ is lifted out, below
     const trap = boxOf(snap, 'blue', 'triangle');
     const mint = boxOf(snap, 'mint', 'triangle');
     const slot = slotOf(snap, 'r1:0:1'); // «▲»: blue ▲ fits, mint ▲ is destined
@@ -630,6 +631,7 @@ describe('rack slots: light only with the destined box, breathe for a fitting on
 
   it('while carrying, the empty slots whose cue fits the box pulse clearly; the others stay still', () => {
     const { snap, view } = setup();
+    view.setTargetHints(true); // the optional target hints (P), in every view of this test
     carry(snap, boxOf(snap, 'blue', 'triangle'));
     let peak = peakGlow(view, snap, 3);
     // Much more than the gentle breathing of the levels without racks (≈ 0.17), still a soft pastel light.
@@ -649,6 +651,7 @@ describe('rack slots: light only with the destined box, breathe for a fitting on
 
     // Occupied: not an invitation. Holding its destined box it only keeps its rest glow (never hinted).
     const { snap: s2, view: v2 } = setup();
+    v2.setTargetHints(true);
     rest(boxOf(s2, 'mint', 'triangle'), slotOf(s2, 'r1:0:1'));
     step(v2, s2, 3);
     const lit = panel(v2, 'r1:0:1')!.material.emissiveIntensity;
@@ -659,6 +662,7 @@ describe('rack slots: light only with the destined box, breathe for a fitting on
 
     // Holding a box that fits but is not its destiny, when no free target takes the carried one: a faint swap hint.
     const { snap: s3, view: v3 } = setup();
+    v3.setTargetHints(true);
     rest(boxOf(s3, 'blue', 'triangle'), slotOf(s3, 'r1:0:1'));
     carry(s3, boxOf(s3, 'mint', 'triangle')); // fits only «▲»
     peak = peakGlow(v3, s3, 2);

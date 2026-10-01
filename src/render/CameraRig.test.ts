@@ -1,13 +1,19 @@
 import { Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
+import { TAU } from '../core/math';
+import type { InputFrame, LevelData } from '../core/types';
+import { BENCHMARK_ID, LEVELS, getSpecialLevel } from '../data/levels';
+import { GameState } from '../logic/GameState';
+import { defaultTheme } from '../themes/default';
 import { CameraRig, FOLLOW_HEIGHT, type FitBox, type ViewInsets } from './CameraRig';
+import { LevelView } from './LevelView';
 
 const DEG = Math.PI / 180;
 const cam = GAME_CONFIG.camera;
 
 function box(min: [number, number, number], max: [number, number, number]): FitBox {
-  return { min: new Vector3(...min), max: new Vector3(...max), heightScale: 1 };
+  return { min: new Vector3(...min), max: new Vector3(...max) };
 }
 
 /** Diorama-like volumes: a 14×11 floor plus the north and west walls. */
@@ -96,6 +102,13 @@ function expectFramedIn(rig: CameraRig, boxes: readonly FitBox[], w: number, h: 
 
 /** Visible half height of the frustum (the zoom of an orthographic camera, off-center or not). */
 const halfHeight = (rig: CameraRig): number => (rig.camera.top - rig.camera.bottom) / 2;
+
+/** Everything that places the picture: the projection, the camera's position and its orientation. */
+const pose = (rig: CameraRig): number[] => [
+  ...rig.camera.projectionMatrix.elements,
+  ...rig.camera.position.toArray(),
+  ...rig.camera.quaternion.toArray(),
+];
 
 describe('CameraRig', () => {
   it('starts at the configured yaw, with the camera sitting toward (sin ψ, cos ψ)', () => {
@@ -272,35 +285,88 @@ describe('CameraRig', () => {
       expect(zero.camera.top).toBe(-zero.camera.bottom);
     });
 
-    it('eases to new insets gently (no zoom jump), settles there, and snaps only when asked', () => {
+    it('takes a level’s bands at once while playing (a new level, a resize): no ease left to run on its own', () => {
       for (const [w, h, inset] of cases) {
-        const rig = new CameraRig(cam);
-        rig.setFitBoxes(FIT);
-        rig.setAspect(w, h);
-        rig.update(0);
-        const start = halfHeight(rig);
-        rig.setInsets(inset);
-        const trace = zoomTraceOf(rig, 2);
-        expect(maxStepRatio(trace, start)).toBeLessThan(0.012);
-        // Zooming out only: no overshoot on the way.
-        for (let i = 1; i < trace.length; i++) expect(trace[i]).toBeGreaterThanOrEqual(trace[i - 1] - 1e-9);
-        run(rig, 2);
         const snapped = new CameraRig(cam);
         snapped.setFitBoxes(FIT);
         snapped.setAspect(w, h);
         snapped.setInsets(inset, true);
         snapped.update(0);
-        expect(rig.camera.top).toBeCloseTo(snapped.camera.top, 4);
-        expect(rig.camera.bottom).toBeCloseTo(snapped.camera.bottom, 4);
-        expect(rig.camera.left).toBeCloseTo(snapped.camera.left, 4);
-        expect(rig.camera.right).toBeCloseTo(snapped.camera.right, 4);
+        const rig = new CameraRig(cam);
+        rig.setFitBoxes(FIT);
+        rig.setAspect(w, h);
+        rig.update(0);
+        rig.setInsets(inset);
+        rig.update(1 / 60);
+        expect(pose(rig)).toEqual(pose(snapped));
+        for (let i = 0; i < 120; i++) {
+          rig.update(1 / 60);
+          expect(pose(rig)).toEqual(pose(snapped));
+        }
+      }
+    });
+
+    it('glides the bands in with the start of a level from the title, gently, and lands exactly with it', () => {
+      for (const [w, h, inset] of cases) {
+        const snapped = new CameraRig(cam);
+        snapped.setFitBoxes(FIT);
+        snapped.setAspect(w, h);
+        snapped.setInsets(inset, true);
+        snapped.update(0);
+        // The title's orbit (no bands), stopped on a canonical yaw so only the bands move; the level's bands arrive
+        // a frame into the glide out of it.
+        const rig = new CameraRig(cam);
+        rig.setFitBoxes(FIT);
+        rig.setAspect(w, h);
+        rig.setIdleOrbit(true);
+        rig.update(0);
+        rig.setIdleOrbit(false);
+        rig.update(1 / 60);
+        const start = halfHeight(rig);
+        rig.setInsets(inset);
+        const glide = cam.rotateDurationSec * 1.6;
+        const trace = zoomTraceOf(rig, glide);
+        // ≈ 0.5 % per frame at most (Title → play at 1280×800), zooming out only: no overshoot on the way.
+        expect(maxStepRatio(trace, start)).toBeLessThan(0.012);
+        for (let i = 1; i < trace.length; i++) expect(trace[i]).toBeGreaterThanOrEqual(trace[i - 1] - 1e-9);
+        // It ends with the glide: then exactly the framing taken at once, and still.
+        rig.update(1 / 60);
+        expect(pose(rig)).toEqual(pose(snapped));
+        run(rig, 1);
+        expect(pose(rig)).toEqual(pose(snapped));
         expectFramedIn(rig, FIT, w, h, inset);
-        // And back to none (the title), as gently.
+
+        // Back to the title: the orbit starts and the bands glide out as gently.
         const back = halfHeight(rig);
+        rig.setIdleOrbit(true);
         rig.setInsets({ top: 0, right: 0, bottom: 0, left: 0 });
         expect(maxStepRatio(zoomTraceOf(rig, 3), back)).toBeLessThan(0.012);
         expectContained(rig, FIT);
       }
+    });
+
+    it('never moves for the bands in force reported again, mid-glide or at rest', () => {
+      const [w, h, inset] = cases[0];
+      const twice = new CameraRig(cam);
+      const once = new CameraRig(cam);
+      for (const rig of [twice, once]) {
+        rig.setFitBoxes(FIT);
+        rig.setAspect(w, h);
+        rig.setIdleOrbit(true);
+        rig.update(1 / 60);
+        rig.setIdleOrbit(false);
+        rig.setInsets(inset);
+      }
+      for (let i = 0; i < 180; i++) {
+        if (i % 7 === 0) twice.setInsets({ ...inset });
+        twice.update(1 / 60);
+        once.update(1 / 60);
+        expect(pose(twice)).toEqual(pose(once));
+      }
+      const rest = pose(twice);
+      twice.setInsets({ ...inset }, true);
+      twice.update(1 / 60);
+      expect(pose(twice)).toEqual(rest);
     });
 
     it('turns (Q/E) and orbits exactly as a canvas the size of the free area would: no new zoom jumps', () => {
@@ -819,6 +885,169 @@ describe('CameraRig', () => {
       title.setIdleOrbit(false);
       title.zoomBy(1);
       expect(title.zoomTarget).toBe(2);
+    });
+  });
+
+  describe('never moves on its own', () => {
+    /** The HUD pills and the one-row control hint at 1280×800. */
+    const BANDS: ViewInsets = { top: 72, right: 0, bottom: 83, left: 0 };
+    const IDLE: InputFrame = { move: { x: 0, z: 0 }, actionPressed: false };
+    const driving = (steer: number): InputFrame => ({ move: { x: 0, z: 0 }, drive: { throttle: 1, steer }, actionPressed: false });
+    /** Frames (at 60 fps) until a Q/E turn has ended, counted as the rig counts them. */
+    const TURN_FRAMES = (() => {
+      let t = 0;
+      let n = 0;
+      while (t < 1) {
+        t = Math.min(1, t + 1 / 60 / cam.rotateDurationSec);
+        n++;
+      }
+      return n;
+    })();
+    const SCREENS = [...LEVELS, getSpecialLevel(BENCHMARK_ID)!];
+
+    /** A level as the game runs it, frame by frame: the simulation, the rig on the forklift, the view at the rig's yaw. */
+    function playing(level: LevelData) {
+      const state = new GameState(level);
+      const rig = new CameraRig(cam);
+      rig.setAspect(1280, 800);
+      rig.setInsets(BANDS, true);
+      const view = new LevelView(state.getSnapshot(), defaultTheme, GAME_CONFIG, rig.yaw);
+      rig.setFitBoxes(view.fitBoxes);
+      const start = state.getSnapshot().forklift.pos;
+      rig.setFollow(start.x, start.z, true);
+      rig.update(0);
+      let time = 0;
+      const frame = (input: InputFrame = IDLE): void => {
+        state.update(1 / 60, input);
+        const snap = state.getSnapshot();
+        rig.setFollow(snap.forklift.pos.x, snap.forklift.pos.z);
+        rig.update(1 / 60);
+        time += 1 / 60;
+        view.update(snap, 1 / 60, time, rig.yaw, 0);
+      };
+      /** The height scale of every group of the scene: the walls' sink shows here. */
+      const scales = (): number[] => view.root.children.map((c) => c.scale.y);
+      return { state, rig, view, frame, scales };
+    }
+
+    /** Frames of `run` (1-based) whose pose differs from the one before. */
+    function changedFrames(rig: CameraRig, frames: number, frame: (i: number) => void = () => rig.update(1 / 60)): number[] {
+      const out: number[] = [];
+      let prev = pose(rig);
+      for (let i = 1; i <= frames; i++) {
+        frame(i);
+        const now = pose(rig);
+        if (now.some((v, k) => !Object.is(v, prev[k]))) out.push(i);
+        prev = now;
+      }
+      return out;
+    }
+
+    it('stays bit-identical at rest while the walls finish sinking or rising, zoomed or not, bands reported again', () => {
+      for (const level of SCREENS) {
+        for (const zoom of [1, cam.zoomMax]) {
+          const { rig, view, frame, scales } = playing(level);
+          if (zoom > 1) {
+            rig.zoomBy(Math.log2(zoom));
+            rig.settleZoom();
+          }
+          // Round all four quarters and back: every turn sinks or raises one wall (a dock wall on the Benchmark).
+          for (const dir of [1, 1, -1, -1, -1, 1] as const) {
+            const label = `${level.id} ×${zoom} turn ${dir}`;
+            rig.rotate(dir);
+            for (let i = 0; i < TURN_FRAMES; i++) frame();
+            const rest = pose(rig);
+            let sinking = false;
+            for (let i = 0; i < 90; i++) {
+              const before = scales();
+              rig.setInsets({ ...BANDS }); // the bands in force, reported again
+              frame();
+              sinking ||= scales().some((s, k) => s !== before[k]);
+              expect(pose(rig), label).toEqual(rest);
+            }
+            expect(sinking, label).toBe(true);
+          }
+          view.dispose();
+        }
+      }
+    });
+
+    it('never follows the forklift at the full view: driving around moves nothing', () => {
+      for (const level of SCREENS) {
+        const { rig, state, view, frame } = playing(level);
+        const from = { ...state.getSnapshot().forklift.pos };
+        expect(changedFrames(rig, 150, (i) => frame(driving(i < 75 ? 0.5 : -0.5)))).toEqual([]);
+        const to = state.getSnapshot().forklift.pos;
+        expect(Math.hypot(to.x - from.x, to.z - from.z), level.id).toBeGreaterThan(0.5);
+        view.dispose();
+      }
+    });
+
+    it('zoomed in, follows the forklift every frame it drives, then lands exactly on it and stays still', () => {
+      for (const level of SCREENS) {
+        const { rig, view, frame } = playing(level);
+        rig.zoomBy(Math.log2(cam.zoomMax));
+        rig.settleZoom();
+        rig.update(0);
+        expect(changedFrames(rig, 90, () => frame(driving(0.4)))).toHaveLength(90);
+        // Let go: the forklift coasts to a halt and the view glides onto it, then rests exactly (no endless tail).
+        const after = changedFrames(rig, 6 * 60, () => frame());
+        expect(after.length, level.id).toBeGreaterThan(20);
+        expect(after[after.length - 1], level.id).toBeLessThan(4 * 60);
+        view.dispose();
+      }
+    });
+
+    it('moves for input only: a resize, a Q/E turn and a zoom step change it, smoothly, and it is exactly still after', () => {
+      const rig = new CameraRig(cam);
+      rig.setFitBoxes(FIT);
+      rig.setAspect(1280, 800);
+      rig.setInsets(BANDS, true);
+      rig.update(0);
+      expect(changedFrames(rig, 60)).toEqual([]);
+      // A resize: the canvas itself changed, so at once; then still.
+      rig.setAspect(1600, 900);
+      rig.setInsets({ top: 72, right: 0, bottom: 90, left: 0 });
+      expect(changedFrames(rig, 60)).toEqual([1]);
+      // A turn: every frame of it, gently, then still.
+      const start = halfHeight(rig);
+      rig.rotate(1);
+      const heights: number[] = [];
+      const turn = changedFrames(rig, TURN_FRAMES + 60, () => {
+        rig.update(1 / 60);
+        heights.push(halfHeight(rig));
+      });
+      // (Its last frame may already sit on the goal: the ease rounds onto it.)
+      expect(turn.length).toBeGreaterThanOrEqual(TURN_FRAMES - 1);
+      expect(turn.length).toBe(turn[turn.length - 1]);
+      expect(turn[turn.length - 1]).toBeLessThanOrEqual(TURN_FRAMES);
+      expect(maxStepRatio(heights, start)).toBeLessThan(0.02);
+      // A zoom step: it eases in over ≈ zoomEaseSec and lands exactly, then still.
+      rig.zoomBy(cam.zoomStep);
+      const zoomed = changedFrames(rig, 4 * 60);
+      expect(zoomed[0]).toBe(1);
+      expect(zoomed.length).toBe(zoomed[zoomed.length - 1]);
+      expect(zoomed.length).toBeLessThan(2.5 * 60);
+      expect(rig.zoom).toBe(rig.zoomTarget);
+    });
+
+    it('in long sessions sheds whole turns off the yaw as a turn starts, never at rest', () => {
+      const rig = new CameraRig(cam);
+      rig.setFitBoxes(FIT);
+      rig.setAspect(1280, 800);
+      rig.update(0);
+      for (let k = 0; k < 40; k++) {
+        rig.rotate(-1);
+        const turn = changedFrames(rig, TURN_FRAMES + 30);
+        expect(turn[turn.length - 1]).toBeLessThanOrEqual(TURN_FRAMES);
+        expect(Math.abs(rig.yaw)).toBeLessThan(TAU * 4 + Math.PI);
+      }
+      // Ten whole turns later it frames exactly as at the start (up to the last bits of the angle).
+      const fresh = new CameraRig(cam);
+      fresh.setFitBoxes(FIT);
+      fresh.setAspect(1280, 800);
+      fresh.update(0);
+      pose(rig).forEach((v, i) => expect(v).toBeCloseTo(pose(fresh)[i], 9));
     });
   });
 });

@@ -223,6 +223,10 @@ export class ProgressStore {
       settings.reverseBeep = patch.reverseBeep;
       changed = true;
     }
+    if (typeof patch.targetHints === 'boolean' && patch.targetHints !== settings.targetHints) {
+      settings.targetHints = patch.targetHints;
+      changed = true;
+    }
     if (changed) this.save();
   }
 

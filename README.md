@@ -38,6 +38,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | R | Reiniciar nivel (mantener ~0,5 s si ya moviste una caja) |
 | M | Silencio |
 | B | Pitido de marcha atrás: sí / no (se guarda) |
+| P | Pistas: sí / no (se guarda; apagadas por defecto): mientras llevas una caja se iluminan los destinos que la aceptarían (ver **Pistas** abajo) |
 | T | Mostrar / ocultar tiempo |
 | N | Mostrar / ocultar movimientos |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
@@ -49,8 +50,12 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 distribución, y las del teclado numérico), igual que pellizcar en el trackpad o en la pantalla táctil. Sube y baja con
 suavidad, sin tirones ni rebote. Con
 el zoom a 1 se ve el almacén entero, como siempre (nunca se aleja más); acercada (hasta unas 2,5×) la cámara sigue a
-la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E, las bandas del HUD y el
-fundido de lo que tapa la carretilla siguen igual. El zoom se mantiene al reiniciar el nivel y vuelve a 1 al cambiar
+la carretilla sin salirse del almacén, y al alejarla del todo vuelve al plano completo. Q / E y el fundido de lo que
+tapa la carretilla siguen igual. **La cámara nunca se reencuadra sola**: solo se mueve cuando giras (Q / E), haces
+zoom o cambias el tamaño de la ventana (y, acercada, para seguir a la carretilla); ni las paredes que se hunden, ni el
+camión, ni la horquilla, ni la pista de controles la mueven. El almacén queda libre del HUD y de la pista tal como
+están al empezar el nivel, y al salir del título la cámara se asienta en su sitio con un único giro suave. El zoom se
+mantiene al reiniciar el nivel y vuelve a 1 al cambiar
 de nivel y en el título (su órbita lenta nunca se acerca). La **rueda del ratón sola no hace zoom**: sigue siendo de
 la horquilla (Ctrl + rueda, lo que manda un pellizco en el trackpad, sí acerca y aleja). La pista de controles lo
 recuerda con "+ − zoom" al final de su primera fila. Al soltar la tecla (o los dedos) la cámara se para
@@ -84,6 +89,16 @@ mínimo, o "✦ mínimo" en un tono suave si lo alcanzaste) y debajo, en pequeñ
 movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro, iluminado: siempre una sola fila, para
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
+
+**Pistas** (ajuste guardado, **apagadas por defecto**; **P** las enciende y las apaga, en el título y en la partida):
+una ayuda para quien la quiera. Encendidas, mientras llevas una caja se iluminan los destinos que la aceptarían: las
+zonas que la toman, el escalón de la receta que llenaría, los huecos y niveles del camión cuya pista encaja y, si
+ninguno libre la toma, muy suave los ocupados que la aceptarían (en cada apartado de abajo). Apagadas, al coger una caja
+no se ilumina nada: se deduce. Si las cambias con una caja en la horquilla, la luz entra o se va con suavidad. Lo demás
+no cambia: el destello y el brillo suave al dejar una caja en su sitio, el tono más hondo de una caja fija, el zumbido
+de una caja equivocada, el tono de la vista previa y el marco del hueco elegido. El pie del título dice "P activar
+pistas" (con una bombilla tachada) o "P pistas"; en la partida lo confirma un aviso breve ("Pistas: sí / no"). Un
+progreso guardado antes de este ajuste carga con las pistas apagadas.
 
 También se puede jugar con mando, aunque la pantalla solo indica teclado y ratón.
 
@@ -125,9 +140,10 @@ Hoy solo el Benchmark lo usa (los niveles 19–24 se retiraron para rehacerlos);
 
 Cada caja lleva un color y un símbolo (● ▲ ■ ◆ ✚) en la tapa. Cada zona pide un color (almohadilla de ese color),
 un símbolo (grabado grande sobre una almohadilla neutra) o los dos (esa caja exacta). Cuenta cualquier zona que
-acepte la caja; si otra se queda sin sitio, mueve la primera: mientras llevas una caja respiran las zonas libres que
-la aceptan y, si no queda ninguna, respiran muy suave las ocupadas que la aceptarían. Sin teclas nuevas. Encajar por
-color suena a campana, por símbolo a madera y la exacta a las dos. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
+acepte la caja; si otra se queda sin sitio, mueve la primera. Con las **pistas** encendidas (P; apagadas por defecto),
+mientras llevas una caja respiran las zonas libres que la aceptan y, si no queda ninguna, respiran muy suave las
+ocupadas que la aceptarían. Sin teclas nuevas. Encajar por color suena a campana, por símbolo a madera y la exacta a
+las dos. Reglas completas: [docs/SORTING.md](docs/SORTING.md).
 
 ## Estanterías almacenables (Benchmark, Modo prueba)
 
@@ -141,8 +157,9 @@ cuenta). Las pistas nunca se atenúan: ni sombras ni el fundido de la estanterí
 solo** reparto posible, así que se resuelve deduciendo; un hueco (o una zona) solo brilla con **su** caja: al dejarla,
 el brillo destella, se asienta suave y la caja toma un tono más hondo de su color y queda **fija** (ya no se coge ni
 admite nada encima). Otra caja, aunque encaje en la pista, suena con un zumbido suave y se puede volver a coger; nunca
-hay rojo (los huecos «libres» y el suelo no dicen nada). Mientras llevas una caja brillan con claridad los huecos y
-zonas cuya pista encaja. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
+hay rojo (los huecos «libres» y el suelo no dicen nada). Con las **pistas** encendidas (P; apagadas por defecto),
+mientras llevas una caja brillan con claridad los huecos y zonas cuya pista encaja; apagadas, solo te guían las pistas
+de los huecos. Todo esto, solo en los niveles con estanterías; los demás funcionan como siempre.
 
 Delante de una columna, **F / V** (o la rueda) suben y bajan la horquilla un hueco, con un clic
 suave; un marco tenue señala el hueco elegido y la vista previa se pone del tono de la caja si su pista encaja. Con la
@@ -164,7 +181,11 @@ puerta) y por nivel (abajo, el de la plataforma), con la pegatina de las estante
 atenúa ni sale en espejo. Los niveles del camión cuentan en el reparto único, igual que zonas y huecos: un nivel brilla
 y su caja queda fija solo con **su** caja y con todo lo de debajo bien; aun así se puede cargar el siguiente nivel
 encima. Cualquier otra caja (también una que encaje en la pista) suena con el zumbido suave y se puede volver a sacar
-marcha atrás. Mientras llevas una caja late el siguiente nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+marcha atrás. Con las **pistas** encendidas (P; apagadas por defecto), mientras llevas una caja late el siguiente
+nivel de cada columna cuya pista encaja. Sin teclas nuevas.
+A cada lado de la puerta, una **barandilla naranja** baja, de una casilla, con una planta detrás: al camión se llega de
+frente, desde la fila de detrás de la puerta, y hay que entrar bastante recto (muy torcida, la caja puede quedarse
+atascada en la puerta: marcha atrás y otra vez, alineada).
 Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas y contratos: [docs/DOCKS.md](docs/DOCKS.md).
 
 ## Sonidos de la carretilla
@@ -179,7 +200,9 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
 - **Marcha atrás**: un «tin… tin… tin» dulce y breve, como una campanita (un tono puro con un leve brillo de octava
   que se apaga solo en unos 0,3 s), uno por pulso y en la tonalidad de la música (620–880 Hz), mientras la carretilla
   retrocede de verdad. Suena a la altura de la música y se distingue por su timbre, nunca más fuerte que coger o dejar
-  una caja. **B** lo quita o lo vuelve a poner (se guarda; en la partida lo confirma un aviso breve).
+  una caja. **B** lo quita o lo vuelve a poner (se guarda; en la partida lo confirma un aviso breve). Con él se enciende
+  en el techo una lucecita ámbar que gira al compás, con un brillo cálido en el suelo detrás, y se apaga suave al
+  parar; se ve también con el pitido quitado o el sonido en silencio.
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y

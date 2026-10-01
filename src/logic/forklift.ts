@@ -1,4 +1,5 @@
 import { angleDelta, approach, clamp, damp, degToRad, TAU, wrapAngle } from '../core/math';
+import { nextReversing, signedSpeed01 } from '../core/reversing';
 import type { ForkliftState, Vec2 } from '../core/types';
 import type { GameConfig } from '../config';
 import type { CollisionWorld } from './collision';
@@ -188,6 +189,7 @@ export class ForkliftController {
       s.steer = damp(s.steer, clamp(error / STEER_FULL_ANGLE, -1, 1), STEER_LAMBDA, total);
     }
     this.blockFactor = this.measureBlockFactor(s.speed < 0 ? -1 : 1);
+    this.latchReversing();
   }
 
   /**
@@ -212,6 +214,16 @@ export class ForkliftController {
       s.steer = damp(s.steer, rate > 0 ? clamp(this.driveRate / rate, -1, 1) * travel : 0, STEER_LAMBDA, total);
     }
     this.blockFactor = this.measureBlockFactor(throttle < 0 || (throttle === 0 && s.speed < 0) ? -1 : 1);
+    this.latchReversing();
+  }
+
+  /**
+   * The shared reversing latch (core/reversing) on the speed this step ended with: `ForkliftState.reversing`, what the
+   * reverse beeper and the roof beacon follow. Every call, a zero-length one too (the latch holds on the same speed).
+   */
+  private latchReversing(): void {
+    const s = this.state;
+    s.reversing = nextReversing(s.reversing === true, signedSpeed01(s.speed, this.tuning.maxSpeed));
   }
 
   private substep(dt: number, hasMove: boolean, target: number, magnitude: number): void {

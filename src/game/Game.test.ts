@@ -43,6 +43,8 @@ const fakes = vi.hoisted(() => {
     zoomResets: 0,
     /** Every AudioEngine.setReverseBeep call (the «pitido» setting handed to audio), oldest first. */
     beepCalls: [] as boolean[],
+    /** Every GameRenderer.setTargetHints call (the «pistas» setting handed to the renderer), oldest first. */
+    hintCalls: [] as boolean[],
   };
 
   class FakeGameState {
@@ -103,6 +105,9 @@ const fakes = vi.hoisted(() => {
       return sim.yaw;
     }
     setIdleOrbit() {}
+    setTargetHints(on: boolean) {
+      sim.hintCalls.push(on);
+    }
     dispose() {}
   }
 
@@ -199,6 +204,7 @@ beforeEach(() => {
   sim.zoomSteps.length = 0;
   sim.zoomResets = 0;
   sim.beepCalls.length = 0;
+  sim.hintCalls.length = 0;
   win = fakeWindow();
   rafCallback = null;
   now = 1000;
@@ -694,6 +700,60 @@ describe('Game settings keys and other tabs', () => {
     const { store } = setup();
     expect(store.get()).toMatchObject({ reverseBeep: true, muted: false, showTimer: true });
     expect(sim.beepCalls).toEqual([true]);
+  });
+
+  it('P turns the target hints on / off on the title, while playing and on the card, persisted; the renderer follows', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    const savedHints = () => (JSON.parse(items.get('toro.progress.v1') ?? '{}').settings ?? {}).targetHints;
+    const first = setup();
+    expect(first.store.get().targetHints).toBe(false); // off by default: pure deduction
+    expect(sim.hintCalls).toEqual([false]); // the saved setting reaches the renderer at mount
+    tap('KeyP', 'p'); // on the title (the footer wording answers)
+    expect(first.store.get()).toMatchObject({ screen: 'title', targetHints: true });
+    expect(sim.hintCalls.at(-1)).toBe(true);
+    expect(savedHints()).toBe(true);
+    first.game.start(0);
+    const loads = sim.states.length;
+    tap('KeyP', 'p'); // while playing (the notice pill answers): the level on screen is kept, only its lights change
+    expect(first.store.get()).toMatchObject({ screen: 'playing', targetHints: false });
+    expect(sim.states).toHaveLength(loads);
+    expect(sim.hintCalls.at(-1)).toBe(false);
+    expect(savedHints()).toBe(false);
+    // Its own setting: B, T and M leave it alone, and it leaves them alone.
+    tap('KeyB', 'b');
+    tap('KeyT', 't');
+    tap('KeyM', 'm');
+    expect(first.store.get()).toMatchObject({ targetHints: false, reverseBeep: false, showTimer: false, muted: true, showMoves: true });
+    tap('KeyP', 'p');
+    expect(first.store.get()).toMatchObject({ targetHints: true, reverseBeep: false, showTimer: false, muted: true });
+    // On the completion card too, like B / T / N.
+    emit({ type: 'firstInput' });
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(first.store.get().screen).toBe('complete');
+    tap('KeyP', 'p');
+    expect(first.store.get()).toMatchObject({ screen: 'complete', targetHints: false });
+    first.game.toggleHints(); // the action itself (GameActions)
+    expect(first.store.get().targetHints).toBe(true);
+    expect(sim.hintCalls.slice(1)).toEqual([true, false, true, false, true]);
+    first.game.dispose();
+
+    sim.hintCalls.length = 0;
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ targetHints: true, reverseBeep: false, muted: true });
+    expect(sim.hintCalls).toEqual([true]);
+  });
+
+  it('a save from before the hints toggle loads with the hints off', () => {
+    savedGame({ rankings: {}, highestUnlocked: 0, lastLevel: 0, settings: { muted: false, showTimer: true, reverseBeep: false } });
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ targetHints: false, reverseBeep: false, muted: false });
+    expect(sim.hintCalls).toEqual([false]);
   });
 
   it('refreshes the title summaries when another tab writes the progress key', () => {

@@ -496,7 +496,7 @@
   opacity: 0.6;
 }
 
-/* ---------- Sound notice (M or B pressed in a level) ----------------------- */
+/* ---------- Sound notice (M, B or P pressed in a level) -------------------- */
 
 /* Brief top-center pill in the HUD's style; it fades away on its own (the HUD stays three items). */
 .notice {

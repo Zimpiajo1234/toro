@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useStore, type Store } from '../core/store';
 import { BENCHMARK_TIP, TEST_MODE_TIP } from './format';
-import { BellIcon, SoundIcon, ToroMark } from './icons';
+import { BellIcon, BulbIcon, SoundIcon, ToroMark } from './icons';
 import { onScreen, useAutoFocus } from './interaction';
 import { Keycap } from './Keycap';
 import { LevelCaption, LevelDots, SpecialCaption } from './LevelDots';
@@ -47,6 +47,10 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
             ·
           </span>
           <BeepHint store={store} />
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
+          <TargetHintsHint store={store} />
           <span className="title__sep" aria-hidden="true">
             ·
           </span>
@@ -141,6 +145,22 @@ function BeepHint({ store }: { store: Store<UIState> }) {
     <span key={on ? 'on' : 'off'} className="ui-swap">
       {!on && <BellIcon className="title__footer-icon" off />}
       <Keycap>B</Keycap> {on ? 'pitido' : 'activar pitido'}
+    </span>
+  );
+}
+
+/**
+ * Footer hint for the optional target hints (P: «pistas», off by default: the destinations of the carried box light
+ * up). Worded like the beep hint: off, a quiet crossed bulb and how to turn them on; on, just their name. P on the title
+ * answers here.
+ */
+function TargetHintsHint({ store }: { store: Store<UIState> }) {
+  const on = useStore(store, (s) => s.targetHints);
+  return (
+    // Keyed so the new wording eases in.
+    <span key={on ? 'on' : 'off'} className="ui-swap">
+      {!on && <BulbIcon className="title__footer-icon" off />}
+      <Keycap>P</Keycap> {on ? 'pistas' : 'activar pistas'}
     </span>
   );
 }

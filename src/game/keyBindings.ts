@@ -10,6 +10,8 @@ export type CommandBinding =
   | 'moves'
   /** Turn the reverse beeper on / off (B: «bip»; it was free, and like M / T / N it is a setting, not a control). */
   | 'beep'
+  /** Turn the optional target hints on / off (P: «pistas»; it was free, and like B it is a setting, not a control). */
+  | 'hints'
   | 'confirm'
   | 'back'
   /** "Modo prueba" only: previous / next level ([ / ], PageUp / PageDown). */
@@ -44,6 +46,7 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['KeyT', 'timer'],
   ['KeyN', 'moves'],
   ['KeyB', 'beep'],
+  ['KeyP', 'hints'],
   ['Enter', 'confirm'],
   ['NumpadEnter', 'confirm'],
   ['Escape', 'back'],
@@ -80,6 +83,7 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['t', 'timer'],
   ['n', 'moves'],
   ['b', 'beep'],
+  ['p', 'hints'],
   ['enter', 'confirm'],
   ['escape', 'back'],
   ['esc', 'back'],

@@ -16,6 +16,11 @@ export interface Settings {
   testMode: boolean;
   /** The reverse beeper ("tin… tin…" while backing up; B toggles it). Additive field, default on. */
   reverseBeep: boolean;
+  /**
+   * The optional target hints («pistas»; P toggles them): while a box is carried, the destinations that would take it
+   * light up. Additive field, default off (pure deduction; whoever wants the help turns it on).
+   */
+  targetHints: boolean;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = {
@@ -24,6 +29,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = {
   showMoves: true,
   testMode: false,
   reverseBeep: true,
+  targetHints: false,
 };
 
 /**
@@ -136,7 +142,7 @@ export function parseProgress(json: string | null): ProgressModel {
   if (isValidIndex(raw.lastLevel)) progress.lastLevel = raw.lastLevel;
   if (typeof raw.lastLevelId === 'string' && raw.lastLevelId !== '') progress.lastLevelId = raw.lastLevelId;
   if (isRecord(raw.settings)) {
-    const { muted, showTimer, showMoves, testMode, reverseBeep } = raw.settings;
+    const { muted, showTimer, showMoves, testMode, reverseBeep, targetHints } = raw.settings;
     if (typeof muted === 'boolean') progress.settings.muted = muted;
     if (typeof showTimer === 'boolean') progress.settings.showTimer = showTimer;
     // Additive field (same version): saves written before the move counter lack it (default shown).
@@ -145,6 +151,8 @@ export function parseProgress(json: string | null): ProgressModel {
     if (typeof testMode === 'boolean') progress.settings.testMode = testMode;
     // Additive field (same version): saves written before the beep toggle lack it (default on).
     if (typeof reverseBeep === 'boolean') progress.settings.reverseBeep = reverseBeep;
+    // Additive field (same version): saves written before the hints toggle lack it (default off).
+    if (typeof targetHints === 'boolean') progress.settings.targetHints = targetHints;
   }
   return progress;
 }

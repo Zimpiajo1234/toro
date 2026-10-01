@@ -388,6 +388,7 @@ describe('LevelView: stacks', () => {
     const state = new GameState(STACK_LEVEL);
     const snap = state.getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    view.setTargetHints(true); // the optional target hints (P) light it
     const [step0, step1] = zoneGroup(view, 'z').children.slice(-2).map((m) => (m as Mesh).material as MeshStandardMaterial);
     run(state, view, 1);
     expect(step1.emissiveIntensity).toBe(0); // nothing carried: no cue
@@ -607,6 +608,7 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
   it('while carrying, the free zones that accept the box breathe; the others stay still', () => {
     const snap = new GameState(SAMPLE).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    view.setTargetHints(true); // the optional target hints (P)
     carry(snap, boxOf(snap, 'blue', 'triangle'));
     const peak = peakGlow(view, snap, 3);
     for (const id of [zoneOf(snap, undefined, 'triangle', 0).id, zoneOf(snap, undefined, 'triangle', 1).id, zoneOf(snap, 'blue', undefined).id])
@@ -619,6 +621,7 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
     // The trap of the sample: blue ▲ in "any blue", blue ■ and mint ▲ home, blue ● on the forks.
     const snap = new GameState(SAMPLE).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    view.setTargetHints(true); // the optional target hints (P)
     const anyBlue = zoneOf(snap, 'blue', undefined);
     rest(boxOf(snap, 'blue', 'triangle'), anyBlue);
     rest(boxOf(snap, 'blue', 'square'), zoneOf(snap, 'blue', 'square'));
@@ -641,9 +644,11 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
   });
 
   it('classic levels never show the swap hint', () => {
-    // Blue box carried, its only zone taken by the mint box: nothing breathes (as before the sorting chapter).
+    // Blue box carried, its only zone taken by the mint box: nothing breathes (as before the sorting chapter), even with
+    // the optional target hints (P) on.
     const snap = snapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    view.setTargetHints(true);
     const [blueZone] = snap.zones;
     const mint = snap.boxes[1];
     Object.assign(mint, { cell: { ...blueZone.cell }, pos: { ...blueZone.pos }, zoneId: blueZone.id });

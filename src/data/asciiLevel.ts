@@ -1536,6 +1536,25 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
       reason: `esta columna del camión «${truck?.def.char ?? '?'}» tiene ${m[3]} niveles y limit es ${m[4]}: sube «limit» (hasta ${MAX_TRUCK_LEVELS}) o quítale niveles`,
     };
   }
+  if ((m = /^trucks\[(\d+)\] needs a static obstacle beside its dock door at (\d+),(\d+) for its guard rail, but that is the dock door of trucks\[(\d+)\]/.exec(message))) {
+    const [truck, other] = [ctx.trucks[Number(m[1])], ctx.trucks[Number(m[4])]];
+    return {
+      pos: ctx.cell(Number(m[2]), Number(m[3])),
+      reason: `dos puertas de muelle no van pegadas: a cada lado de una puerta va una barandilla naranja con un obstáculo fijo detrás, y aquí, junto a la puerta del camión «${truck?.def.char ?? '?'}», está la del camión «${other?.def.char ?? '?'}»: deja entre las dos una casilla con una planta «p»`,
+    };
+  }
+  if ((m = /^trucks\[(\d+)\] needs a static obstacle beside its dock door at (\d+),(\d+)/.exec(message)))
+    return {
+      pos: ctx.cell(Number(m[2]), Number(m[3])),
+      reason: `junto a la puerta del camión «${ctx.trucks[Number(m[1])]?.def.char ?? '?'}» va una barandilla naranja (sale sola, no se escribe) y esta casilla, detrás de ella a lo largo del muro, tiene que ser un obstáculo fijo: pon una planta «p» (o una estantería)`,
+    };
+  if ((m = /^racks\[(\d+)\] column (\d+) is loaded from the dock door of trucks\[(\d+)\], across its guard rail/.exec(message))) {
+    const rack = ctx.racks[Number(m[1])];
+    return {
+      pos: rack?.columns[Number(m[2])] ?? rack?.cell ?? ctx.title,
+      reason: `la estantería «${rack?.def.char ?? '?'}» se cargaría desde la puerta del camión «${ctx.trucks[Number(m[3])]?.def.char ?? '?'}», pero entre las dos va la barandilla naranja de la puerta: gira la estantería para que su frente no dé a la puerta`,
+    };
+  }
   if ((m = /^decor\.windows\[(\d+)\] overlaps the dock door of trucks\[(\d+)\]/.exec(message)))
     return {
       pos: ctx.windows,

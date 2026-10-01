@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LevelCaption } from './LevelDots';
 import { Overlay } from './Overlay';
-import { beepNoticeText, soundNotice, soundNoticeText } from './SoundNotice';
+import { NoticeIcon, beepNoticeText, hintsNotice, hintsNoticeText, soundNotice, soundNoticeText } from './SoundNotice';
 import { createUIStore, type GameActions, type LevelResult, type UIState } from './uiState';
 
 const noopActions: GameActions = {
@@ -13,6 +13,7 @@ const noopActions: GameActions = {
   toTitle() {},
   toggleMute() {},
   toggleReverseBeep() {},
+  toggleHints() {},
   toggleTimer() {},
   toggleMoves() {},
   toggleTestMode() {},
@@ -138,6 +139,28 @@ describe('Overlay', () => {
     // The saved state is never announced on load.
     expect(off).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
     expect(off).not.toContain('Pitido de marcha atrás');
+  });
+
+  it('title footer names P for the target hints right after B: off by default ("activar pistas"), "pistas" when on', () => {
+    const off = render({ screen: 'title' });
+    // Off (the default): a quiet crossed bulb and the way to turn them on, like "B activar pitido".
+    expect(off).toMatch(/<span class="ui-swap"><svg class="title__footer-icon"[^>]*>.*?<\/svg><kbd class="keycap">P<\/kbd> activar pistas<\/span>/);
+    expect(off.indexOf('B</kbd> pitido')).toBeLessThan(off.indexOf('P</kbd> activar pistas'));
+    expect(off.indexOf('P</kbd> activar pistas')).toBeLessThan(off.indexOf('T</kbd> tiempo'));
+    // Only its own icon: the default footer shows no other crossed icon (mute and beep are on).
+    expect(off.match(/class="title__footer-icon"/g)).toHaveLength(1);
+    const on = render({ screen: 'title', targetHints: true });
+    expect(on).toContain('<span class="ui-swap"><kbd class="keycap">P</kbd> pistas</span>');
+    expect(on).not.toContain('activar pistas');
+    expect(on).not.toContain('class="title__footer-icon"');
+    expect(on).toContain('B</kbd> pitido'); // the beep is its own setting
+    // The saved state is never announced on load.
+    for (const html of [off, on]) {
+      expect(html).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
+      expect(html).not.toContain('Pistas:');
+    }
+    // In a level nothing names P (the notice pill confirms a press there).
+    expect(render({ screen: 'playing', targetHints: true })).not.toContain('<kbd class="keycap">P</kbd>');
   });
 
   it('caption never shows a locked level as available', () => {
@@ -473,8 +496,25 @@ describe('Overlay: move counter', () => {
   });
 });
 
-describe('Sound notice (M, B)', () => {
+describe('Sound notice (M, B, P)', () => {
   const sound = (muted: boolean, reverseBeep: boolean) => ({ muted, reverseBeep });
+
+  it('confirms the target hints (P) with a pill of their own: "Pistas: sí / no" and the bulb, crossed when off', () => {
+    expect(hintsNoticeText(true)).toBe('Pistas: sí');
+    expect(hintsNoticeText(false)).toBe('Pistas: no');
+    expect(hintsNotice(false, false)).toBeNull();
+    expect(hintsNotice(false, true)).toEqual({ kind: 'hints', text: 'Pistas: sí', off: false });
+    expect(hintsNotice(true, false)).toEqual({ kind: 'hints', text: 'Pistas: no', off: true });
+    // The pill's icon: a bulb (its own shape, not the bell or the speaker), crossed out only when the hints go off.
+    const bulb = (off: boolean) => renderToStaticMarkup(createElement(NoticeIcon, { kind: 'hints', off }));
+    const bell = renderToStaticMarkup(createElement(NoticeIcon, { kind: 'beep', off: false }));
+    const speaker = renderToStaticMarkup(createElement(NoticeIcon, { kind: 'sound', off: false }));
+    expect(bulb(false)).toMatch(/^<svg class="notice__icon"[^>]*aria-hidden="true"/);
+    expect(bulb(false)).not.toBe(bell);
+    expect(bulb(false)).not.toBe(speaker);
+    expect(bulb(true)).toContain('<path d="M5 5l14 14"></path>');
+    expect(bulb(false)).not.toContain('M5 5l14 14');
+  });
 
   it('names the setting that changed, in Spanish: the mute, or the reverse beeper', () => {
     expect(soundNoticeText(true)).toBe('Sonido desactivado');
@@ -489,9 +529,10 @@ describe('Sound notice (M, B)', () => {
   });
 
   it('shows nothing until a toggle: saved settings are never announced when a level loads', () => {
-    const html = render({ screen: 'playing', muted: true, reverseBeep: false });
+    const html = render({ screen: 'playing', muted: true, reverseBeep: false, targetHints: true });
     expect(html).toContain('<p class="ui-visually-hidden" role="status" aria-live="polite"></p>');
     expect(html).not.toContain('Pitido de marcha atrás');
+    expect(html).not.toContain('Pistas:');
     expect(html).not.toContain('class="hud-pill notice');
   });
 });

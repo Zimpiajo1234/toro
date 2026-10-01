@@ -9,7 +9,7 @@ import { GLYPH_SYMMETRY, glyphShape } from '../glyphs';
 import { PartList } from '../paint';
 import { flatShapeGeometry } from '../shapes';
 import { BOX_BUILDERS, SYMBOL_RATIO, buildBoxGeometry } from './box';
-import { FORKLIFT_LAYOUT, buildForkliftGeometry } from './forklift';
+import { BEACON, BEACON_LIGHT_Y, FORKLIFT_LAYOUT, buildForkliftGeometry } from './forklift';
 import { PANEL_HEIGHT, SLOT_GLOW, buildSlotGlowGeometry } from './rack';
 import { ENGRAVE, RECIPE_MARKER, buildHaloGeometry, buildRecipeGeometry, buildZoneGeometry, recipeStepY } from './zone';
 
@@ -213,6 +213,112 @@ describe('forklift geometry', () => {
     expect(wheel.min.y).toBeLessThan(-GAME_CONFIG.forklift.wheelRadius + 0.01);
     expect(wheel.min.y).toBeGreaterThanOrEqual(-GAME_CONFIG.forklift.wheelRadius - 1e-6);
     expect(FORKLIFT_LAYOUT.trackHalf).toBeLessThan(GAME_CONFIG.forklift.bodyRadius);
+  });
+
+  describe('reverse beacon', () => {
+    const f = GAME_CONFIG.forklift;
+    const geo = buildForkliftGeometry(defaultTheme, { wheelRadius: f.wheelRadius, forkReach: f.forkReach, boxSize: GAME_CONFIG.box.size });
+    const B = BEACON;
+    const same = (col: { getX(i: number): number; getY(i: number): number; getZ(i: number): number }, i: number, c: Color) =>
+      Math.abs(col.getX(i) - c.r) < 1e-4 && Math.abs(col.getY(i) - c.g) < 1e-4 && Math.abs(col.getZ(i) - c.b) < 1e-4;
+    /** Every triangle of a flat light piece faces up (the materials draw front faces only). */
+    const facesUp = (g: BufferGeometry) => {
+      const p = g.getAttribute('position');
+      for (let i = 0; i < p.count; i += 3) {
+        const ax = p.getX(i + 1) - p.getX(i), az = p.getZ(i + 1) - p.getZ(i);
+        const bx = p.getX(i + 2) - p.getX(i), bz = p.getZ(i + 2) - p.getZ(i);
+        expect(az * bx - ax * bz, `triangle ${i / 3}`).toBeGreaterThan(0);
+        for (let k = 0; k < 3; k++) expect(p.getY(i + k)).toBe(0);
+      }
+    };
+
+    it('sits on the roof’s rear edge: a slate base and a small amber glass dome, centred, on its flat top', () => {
+      const glass = new Color(defaultTheme.forklift.beacon);
+      const pos = geo.chassis.getAttribute('position');
+      const col = geo.chassis.getAttribute('color');
+      let verts = 0;
+      for (let i = 0; i < pos.count; i++) {
+        if (!same(col, i, glass)) continue;
+        verts++;
+        expect(pos.getY(i)).toBeGreaterThanOrEqual(B.roofTop + B.baseHeight - 1e-6);
+        expect(pos.getY(i)).toBeLessThanOrEqual(BEACON_LIGHT_Y + B.lensRadius + 1e-6);
+        expect(Math.hypot(pos.getX(i), pos.getZ(i) - B.z)).toBeLessThanOrEqual(B.lensRadius + 1e-6);
+      }
+      expect(verts).toBeGreaterThan(20);
+      // Over the roof's flat top (0.58 × 0.64, corner radius 0.025, centred at z −0.03), near its rear edge.
+      expect(B.z - B.baseRadius).toBeGreaterThan(-0.35 + 0.025);
+      expect(B.z).toBeLessThan(-0.2);
+      expect(bounds(geo.chassis).max.y).toBeCloseTo(BEACON_LIGHT_Y + B.lensRadius, 3);
+    });
+
+    it('lights as a shell just outside the glass, two soft opposite beams and a feathered glow, all RGBA and facing up', () => {
+      const light = new Color(defaultTheme.forklift.beaconLight);
+      // The lit shell: over the glass (local origin at the light), down to the base.
+      const lamp = bounds(geo.beaconLamp);
+      expect(lamp.max.x).toBeCloseTo(B.lensRadius + B.lampGap, 3);
+      expect(lamp.min.y).toBeCloseTo(-B.lensWall, 6);
+      expect(lamp.max.y).toBeCloseTo(B.lensRadius + B.lampGap, 3);
+      const lampCol = geo.beaconLamp.getAttribute('color');
+      expect(lampCol.itemSize).toBe(4);
+      for (let i = 0; i < lampCol.count; i++) {
+        expect(same(lampCol, i, light)).toBe(true);
+        expect(lampCol.getW(i)).toBe(1);
+      }
+
+      // The beams: one each way along z at rest, strongest by the lamp on their axis, gone at their tips and edges.
+      facesUp(geo.beaconBeam);
+      const beam = geo.beaconBeam.getAttribute('position');
+      const beamCol = geo.beaconBeam.getAttribute('color');
+      expect(beamCol.itemSize).toBe(4);
+      const r0 = B.lensRadius + B.lampGap;
+      /** Share of the way from the lamp to the tip, and the beam's half-width there. */
+      const along = (z: number) => (Math.abs(z) - r0) / (B.beamReach - r0);
+      const halfWidth = (z: number) => B.beamRoot + (B.beamTip - B.beamRoot) * along(z);
+      const ends = new Set<number>();
+      let strongest = 0;
+      for (let i = 0; i < beam.count; i++) {
+        const x = beam.getX(i), z = beam.getZ(i), a = beamCol.getW(i);
+        expect(same(beamCol, i, light)).toBe(true);
+        expect(along(z)).toBeGreaterThanOrEqual(-1e-6);
+        expect(along(z)).toBeLessThanOrEqual(1 + 1e-6);
+        expect(Math.abs(x)).toBeLessThanOrEqual(halfWidth(z) + 1e-6);
+        if (along(z) > 1 - 1e-6 || Math.abs(x) > halfWidth(z) - 1e-6) expect(a, `tip or edge ${x}, ${z}`).toBe(0);
+        if (along(z) < 1e-6 && x === 0) strongest = Math.max(strongest, a);
+        ends.add(Math.sign(z));
+      }
+      expect([...ends].sort()).toEqual([-1, 1]);
+      expect(strongest).toBe(1);
+
+      // The floor glow: 1 at its centre easing to 0 at its rim, its half axes as set.
+      facesUp(geo.beaconGlow);
+      const glow = bounds(geo.beaconGlow);
+      expect(glow.max.x).toBeCloseTo(B.glowHalfX, 3);
+      expect(glow.max.z).toBeCloseTo(B.glowHalfZ, 3);
+      const glowCol = geo.beaconGlow.getAttribute('color');
+      const glowPos = geo.beaconGlow.getAttribute('position');
+      for (let i = 0; i < glowPos.count; i++) {
+        const s = Math.hypot(glowPos.getX(i) / B.glowHalfX, glowPos.getZ(i) / B.glowHalfZ);
+        if (s < 1e-6) expect(glowCol.getW(i)).toBe(1);
+        if (s > 1 - 1e-6) expect(glowCol.getW(i)).toBeCloseTo(0, 6);
+      }
+      // Behind the rig: its far rim well past the counterweight (≈ −0.48), its near rim hidden under the body.
+      expect(B.glowZ - B.glowHalfZ).toBeLessThan(-0.9);
+      expect(B.glowZ + B.glowHalfZ).toBeGreaterThan(-0.48);
+    });
+
+    it('is a warm pastel-leaning amber: clearly apart from every yellow tone, and never red', () => {
+      const hsl = (hex: string) => new Color(hex).getHSL({ h: 0, s: 0, l: 0 }, 'srgb');
+      const yellows = [defaultTheme.boxes.yellow.base, defaultTheme.boxes.yellow.locked, defaultTheme.boxes.yellow.tape, defaultTheme.zones.yellow.glow];
+      for (const hex of [defaultTheme.forklift.beacon, defaultTheme.forklift.beaconLight]) {
+        const { h, s, l } = hsl(hex);
+        expect(h * 360, hex).toBeGreaterThan(26); // orange-amber, far from red and coral (≈ 6°)
+        expect(h * 360, hex).toBeLessThan(38);
+        for (const y of yellows) expect(Math.abs(hsl(y).h - h) * 360, `${hex} vs ${y}`).toBeGreaterThan(7);
+        expect(s, hex).toBeGreaterThan(0.6);
+        expect(l, hex).toBeGreaterThan(0.65);
+        expect(l, hex).toBeLessThan(0.85);
+      }
+    });
   });
 });
 

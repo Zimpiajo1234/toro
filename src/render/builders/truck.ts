@@ -1,4 +1,5 @@
 import { CylinderGeometry, type BufferGeometry, type Vector3 } from 'three';
+import type { DockRail } from '../../core/docks';
 import { clamp } from '../../core/math';
 import type { LevelData, LevelTruck, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
@@ -19,6 +20,8 @@ import { DOOR, dockSpan } from './walls';
  * beyond (−1 < z < 0: a loaded box spans z −0.89‥−0.11, its inner end inside the door opening).
  * - buildDockPlate (flat, never in the way): the slate dock plate across the wall thickness in the door opening, a
  *   bevelled lip onto the floor and a lap onto the truck's bed, a hinge and a few treads.
+ * - buildDockRails: a low orange guard rail at each end of the door run, from the door frame straight into the room
+ *   over its door cells (0 < z < 1), on the door's jamb line: two posts with cream caps and two bars (RAIL).
  * - buildTruckBody: a low open flatbed level with the floor (DOCK.bedTop), low drop sides at both ends of the door run
  *   and a headboard by the cab (nothing over or between its bed columns: no posts, rails or boards), the chassis, an
  *   under-run bumper, the wheels, the cab-over cab facing away, and the driveway a step down (the dock pit) with its
@@ -113,6 +116,16 @@ export const SIGN_GLOW: GlowFrameDims & { halfH: number; gap: number } = {
 
 /** Success burst of a truck level (LevelView): its ring hugs the box's face on the door plane. */
 export const TRUCK_BURST = { halfW: 0.44 } as const;
+
+/**
+ * Guard rail of a dock door (buildDockRails), dock-local, inside the footprint the logic gives it (core/docks DockRail:
+ * DOCK_RAIL.thickness from the door's jamb line outward, from the wall's inner face to one cell in): two posts `post`
+ * deep, one against the door frame (which stands DOOR.proud off the wall) and one at the inner end, up to `top`, each
+ * with a cream cap `cap` high that overhangs it by `capOver`; two bars between them, `bar` high, their bottoms at
+ * `bars`, `barInset` inside the rail's faces. Low: well under a carried box (its top ≈ 0.98), so it never hides the
+ * load, a box on the door cells or the sign.
+ */
+export const RAIL = { post: 0.06, top: 0.5, cap: 0.03, capOver: 0.008, bar: 0.045, barInset: 0.01, bars: [0.2, 0.41] } as const;
 
 /** Dock-local → world: its wall's own transform (builders/walls wallLayouts). */
 export function dockPlacement(wall: WallSide, level: Pick<LevelData, 'size'>): Placement {
@@ -238,6 +251,41 @@ export function buildDockPlate(truck: LevelTruck, level: Pick<LevelData, 'size'>
     local.block(c.trim, d0 + 0.05, d1 - 0.05, P.top, P.top + P.tread, z - 0.008, z + 0.008);
   }
   return new PartList().append(local, dockPlacement(truck.wall, level)).build();
+}
+
+/**
+ * Guard rails of a dock door (the DockRail list of one truck, core/docks dockRailsOf), in world space: per rail, an
+ * orange post against the door frame and one at the rail's inner end, each under a cream cap, and two orange bars
+ * between them (RAIL), all within the footprint the logic gives the rail (a static obstacle). Static and low; it casts
+ * and takes shadows like the other props.
+ */
+export function buildDockRails(rails: readonly DockRail[], level: Pick<LevelData, 'size'>, theme: Theme): BufferGeometry {
+  const c = theme.truck;
+  const R = RAIL;
+  const out = new PartList();
+  for (const rail of rails) {
+    // Along the wall in dock-local x (a west dock's runs the other way: local x = depth − z, see dockSpan).
+    const along = (u: number) => (rail.wall === 'north' ? u : level.size.depth - u);
+    const u0 = Math.min(along(rail.line), along(rail.outer));
+    const u1 = Math.max(along(rail.line), along(rail.outer));
+    // Into the room: from the face of the door frame (proud of the wall's inner face) to the inner end.
+    const z0 = rail.from + DOOR.proud;
+    const z1 = rail.to;
+    const local = new PartList();
+    for (const [p0, p1] of [
+      [z0, z0 + R.post],
+      [z1 - R.post, z1],
+    ] as const) {
+      local.block(c.rail, u0, u1, 0, R.top, p0, p1);
+      // The cap overhangs the post, except over the frame and past the rail's inner end.
+      const c0 = p0 > z0 ? p0 - R.capOver : p0;
+      const c1 = p1 < z1 ? p1 + R.capOver : p1;
+      local.block(c.railCap, u0 - R.capOver, u1 + R.capOver, R.top, R.top + R.cap, c0, c1);
+    }
+    for (const y of R.bars) local.block(c.rail, u0 + R.barInset, u1 - R.barInset, y, y + R.bar, z0 + R.post, z1 - R.post);
+    out.append(local, dockPlacement(rail.wall, level));
+  }
+  return out.build();
 }
 
 /**

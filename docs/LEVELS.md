@@ -147,6 +147,14 @@ muro, como una pila del suelo, de abajo arriba: la carga y la horquilla cruzan l
 muro. Cada nivel lleva su pista (en un cartel sobre la puerta) y es un objetivo más del reparto único. Las cajas del
 camión se numeran después de las de las estanterías; los camiones, `t1, t2…` (nunca el id de una estantería).
 
+**Casillas laterales**: cada puerta lleva sola, a cada lado, una barandilla naranja baja de una casilla (no se escribe
+en el mapa). La casilla de al lado de cada extremo de la tirada, a lo largo del muro (en el muelle norte, la de la
+izquierda y la de la derecha en la fila 0; en el oeste, la de arriba y la de abajo en la columna 0), queda detrás de la
+barandilla y tiene que ser un **obstáculo fijo**: una planta `p` (o una estantería de madera, o una estantería
+almacenable que no dé a la puerta). Si la tirada llega a un rincón del almacén, ese lado no tiene casilla lateral. Dos
+puertas pegadas no valen: entre ellas va al menos una casilla con un obstáculo. Así al camión solo se llega de frente,
+desde la fila (o columna) de detrás de la puerta. Ejemplo: `0 .pTTp...` (la puerta en 2–3, plantas en 1 y 4).
+
 ## Reglas que conviene saber
 
 - **Estanterías**: cada grupo conectado de un mismo carácter es una estantería y tiene que ser un rectángulo. Dos

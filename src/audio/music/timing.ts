@@ -1,6 +1,8 @@
-/** Musical grid shared by the composer (steps) and the player (seconds). */
+/** Musical grid shared by the composer (steps) and the player (seconds), on the song's tempo (core/tempo `BPM`). */
 
-export const BPM = 70;
+import { BPM } from '../../core/tempo';
+
+export { BPM };
 export const STEPS_PER_BEAT = 4;
 export const STEPS_PER_BAR = 16;
 /** Duration of one 16th-note step, seconds. */

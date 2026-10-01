@@ -69,7 +69,7 @@ export class TruckView {
     plateGeometry.computeBoundingBox();
     bodyGeometry.computeBoundingBox();
     this.bounds.copy(plateGeometry.boundingBox!).union(bodyGeometry.boundingBox!).union(this.sign.bounds);
-    this.fitBox = { min: this.bounds.min.clone(), max: this.bounds.max.clone(), heightScale: 1 };
+    this.fitBox = { min: this.bounds.min.clone(), max: this.bounds.max.clone() };
     const sign = this.sign;
     this.occluder = {
       bounds: sign.bounds,

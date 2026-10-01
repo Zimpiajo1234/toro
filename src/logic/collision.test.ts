@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { DOCK_RAIL, dockRailsOf } from '../core/docks';
 import type { BoxState, LevelData } from '../core/types';
-import { BOX_SETTLE_SPEED, circleRectContact, CollisionWorld, createContact, DOOR_JAMB, pointRectDistance, type Rect } from './collision';
+import { LEVELS } from '../data/levels';
+import {
+  BOX_SETTLE_SPEED,
+  circleRectContact,
+  CollisionWorld,
+  createContact,
+  DOOR_JAMB,
+  PLANT_SIZE,
+  pointRectDistance,
+  railRect,
+  type Rect,
+} from './collision';
 
 const BOUNDS: Rect = { minX: -5, minZ: -5, maxX: 5, maxZ: 5 };
 
@@ -279,6 +291,69 @@ describe('CollisionWorld dock doors (docs/DOCKS.md)', () => {
     // Out-of-range columns are ignored.
     world.setDoorOpen(5, true);
     expect(world.isDoorOpen(5)).toBe(false);
+  });
+
+  it('the guard rails beside a door: static on its jamb line from the wall one cell in, for the body, the load and the fork point', () => {
+    // Door cells (2,0) and (3,0): world x −1‥1; the rails stand at x −1 + J (west) and 1 − J (east), from the wall's
+    // inner face (z = −2) to the end of the door cells (z = −1), DOCK_RAIL.thickness thick outward.
+    const level = room([{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }], [{ color: 'mint' }]] }]);
+    const world = CollisionWorld.fromLevel(level, 0.78);
+    const T = DOCK_RAIL.thickness;
+    expect(dockRailsOf(level).map((r) => railRect(r, 3, 2))).toEqual([
+      { minX: -1 + DOOR_JAMB - T, minZ: -2, maxX: -1 + DOOR_JAMB, maxZ: -1 },
+      { minX: 1 - DOOR_JAMB, minZ: -2, maxX: 1 - DOOR_JAMB + T, maxZ: -1 },
+    ]);
+    // The body on a door cell has a few cm of play to the rail (0.06), the load 0.02: both meet it like a wall.
+    expect(world.deepestContact(-0.5, -1.5, 0.42, hit)).toBe(0);
+    expect(world.deepestContact(-0.6, -1.5, 0.42, hit)).toBeCloseTo(0.04, 9);
+    expect([hit.nx, hit.nz]).toEqual([1, 0]);
+    expect(world.deepestContact(-0.5, -1.5, 0.46, hit, true)).toBe(0);
+    expect(world.deepestContact(-0.53, -1.5, 0.46, hit, true)).toBeCloseTo(0.01, 9);
+    expect(world.deepestContact(0.53, -1.5, 0.46, hit, true)).toBeCloseTo(0.01, 9);
+    expect(hit.nx).toBe(-1);
+    // Its inner face is the jamb line: one straight chute with the opening (the load in the door stays as clear of it).
+    expect(world.clearance(-0.5, -1.5, null, true)).toBeCloseTo(0.5 - DOOR_JAMB, 9);
+    world.setDoorOpen(0, true);
+    expect(world.clearance(-0.5, -2.5, null, true)).toBeCloseTo(0.5 - DOOR_JAMB, 9);
+    // The fork point (empty tines too) has no room inside a rail; the side cell behind it is walled off from the door.
+    expect(world.clearance(-1, -1.5)).toBeLessThan(0);
+    expect(world.deepestContact(-1 + DOOR_JAMB - T - 0.4, -1.5, 0.42, hit)).toBeCloseTo(0.02, 9);
+    expect([hit.nx, hit.nz]).toEqual([-1, 0]);
+    // It never reaches the row behind the door cells, where the forklift lines up: only its end touches from there.
+    expect(world.deepestContact(-1, -0.5, 0.42, hit)).toBe(0);
+    expect(world.deepestContact(-1, -1 + 0.41, 0.42, hit)).toBeCloseTo(0.01, 9);
+    expect([hit.nx, hit.nz]).toEqual([0, 1]);
+  });
+
+  it('levels without trucks: no rails and the very same static world as before', () => {
+    for (const level of LEVELS) {
+      expect(dockRailsOf(level)).toEqual([]);
+      const hw = level.size.width / 2;
+      const hd = level.size.depth / 2;
+      // The world as it was built before the rails: shelves, plants and racks only.
+      const inset = (1 - PLANT_SIZE) / 2;
+      const statics: Rect[] = [
+        ...level.shelves.map((s) => ({ minX: s.x - hw, minZ: s.z - hd, maxX: s.x + s.w - hw, maxZ: s.z + s.d - hd })),
+        ...level.decor.plants.map((p) => ({ minX: p.x - hw + inset, minZ: p.z - hd + inset, maxX: p.x + 1 - hw - inset, maxZ: p.z + 1 - hd - inset })),
+      ];
+      const before = new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, 0.78);
+      const world = CollisionWorld.fromLevel(level, 0.78);
+      const a = createContact();
+      const b = createContact();
+      for (let x = -hw - 0.3; x <= hw + 0.3; x += 0.17) {
+        for (let z = -hd - 0.3; z <= hd + 0.3; z += 0.17) {
+          for (const [r, load] of [
+            [0.42, false],
+            [0.46, true],
+          ] as const) {
+            expect(world.deepestContact(x, z, r, a, load)).toBe(before.deepestContact(x, z, r, b, load));
+            expect([a.nx, a.nz]).toEqual([b.nx, b.nz]);
+          }
+          expect(world.clearance(x, z)).toBe(before.clearance(x, z));
+          expect(world.clearance(x, z, null, true)).toBe(before.clearance(x, z, null, true));
+        }
+      }
+    }
   });
 
   it('a west door in the corner and a north door next to it: each opens its own pocket, the corner stays solid', () => {

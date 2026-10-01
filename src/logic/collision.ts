@@ -1,6 +1,8 @@
 import type { BoxState, Facing, LevelData, Vec2, WallSide } from '../core/types';
 import { FACING_X, FACING_Z, racksOf, rackCellOf } from '../core/racks';
-import { trucksOf } from '../core/docks';
+import { DOOR_JAMB, dockRailsOf, trucksOf, type DockRail } from '../core/docks';
+
+export { DOOR_JAMB };
 
 /** Axis-aligned rectangle on the floor plane (world units). */
 export interface Rect {
@@ -35,12 +37,8 @@ export const BOX_SETTLE_SPEED = 0.4;
  * uprights of the column's cell. Thin, so the load (collider radius 0.46 in a 1-wide cell) keeps a few cm of play.
  */
 export const RACK_WALL = 0.02;
-/**
- * Loading docks (docs/DOCKS.md): the jambs of a dock door as the carried load meets them. The opening is this much
- * narrower than its run of door cells at each end, like the side uprights of a rack slot (RACK_WALL), so the load
- * (radius 0.46) goes through a 1-cell door with a few cm of play.
- */
-export const DOOR_JAMB = RACK_WALL;
+// Loading docks (docs/DOCKS.md): the jambs of a dock door as the carried load meets them, DOOR_JAMB (core/docks, as
+// thin as RACK_WALL) into each end of its run of door cells; its guard rails run on that line (dockRailsOf).
 /** Thickness (u) of the wall slabs the carried load meets in a level with dock doors: far thicker than any step. */
 const WALL_SLAB = 2;
 /** Depth (u) of the pocket behind a dock door, beyond the wall line: the truck bed, one cell. */
@@ -110,6 +108,19 @@ export function doorCells(bounds: Rect, doors: readonly DoorSpan[]): Rect[] {
     }
   }
   return out;
+}
+
+/**
+ * A dock door's guard rail (core/docks DockRail, map units) as a static rect in world units (`hw`, `hd`: half the
+ * map's width and depth): along the wall between its inner and outer faces, into the room from the wall's inner face
+ * to one cell in.
+ */
+export function railRect(rail: DockRail, hw: number, hd: number): Rect {
+  const a = Math.min(rail.line, rail.outer);
+  const b = Math.max(rail.line, rail.outer);
+  return rail.wall === 'north'
+    ? { minX: a - hw, minZ: rail.from - hd, maxX: b - hw, maxZ: rail.to - hd }
+    : { minX: rail.from - hw, minZ: a - hd, maxX: rail.to - hw, maxZ: b - hd };
 }
 
 /** A storage rack column as the collision world sees it: the whole cell, and its walls when open for the load. */
@@ -300,6 +311,9 @@ export class CollisionWorld {
     for (const p of level.decor.plants) {
       statics.push({ minX: p.x - hw + inset, minZ: p.z - hd + inset, maxX: p.x + 1 - hw - inset, maxZ: p.z + 1 - hd - inset });
     }
+    // The guard rails beside each dock door (none without trucks): thin and static, for the body, the load and the fork
+    // point alike, on the door's jamb line from the wall's inner face to one cell in, as thick as DOCK_RAIL outward.
+    for (const r of dockRailsOf(level)) statics.push(railRect(r, hw, hd));
     const racks: { cell: Rect; facing: Facing }[] = [];
     for (const rack of racksOf(level)) {
       rack.columns.forEach((_, column) => {

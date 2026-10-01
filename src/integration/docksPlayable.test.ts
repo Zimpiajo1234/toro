@@ -1,8 +1,8 @@
 /**
  * Integration check (loading docks × logic × controls, docs/DOCKS.md): the autopilot (./autopilot.ts) plays small truck
- * levels with the real GameState at 60 fps and at Game's worst dt (1/20): the truck loaded through its door at the
- * automatic fork height (never F / V), a wrong load taken off and backed out with the reverse gear (S), a box loaded on
- * top of a locked one, every truck level lit once and never lifted again.
+ * levels with the real GameState at 60 fps and at Game's worst dt (1/20): the truck loaded through its door, between
+ * the door's guard rails, at the automatic fork height (never F / V), a wrong load taken off and backed out with the
+ * reverse gear (S), a box loaded on top of a locked one, every truck level lit once and never lifted again.
  */
 import { describe, expect, it } from 'vitest';
 import type { GameEvent } from '../core/types';
@@ -24,7 +24,7 @@ limit: 2
 ventanas: oeste 2-3
 
   01234567
-0 ..TT....
+0 .pTTp...
 1 ........
 2 .....1..
 3 .a..b...
@@ -42,10 +42,10 @@ id: muelle-oeste
 limit: 2
 
   012345
-0 ......
+0 p.....
 1 T.....
 2 T..a..
-3 ......
+3 p.....
 4 ...^b.
 
 a = caja menta ▲        b = caja coral ●
@@ -59,7 +59,7 @@ id: muelle-tres
 limit: 2
 
   0123456
-0 .TTT...
+0 pTTTp..
 1 .......
 2 .......
 3 .a.b.c.

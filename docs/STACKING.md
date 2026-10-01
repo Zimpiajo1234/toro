@@ -17,7 +17,7 @@ usan disposiciones escritas en el propio test (entre ellas los antiguos 13, 14, 
 7. Las pilas nunca caen (sin física de caída).
 
 ## Feedback
-- Receta dibujada en la zona: mini pila de escalones de color con separadores crema sobre un zócalo crema, en dos esquinas opuestas de la zona (abajo→arriba). El escalón que llenaría la caja cargada respira con la zona. Nunca texto.
+- Receta dibujada en la zona: mini pila de escalones de color con separadores crema sobre un zócalo crema, en dos esquinas opuestas de la zona (abajo→arriba). Con las pistas encendidas (P; apagadas por defecto), el escalón que llenaría la caja cargada respira con la zona. Nunca texto.
 - Preview de drop muestra altura (contorno sobre la pila). La horquilla sube antes de llegar a una pila (predicción por movimiento, giro y acelerador) y nunca baja mientras la carga está encima.
 - Subida algo más lenta con la altura (nivel 1 en 0,39 s, nivel 2 en 0,94 s); servo un 12 % más agudo por nivel. Toc de madera más agudo al posar sobre caja; toda la pila se hunde un poco a la vez (sin separarse).
 - Pila completa: brillo abajo→arriba + arpegio de N notas (sin notas que choquen con el acorde); el arpegio de nivel completado espera a que termine.

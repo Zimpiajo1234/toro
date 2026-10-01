@@ -63,6 +63,8 @@ const FEATHER = 0.22;
  */
 export const DOOR = {
   frame: 0.07,
+  /** How far the frame stands proud of the wall's inner face (a door's guard rails start there, builders/truck). */
+  proud: 0.025,
   roll: 0.075,
   /** Brackets holding the roll at its ends (along the wall). */
   bracket: 0.03,
@@ -204,7 +206,7 @@ function addDoor(parts: PartList, theme: Theme, door: WallDoor): void {
   const top = DOCK.doorTop;
   const c = theme.truck;
   const z0 = -T - 0.012;
-  const z1 = 0.025;
+  const z1 = D.proud;
   parts.block(c.doorFrame, door.a - D.frame, door.a, DOCK.sillTop, top, z0, z1);
   parts.block(c.doorFrame, door.b, door.b + D.frame, DOCK.sillTop, top, z0, z1);
   parts.block(c.doorFrame, door.a - D.frame, door.b + D.frame, top, top + D.frame, z0, z1);

@@ -73,7 +73,9 @@ export interface Theme {
    * dock sign (its stickers are Theme.rack.cue*, like a rack's); `wheel` / `hub`; `leveller` = the dock plate in the
    * door (from the floor onto the bed); `apron` / `apronEdge` / `apronLine` = the driveway outside, the face of the dock
    * pit and its painted guide lines; `doorFrame` / `shutter` = the door opening's frame (and the dock sign's frame)
-   * and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black).
+   * and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black); `rail` / `railCap` =
+   * the low guard rails on both sides of the door (posts and bars: a soft cozy orange, clearly none of the box colours
+   * and never red) and the cream caps of their posts.
    */
   truck: {
     cab: string;
@@ -94,6 +96,8 @@ export interface Theme {
     doorFrame: string;
     shutter: string;
     rubber: string;
+    rail: string;
+    railCap: string;
   };
   plant: { pot: string; soil: string; leaves: string[] };
   forklift: {
@@ -105,6 +109,13 @@ export interface Theme {
     hub: string;
     seat: string;
     light: string;
+    /** The glass of the reverse beacon on the roof (views/ForkliftView) while it is off: lit and shaded like the body. */
+    beacon: string;
+    /**
+     * The beacon's warm amber light while backing up: its lit lens, the two soft beams turning round it and the faint
+     * glow on the floor behind. Cozy, pastel-leaning: clearly apart from the yellow box, never red.
+     */
+    beaconLight: string;
   };
   boxes: Record<ColorId, BoxPalette>;
   zones: Record<ColorId, ZonePalette>;

@@ -17,7 +17,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 
 | Path | Owner | Responsibility |
 |---|---|---|
-| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
+| `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, bed cells beyond the wall, door cells, the doors' guard rails `dockRailsOf`, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
 | `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera` (incl. the player zoom: `zoomMax`, `zoomEaseSec`, `zoomTrackSec`, `zoomResetSec`, `zoomFollowSec`, `zoomRate`, `zoomStep`), `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
@@ -180,12 +180,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (the body in line with that door cell; `TRUCK_FACING`: south for a north dock, east for a west one; ≤ 30°, held to
   45°) with the fork point at least `TRUCK_REACH` (0.3) past the wall line; forks automatic, F / V do nothing; while
   the load is in the door the heading is locked (straight in, straight out, like a rack slot) and nothing drops short
-  of the bed (`RackAim.doorway`).
+  of the bed (`RackAim.doorway`). Each door has a low guard rail at each end of its run, placed by itself
+  (`core/docks` `dockRailsOf`, never in the `.level`): on the door's jamb line (`DOOR_JAMB`, flush with the opening, one
+  straight chute), from the wall's inner face one cell in (never into the row behind), `DOCK_RAIL.thickness` thick
+  outward, a static obstacle for the body, the load and the fork point (`CollisionWorld` statics, `railRect`; none
+  without trucks, so those levels are unchanged). The map cell behind each rail along the wall (its side cell) must hold
+  a static obstacle, usually a potted plant (validateLevel; not at a room corner, never another door, a rack there never
+  faces the door), so a truck is reached only head-on from the row behind its door. A player's crooked entry (≥ 10°,
+  past the heading assist) can still wedge with the load in the door (docs/DOCKS.md «Barandillas»: pending design
+  decision; `GameState.docksDriving.test.ts` measures it).
   Every truck level is a target of the unique assignment (`targetsOf` kind `'truck'`, `levelDestinies.trucks`).
   `GameSnapshot.truckSlots?` (absent without trucks) = `TruckSlotState { id "t1:col:level", …, accepts, destined,
   occupiedBy, satisfied, loadable }`: `satisfied` = its destined box on satisfied levels below; `loadable` = the empty
-  next level of its column with everything below satisfied (the only one that pulses). A box on a satisfied level is
-  locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
+  next level of its column with everything below satisfied (the only one that pulses, with the target hints on). A box
+  on a satisfied level is locked (never picked) but the next level still loads on top of it; any other box on a truck level buzzes
   (`wrongTarget`) and stays pickable. A full column faced up close drops nothing (`actionIdle`, never the floor beside
   it). Optional fields only in truck levels: `BoxState.truckSlotId`, `hint.dropTruckSlotId`,
   `boxPicked.fromTruckSlotId`, `boxDropped.truckSlotId` (`zoneId: null`, `recipeLength` 1), `zoneReleased.truckSlotId`
@@ -243,7 +251,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   be free floor (validateLevel checks the front cell; the solvability tests catch the rest). Trucks (docs/DOCKS.md) too:
   their door cells start empty (validateLevel) and the cell behind each must stay free floor, so keep zones off the door
   row and the row behind it (a box locked there would close that column: a «callejón»). A dock door never shares a
-  wall cell with a window.
+  wall cell with a window, and the cell beside each end of its run (behind its guard rail) is a plant or another static
+  obstacle: two doors are never side by side.
 - Leave ≥ 1 free cell around every box on at least one side the forklift can approach from, and ≥ 2 free cells
   somewhere reachable to park a box temporarily (a level whose boxes start on wrong zones needs spare space to
   reorganize).
@@ -268,10 +277,24 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   (`rotateDurationSec`). Idle orbit on title: extremely slow yaw drift. Never shake, never snap. The auto-fit
   never zooms in during a Q/E turn or the idle orbit: the frame stays at least as wide as the blend of the two
   diagonal (45° + k·90°) framings around the current yaw (the player's zoom, below, is a separate factor on top).
+  **The camera never reframes on its own** (user rule 2026-09-30): the framing changes only with the player's input (a
+  Q/E turn, the zoom, a canvas / window resize), the title's orbit and its glide to the nearest canonical yaw as a
+  level starts from it (1.44 s), and a freshly loaded level (a cut). The fit boxes (`CameraRig` `FitBox`) are static:
+  the floor up to `DIORAMA.contentHeight`, each back wall whole, racks, docks (truck + sign). A wall is framed at full
+  height even while it is sunk: it then stands on the camera's side of the room, where its top never reaches the edge
+  of the frame, so the framing at rest is bit for bit the settled sink's (every level, any room ≥ 2 × 2) and nothing
+  clips mid-turn; walls sinking or rising, forks, loads and trucks never move the frame. Every ease lands exactly
+  (zoom, followed point, bands; the yaw sheds whole turns only as a turn starts), so at rest the camera is
+  bit-identical frame to frame (`CameraRig.test.ts`, «never moves on its own»).
   The fit frames the canvas minus the bands the DOM overlay keeps over the scene while playing (HUD pills at the
-  top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts`, measured by a ResizeObserver on
-  change → `GameActions.setViewInsets` → `GameRenderer.setViewInsets` → `CameraRig.setInsets`, eased on a
-  critically damped spring, ≤ half the canvas): held while the completion card is up, none on the title.
+  top, control hint at the bottom; `useReservedArea` in `ui/reservedAreas.ts` → `GameActions.setViewInsets` →
+  `GameRenderer.setViewInsets` → `CameraRig.setInsets`, ≤ half the canvas). They are reported once as a level starts
+  (entering play, or a new level while playing: read right after the DOM commit, in a layout effect, so they reach
+  the camera before the level's first frame is painted) and again only on a viewport resize: a piece that changes
+  size mid-level (a hint row or its wording, a pill, fonts) is measured but waits for the next level or resize, and
+  a restart of the same level keeps them. The camera takes them at once (the renderer redraws right away), except
+  with the title's orbit and its glide into a level, where they glide in over the same 1.44 s (hermite, exact end):
+  one calm motion. Held while the completion card is up, none on the title.
 - Player zoom (user request 2026-09-30): `GameRenderer.zoomBy(deltaLog2)` (a step; + = closer, in log2 "stops", +1 =
   twice as close), `zoomTrack(deltaLog2)` (zoom that follows the input as it moves) and `resetZoom()` → `CameraRig`,
   fed by Game while playing from `InputSample.zoomStep` (a + / − tap's small step on the press, a Ctrl + mouse wheel
@@ -284,8 +307,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   after the release instead of gliding on to a goal that ran ahead of the view (it used to overrun ≈ 0.3 stops). While
   the page itself is still pinch-zoomed (`visualViewport.scale` > 1.01, e.g. after a pinch over the title) pinches stay
   the browser's even while playing, so the player can pinch it back to 1. As the zoom grows the framing target blends from the level centre to the
-  forklift (followed with `zoomFollowSec`), clamped so the visible free area stays over the (padded) level; zooming
-  fully out returns to the centred full view. Q/E turns pivot around that target; the reserved bands (`setInsets`) and
+  forklift (followed with `zoomFollowSec`; once it stops the followed point lands exactly on it, 0.1 mm), clamped so
+  the visible free area stays over the (padded) level; zooming fully out returns to the centred full view, and at zoom
+  1 the forklift never moves the frame. Q/E turns pivot around that target; the reserved bands (`setInsets`) and
   occlusion ghosting compose with it (a dock's truck is static and always framed: it never moves the frame). Reset to
   1 on a level change and on the title (the idle orbit stays unzoomed); kept across a restart of the same level.
   `zoomRate` (stops / s held) and `zoomStep` (stops per tap) tune the keys. The plain mouse wheel never zooms: it
@@ -303,11 +327,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   to a clean ghost (~0.35 opacity, depth prepass) whenever it stands in front of the forklift, a box or a zone.
 - Zones: rounded-square pad slightly raised (≈0.02), `fill` color, inset border in `border` color like floor
   tape, tone-on-tone glyph (`theme.glyphs`; the diamond is a rhombus, never a rotated square). Satisfied → emissive `glow` eases up (≈0.35) then settles (≈0.15),
-  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, zones that would take it
-  (`takesNext`; classic: free zones of that color) breathe gently (slow sine on emissive), teaching the goal without
-  text. Sorting levels (`usesSymbols`): pad colour = colour criterion (`theme.neutralZone` cream when none), the
-  symbol criterion is engraved large in the middle (a real recess, floor in `ZonePalette.engrave`), no glyph otherwise;
-  when no free zone takes the carried box, the occupied zones that accept it breathe at ≈ ⅓ (a swap hint).
+  plus one soft expanding ring that fades out (≈0.8 s). While carrying a box, with the target hints on (below), zones
+  that would take it (`takesNext`; classic: free zones of that color) breathe gently (slow sine on emissive), teaching
+  the goal without text. Sorting levels (`usesSymbols`): pad colour = colour criterion (`theme.neutralZone` cream when
+  none), the symbol criterion is engraved large in the middle (a real recess, floor in `ZonePalette.engrave`), no glyph
+  otherwise; when no free zone takes the carried box, the occupied zones that accept it breathe at ≈ ⅓ (a swap hint;
+  target hints on).
 - Boxes: low-poly beveled cube (`box.size`), `base` color, tape strip across the lid in `tape`, the box's own
   symbol on the lid (small tone-on-tone glyph; in sorting levels printed 1.5× larger in `BoxPalette.ink`). Pick →
   small hop then ride on forks (visual position damped, never teleports). Drop → eased glide to
@@ -320,6 +345,18 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   forks that move with `forkLift` (y 0.06 → 0.34), 4 low-segment wheels spinning with `wheelSpin`, rear wheels
   steered by `steer`, two round headlight "eyes" at the front that occasionally blink (every 4–8 s),
   slight body pitch on acceleration and roll on turns (≤ 3°). Carried box rides on the forks.
+  Reverse beacon (2026-09-30, `builders/forklift.ts` `BEACON`, `views/ForkliftView.ts` `BEACON_*`, safe to tune): a
+  small amber glass dome on a slate base at the rear edge of the roof (`Theme.forklift.beacon`), lit while
+  `ForkliftState.reversing` — the reverse beeper's own signal (core/reversing), so it lights and dims on the beep's
+  frames, with B or M too. Its light is three unlit pieces in `Theme.forklift.beaconLight` (a warm pastel amber,
+  hue ≈ 33°: never the yellow box, never red; `SharedMaterials.beacon`, vertex RGBA, no depth write, front faces only,
+  hidden while off; no three.js light, no shadow): a shell just over the glass (≈ 0.9), two soft opposite beams level
+  with the dome's base (0.6 long, ≈ 0.85 at the lamp, feathered to the tip and edges) turning half a turn per beat of
+  the music (`core/tempo` `BEAT_SEC`, 70 BPM: a beam points back as each "tin" sounds, the first one as it lights), and
+  a feathered ellipse on the floor behind (≈ 0.6 at its centre, swelling as a beam points back), floating at 0.028 over
+  the zone pads and the dock plate with the overlays' polygon offset, drawn under the drop preview. It eases in
+  (λ 9: ≈ 14 % on the first frame, lit in ≈ 0.3 s) and out (λ 4.5, gone in ≈ 1.2 s); lit again from off, the beams
+  start over pointing back.
 - Level complete: zones glow in a gentle sequential wave, window light warms slightly. No flashes, no particles
   storms, no screen effects. Everything eases.
 - Stacks: box y = `level · boxHeight` (visual height `box.size · 0.82`); drop glide ends on the stack top (landing
@@ -327,8 +364,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   a box height, no squash, no seam). The carriage adds `forkHeight · boxHeight` (eased in the view) and an inner
   mast stage appears only while raised. A stack zone draws its recipe as a mini stack of colored steps with cream
   spacers on a cream plinth, at two opposite pad corners (one glow-material mesh per step); the step the carried
-  box would fill breathes with the zone. The drop outline floats on the stack top. A completed stack glows box by
-  box bottom → top (stacked boxes glow without the bob). A zone un-completed by a box stacked on top keeps its glow
+  box would fill breathes with the zone (target hints on). The drop outline floats on the stack top. A completed stack
+  glows box by box bottom → top (stacked boxes glow without the bob). A zone un-completed by a box stacked on top keeps its glow
   until that box lands. In stack levels, a box above the floor fades to a ghost (0.55) while it hides the forklift
   cabin, another box's lid or a zone pad; base boxes never ghost, and every box turns solid once the level is
   complete (materials stay `transparent`; classic levels are untouched).
@@ -338,9 +375,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   in the exact box colour (or the neutral cue fill) with a bold `rack.cueInk` glyph, on both faces of the back panel
   and on the outer face of the end plate for the end columns, so a rack reads from all four camera angles. Slot n's
   floor is at `rackSlotY(n)` (`dims.ts` `RACK`, taller than a stack level). A slot (panel emissive + cue brightening)
-  glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried (≈ ⅓ swap hint on an occupied,
-  unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35 over the forklift or
-  its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
+  glows only with `slot.satisfied`, breathes with `cueFits` while a box is carried, with the target hints on (≈ ⅓ swap
+  hint on an occupied, unlit slot when no free target takes the box); each column ghosts on its own like a shelf (0.35
+  over the forklift or its load, its slot boxes with it; a softer 0.6 over resting boxes or zones), while its cues never fade or dim (drawn
   in the opaque pass, before any ghost). `views/SlotMarker.ts` frames the selected slot (`hint.rack`,
   brighter when `ready`); the drop outline floats on the slot floor. At a rack the forks ride just over the selected
   slot floor (`ForkliftView.sync(…, atRack)`, eased blend, little pitch); slot boxes rest at `rackSlotY(level)`.
@@ -352,9 +389,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   the wall's outer face (`TRUCK`, `buildTruckBody`): a low open flatbed level with the floor (`DOCK.bedTop`: boxes rest
   at floor stack heights), low drop sides only at the ends of the door run and a headboard by the cab (nothing over or
   between the bed columns: no posts, rails or dividers), the cab facing away, wheels and a driveway a step down; a flat
-  dock plate fills the door (`DOCK_PLATE`, `buildDockPlate`, under the drop preview). It is static: low enough never to
-  hide the warehouse, it never sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state
-  positions) and it is always framed (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
+  dock plate fills the door (`DOCK_PLATE`, `buildDockPlate`, under the drop preview); its guard rails (`RAIL`,
+  `buildDockRails`, `Theme.truck.rail` a soft orange and `railCap` cream: two posts and two bars each, 0.53 high, within
+  the footprint `dockRailsOf` gives the logic) are static props in the room, one mesh per truck in its group, casting
+  and taking shadows, never sinking or ghosting. The truck is static: low enough never to hide the warehouse, it never
+  sinks with its wall (the boxes on its bed are ordinary `BoxView`s at their state positions) and it is always framed
+  (a static `fitBox`), so the zoom never moves for it. The cues are on a framed sign
   on the wall's inner face above the door (`DOCK_SIGN`, `buildSignFrame`, `buildSignPanel`, `buildSignCue`,
   `SIGN_CUE`): one cell per bed column, right above its door cell, and per level, bottom row = level 0 (the upper cell
   of a shorter column is a plain panel; with 2 levels the sign rises ≈ 0.3 over the wall cap), each with its unlit rack
@@ -364,9 +404,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   softly while its wall is sunk; its stickers never fade. What a standing dock wall hides (a box on the bed, the part of
   a load through the door) never ghosts a shelf, a rack or a stacked box (`LevelView.clipToRoom`). A truck level lights
   exactly like a rack slot (`SlotLight` on its sign cell: flash, soft glow, glow band round its sticker, `SIGN_GLOW`),
-  with the success burst and the locked box tone on its box on the bed; while carrying, only a `loadable` level whose
-  cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there. Levels with trucks and
-  no racks switch on the same target feedback (`usesTargetRules`); without trucks nothing changes.
+  with the success burst and the locked box tone on its box on the bed; while carrying (target hints on), only a
+  `loadable` level whose cue fits pulses, and the drop preview (on the bed cell, outside) takes the box tone only there
+  (hints or not). Levels with trucks and no racks switch on the same target feedback (`usesTargetRules`); without
+  trucks nothing changes.
+- Target hints (`Settings.targetHints`, persisted, additive, default off; P on the title and while playing,
+  `Game.toggleHints` → `GameRenderer.setTargetHints` → `LevelView.setTargetHints`, set at mount and on every toggle,
+  handed to each level built afterwards): the one switch for the light that answers a carried box. On, the zones that
+  would take it breathe (the strong pulse and halo in levels with racks or trucks), the recipe step it would fill
+  breathes, the empty rack slots and the `loadable` truck levels whose cue fits pulse (band and cue with them), and the
+  faint swap hint shows (`LevelView.update`: `hinted` = the carried box only with the hints on). Off, nothing lights up
+  on a pick-up: pure deduction from the cues. Toggled mid-carry, the light eases in or out with the views' own
+  smoothing (λ 3, as on a pick-up or a drop; never a pop). Never gated: the success flash, burst and soft glow, the
+  locked box tone, the wrong-box buzz (audio), the pick target's lift, the drop preview's tone and the slot marker
+  (`LevelView.hints.test.ts`).
 - Performance: aim < 150 draw calls on the largest level, no per-frame allocations in hot paths,
   `renderer.setAnimationLoop` NOT used (Game drives frames; `update()` renders once).
 
@@ -430,6 +481,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
       title and while playing, `Game.toggleReverseBeep`; the title footer reads "B pitido" / "B activar pitido", and
       in a level the notice pill says "Pitido de marcha atrás: sí / no") → `AudioEngine.setReverseBeep` →
       `ReverseBeeper.setEnabled`: off, backing up stays silent and a beep sounding fades out at once (τ 25 ms).
+      When it beeps is one shared signal, `ForkliftState.reversing` (`core/reversing.ts` `REVERSING`, 2026-09-30):
+      a latch with hysteresis on the signed normalised speed (on below −0.04, off above −0.015), set by
+      `ForkliftController` every step and handed by Game as `setMotor`'s 4th argument; the beeper follows it (called
+      without it, as in the dev tools and tests, it runs the same latch on the speed itself: the very same beeps), and
+      so does the beacon on the roof (Render direction), which B and M never touch. Its period is the song's beat
+      (`core/tempo` `BPM`, which `audio/music/timing.ts` re-exports), the beacon's too.
   - uiClick: tiny soft wooden tap.
 
 ## UI direction (ui)
@@ -455,7 +512,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
-  muted) · B pitido (B activar pitido when off) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  muted) · B pitido (B activar pitido when off) · P activar pistas (the default, with a crossed bulb like the other
+  "activar" wordings; P pistas when on) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -474,7 +532,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Benchmark", "Tiempo" only, the line "Modo prueba · sin récord", primary "Volver al inicio", quiet "Repetir". Behind
   the title (left with Esc) the caption reads "Benchmark · sin récord" and no level dot is marked current. The app
   shell takes the theme from the Benchmark while it is on screen.
-- Mute toggles are confirmed by a polite live region and, in a level, a brief top-center pill (~1.6 s).
+- Mute, reverse-beep and target-hints toggles (M, B, P) are confirmed by a polite live region and, in a level, a brief
+  top-center pill (~1.6 s; `ui/SoundNotice.tsx`): "Sonido activado / desactivado", "Pitido de marcha atrás: sí / no",
+  "Pistas: sí / no", with a speaker, a bell or a bulb, crossed out when that setting is now off.
 - Completion card: compact (≤ 420 px) and anchored at the bottom center so the tidied warehouse stays in view;
   rises in, settles down on exit. Positive `result.message` as heading, one row of at most two tiles, one per
   metric, each with the level's record on a small soft line under its value: "Tiempo 0:42.3" over "mejor 0:38.9"
@@ -497,7 +557,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
   additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
   highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
-  `showMoves` additive default true, `reverseBeep` additive default true, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
+  `showMoves` additive default true, `reverseBeep` additive default true, `targetHints` additive default false,
+  `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
@@ -531,7 +592,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

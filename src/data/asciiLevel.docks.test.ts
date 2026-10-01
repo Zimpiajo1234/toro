@@ -11,7 +11,8 @@ import { validateLevel } from './validateLevel';
  * on its bed cell: z = -1 (north) or x = -1 (west).
  *
  * The grammar is tested on the draft (parseLevelDraft: before validateLevel), so it does not depend on the truck rules
- * of validateLevel; the round trips through validateLevel run as soon as validateLevel keeps `trucks`.
+ * of validateLevel; the round trips through validateLevel follow. Every door here has a plant beside each end of its
+ * run (behind its guard rail), unless the run reaches a corner.
  */
 
 const text = (lines: readonly string[]) => `${lines.join('\n')}\n`;
@@ -55,7 +56,7 @@ const NORTH = [
   'limit: 2', //                                             3
   '', //                                                     4
   '  0123456', //                                            5
-  '0 ..TT...', //                                            6
+  '0 .pTTp..', //                                            6
   '1 .......', //                                            7
   '2 .a...b.', //                                            8
   '3 ...^.c.', //                                            9
@@ -78,7 +79,13 @@ const NORTH_LEVEL: LevelData = {
   zones: [],
   shelves: [],
   trucks: [{ id: 't1', wall: 'north', x: 2, z: 0, w: 2, columns: [[{ color: 'blue' }, { symbol: 'triangle' }], [{ color: 'coral', symbol: 'diamond' }]] }],
-  decor: { plants: [], windows: [] },
+  decor: {
+    plants: [
+      { x: 1, z: 0, variant: 0 },
+      { x: 4, z: 0, variant: 1 },
+    ],
+    windows: [],
+  },
   stackLimit: 2,
   theme: 'default',
 };
@@ -90,10 +97,10 @@ const WEST = [
   'limit: 1',
   '',
   '  012345',
-  '0 ......',
+  '0 p.....',
   '1 T.....',
   '2 T..a..',
-  '3 .1....',
+  '3 p1....',
   '4 ...^b.',
   '',
   '1 = zona ■',
@@ -109,7 +116,7 @@ const MIXED = [
   'ventanas: norte 8-9, oeste 2',
   '',
   '  0123456789',
-  '0 p.TT..R...',
+  '0 .pTTp.R...',
   '1 ..........',
   '2 .1..a..b..',
   '3 ....^.....',
@@ -128,7 +135,7 @@ const TWIN = [
   'limit: 1',
   '',
   '  0123456',
-  '0 .T...T.',
+  '0 pTp.pTp',
   '1 .......',
   '2 ..a.b..',
   '3 ...^...',
@@ -137,14 +144,6 @@ const TWIN = [
   'T = camión muelle norte: azul ●',
 ];
 
-/** The level validateLevel returns keeps `trucks` (docs/DOCKS.md «Validación»): the validated round trips run then. */
-const VALIDATES_TRUCKS = (() => {
-  try {
-    return validateLevel(draftOf(NORTH).raw).trucks !== undefined;
-  } catch {
-    return false;
-  }
-})();
 
 describe('loading docks in .level files (grammar, before validateLevel)', () => {
   it('parses a north truck: its door run on row 0, columns of levels bottom → top, cues', () => {
@@ -198,7 +197,7 @@ describe('loading docks in .level files (grammar, before validateLevel)', () => 
       ['t2', 5],
     ]);
     const again = renderLevel(level);
-    expect(again).toContain('0 .T...C.');
+    expect(again).toContain('0 pTp.pCp');
     expect(again).toContain('T C = camión muelle norte: azul ●');
   });
 
@@ -264,7 +263,7 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
     // Cells and legend columns.
     expectError(replace(NORTH, 6, '0 ..TTT..'), 6, 5, /ocupa 3 casillas y su leyenda describe 2 columnas/);
     // An own id on a character used by two trucks.
-    const twice = replace(replace(TWIN, 6, '0 .T...T.'), 12, 'T = camión muelle norte (azules): azul ●');
+    const twice = replace(TWIN, 12, 'T = camión muelle norte (azules): azul ●');
     expectError(twice, 12, 25, /lleva un id propio y hay 2 camiones/);
   });
 
@@ -274,7 +273,11 @@ describe('truck grammar errors (Spanish, file:line:column)', () => {
   });
 });
 
-describe.runIf(VALIDATES_TRUCKS)('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
+describe('trucks through validateLevel (docs/DOCKS.md «Validación»)', () => {
+  it('validateLevel keeps `trucks`', () => {
+    expect(validateLevel(draftOf(NORTH).raw).trucks).toHaveLength(1);
+  });
+
   it('parse(render(level)) = level, render(parse(text)) = text', () => {
     for (const lines of [NORTH, WEST, MIXED]) {
       const parsed = parseLevel(text(lines));

@@ -1,6 +1,6 @@
 import { Box3, Color, Group, Mesh, MeshBasicMaterial, OctahedronGeometry, Vector3, type BufferGeometry, type Material } from 'three';
 import type { GameConfig } from '../config';
-import { hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
+import { dockRailsOf, hasTrucks, truckSlotIdOf, trucksOf, usesTargetRules } from '../core/docks';
 import { degToRad } from '../core/math';
 import { hasRacks } from '../core/racks';
 import { accepts, cueFits, takesNext, usesSymbols } from '../core/sorting';
@@ -42,6 +42,7 @@ import { addShelf } from './builders/shelf';
 import {
   TRUCK_BURST,
   buildDockPlate,
+  buildDockRails,
   buildSignCue,
   buildSignFrame,
   buildSignGlowGeometry,
@@ -220,6 +221,11 @@ export class LevelView {
   private readonly boxHeight: number;
   private readonly glassMaterial: MeshBasicMaterial;
   private readonly preview: DropPreview;
+  /**
+   * The optional target hints (setTargetHints; off by default): only with them on do the destinations light up for the
+   * carried box (see update()).
+   */
+  private targetHints = false;
 
   constructor(snapshot: GameSnapshot, theme: Theme, config: GameConfig, cameraYaw: number) {
     const level = snapshot.level;
@@ -284,14 +290,15 @@ export class LevelView {
     const { width: w, depth: d } = level.size;
     const t = DIORAMA.wallThickness + DIORAMA.capOverhang;
     this.shadowBounds.set(new Vector3(-w / 2 - t, -DIORAMA.slabThickness, -d / 2 - t), new Vector3(w / 2, DIORAMA.wallHeight, d / 2));
+    // The camera frames these static volumes only (CameraRig FitBox): the walls whole (buildWalls), the floor up to the
+    // content height; nothing animated (a sinking wall, the forks, a load) ever moves the frame.
     this.fitBoxes.unshift({
       min: new Vector3(-w / 2, -DIORAMA.slabThickness, -d / 2),
       max: new Vector3(w / 2, DIORAMA.contentHeight, d / 2),
-      heightScale: 1,
     });
     // Racks stand taller than the rest of the content: keep them in frame and inside the shadow volume.
     for (const rack of this.racks) {
-      this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone(), heightScale: 1 });
+      this.fitBoxes.push({ min: rack.bounds.min.clone(), max: rack.bounds.max.clone() });
       this.shadowBounds.union(rack.bounds);
     }
     // …and so do the docks: the truck outside and the sign over its door, always (they never sink).
@@ -301,6 +308,17 @@ export class LevelView {
     }
 
     this.update(snapshot, 0, 0, cameraYaw, 0);
+  }
+
+  /**
+   * The optional target hints (Settings.targetHints, P): on, the destinations that would take the carried box light up
+   * (zones that take it, the recipe step it would fill, fitting empty rack slots, loadable truck levels whose cue fits,
+   * and the faint swap hint); off, nothing lights up for it (pure deduction). Toggled while a box is carried, that light
+   * eases in or out with the views' own smoothing. Nothing else depends on it: the success flash and soft glow, the
+   * locked box tone, the drop preview's tone and the slot marker stay as they are.
+   */
+  setTargetHints(on: boolean): void {
+    this.targetHints = on;
   }
 
   update(snapshot: GameSnapshot, dt: number, time: number, cameraYaw: number, warmth: number): void {
@@ -320,19 +338,21 @@ export class LevelView {
       view.sync(box, this.forklift.anchor, box.id === target, dt);
     }
 
-    // Teach the goal without words: the zones that would take the carried box breathe, and so do the empty rack slots
-    // whose cue fits it (the cue, never the solution: only the destined box lights them). In a sorting level or one
-    // with racks, when no free target takes it, the occupied ones that accept it breathe very faintly instead: the box
-    // resting there could move on (a swap hint; with racks never on a target that already glows).
-    // A truck level invites only as the next level of its column with everything below it right (`loadable`, docs/DOCKS.md).
+    // Teach the goal without words (the optional target hints, P): the zones that would take the carried box breathe,
+    // and so do the empty rack slots whose cue fits it (the cue, never the solution: only the destined box lights them).
+    // In a sorting level or one with racks, when no free target takes it, the occupied ones that accept it breathe very
+    // faintly instead: the box resting there could move on (a swap hint; with racks never on a target that already
+    // glows). A truck level invites only as the next level of its column with everything below it right (`loadable`,
+    // docs/DOCKS.md). With the hints off nothing invites (`hinted` null): each light eases out on its own.
     const zones = snapshot.zones;
     const slots = snapshot.slots;
     const truckSlots = snapshot.truckSlots;
+    const hinted = this.targetHints ? carried : null;
     let anyTakes = false;
-    if (carried) {
-      for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], carried);
-      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], carried);
-      if (truckSlots) for (let i = 0; i < truckSlots.length && !anyTakes; i++) anyTakes = truckSlots[i].loadable && cueFits(truckSlots[i], carried);
+    if (hinted) {
+      for (let i = 0; i < zones.length && !anyTakes; i++) anyTakes = takesNext(zones[i], hinted);
+      for (let i = 0; i < slots.length && !anyTakes; i++) anyTakes = slots[i].occupiedBy === null && cueFits(slots[i], hinted);
+      if (truckSlots) for (let i = 0; i < truckSlots.length && !anyTakes; i++) anyTakes = truckSlots[i].loadable && cueFits(truckSlots[i], hinted);
     }
     const swapHint = (this.sorting || this.targetRules) && !anyTakes;
     // With racks or trucks the invitation is a strong pulse (views/success); the swap hint keeps its quiet strength.
@@ -341,9 +361,9 @@ export class LevelView {
     const slotTone = carried ? (this.slotTones.get(carried.color) ?? null) : null;
     for (let i = 0; i < zones.length; i++) {
       const zone = zones[i];
-      const takes = carried !== null && takesNext(zone, carried);
+      const takes = hinted !== null && takesNext(zone, hinted);
       const swap =
-        carried !== null && swapHint && zone.stack.length > 0 && !(this.targetRules && zone.satisfied) && accepts(zone, carried);
+        hinted !== null && swapHint && zone.stack.length > 0 && !(this.targetRules && zone.satisfied) && accepts(zone, hinted);
       this.zoneViews.get(zone.id)?.sync(zone, takes ? 1 : swap ? swapInvite : 0, takes, time, dt, glowTint);
       if (this.targetRules) {
         if (zone.satisfied && this.zoneWasSatisfied[i] === false) this.playBurstOnZone(zone);
@@ -358,7 +378,7 @@ export class LevelView {
 
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
-      const fits = carried !== null && cueFits(slot, carried);
+      const fits = hinted !== null && cueFits(slot, hinted);
       const invite = !fits ? 0 : slot.occupiedBy === null ? 1 : swapHint && !slot.satisfied ? swapInvite : 0;
       this.rackOfSlot.get(slot.id)?.syncSlot(slot, invite, slotTone, time, dt);
       if (slot.satisfied && this.slotWasSatisfied[i] === false) this.playBurstInSlot(slot, cameraYaw);
@@ -367,7 +387,7 @@ export class LevelView {
     if (truckSlots) {
       for (let i = 0; i < truckSlots.length; i++) {
         const ts = truckSlots[i];
-        const fits = carried !== null && cueFits(ts, carried);
+        const fits = hinted !== null && cueFits(ts, hinted);
         const invite = !fits ? 0 : ts.loadable ? 1 : swapHint && ts.occupiedBy !== null && !ts.satisfied ? swapInvite : 0;
         this.truckOfSlot.get(ts.id)?.syncLevel(ts.id, ts.satisfied, invite, slotTone, time, dt);
         if (ts.satisfied && this.truckWasSatisfied[i] === false) this.playBurstOnTruck(ts, cameraYaw);
@@ -407,7 +427,7 @@ export class LevelView {
 
     const shaftGain = 1 + 0.2 * warmth;
     for (let i = 0; i < this.walls.length; i++) this.walls[i].sync(cameraYaw, dt, false, shaftGain);
-    for (let i = 0; i < this.trucks.length; i++) this.trucks[i].followWall(this.truckWalls[i].fitBox.heightScale);
+    for (let i = 0; i < this.trucks.length; i++) this.trucks[i].followWall(this.truckWalls[i].heightScale);
     this.glassMaterial.color.setScalar(1 + 0.06 * warmth);
   }
 
@@ -926,6 +946,7 @@ export class LevelView {
     const panelByCell = new Map<string, BufferGeometry>();
     const cueByLook = new Map<string, BufferGeometry>();
     const origin = new Vector3();
+    const rails = dockRailsOf(level);
     trucksOf(level).forEach((truck, index) => {
       const wall = this.wallBySide.get(truck.wall);
       if (!wall) return;
@@ -946,6 +967,13 @@ export class LevelView {
         holds,
         DROP_GLIDE_SEC,
       );
+      // The guard rails beside its door (core/docks dockRailsOf): low static props in the room, like the plants.
+      const own = rails.filter((r) => r.truckIndex === index);
+      if (own.length > 0) {
+        const mesh = this.mesh(buildDockRails(own, level, theme), mats.painted, true);
+        mesh.userData.dockRails = truck.id;
+        view.group.add(mesh);
+      }
       // Sign cells face the warehouse: their local +z is their wall's inward side (dock-local +z).
       const yaw = dockPlacement(truck.wall, level).ry ?? 0;
       truck.columns.forEach((cues, column) => {
@@ -989,7 +1017,7 @@ export class LevelView {
           this.truckOfSlot.set(id, view);
         });
       });
-      view.followWall(wall.view.fitBox.heightScale);
+      view.followWall(wall.view.heightScale);
       this.addOccluder(view.occluder);
       this.trucks.push(view);
       this.truckWalls.push(wall.view);

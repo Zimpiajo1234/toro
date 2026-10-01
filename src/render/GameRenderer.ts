@@ -34,6 +34,8 @@ export class GameRenderer {
   private sized = false;
   /** A level was built and not rendered by update() yet: a zoom reset lands at once (nothing to ease from). */
   private freshLevel = false;
+  /** The optional target hints (setTargetHints), handed to every level built from now on. */
+  private targetHints = false;
 
   constructor(
     private readonly container: HTMLElement,
@@ -75,6 +77,7 @@ export class GameRenderer {
     this.lighting.applyTheme(theme);
 
     const level = new LevelView(snapshot, theme, this.config, this.rig.yaw);
+    level.setTargetHints(this.targetHints);
     this.scene.add(level.root);
     this.level = level;
     this.rig.setFitBoxes(level.fitBoxes);
@@ -109,6 +112,16 @@ export class GameRenderer {
     if (this.disposed || !this.level) return;
     if (event.type === 'levelComplete') this.lighting.setWarm(true);
     this.level.handleEvent(event, snapshot);
+  }
+
+  /**
+   * The optional target hints (Settings.targetHints, P; off until told): while a box is carried, the destinations that
+   * would take it light up (LevelView.setTargetHints). Kept for every level loaded afterwards; turned on or off while a
+   * box is carried, the light eases in or out.
+   */
+  setTargetHints(on: boolean): void {
+    this.targetHints = on;
+    this.level?.setTargetHints(on);
   }
 
   /** Smoothly rotate the camera by 90° (direction -1 = counter-clockwise, 1 = clockwise, seen from above). */
@@ -155,12 +168,18 @@ export class GameRenderer {
   }
 
   /**
-   * Screen bands the DOM overlay keeps over the scene (CSS px from each canvas edge): the camera frames the level in
-   * the rest, easing there (`immediate`: at once, when nothing is framed on screen yet).
+   * Screen bands the DOM overlay keeps over the scene (CSS px from each canvas edge), reported when a level starts, on a
+   * resize and for the title, never mid-level: the camera frames the level in the rest. It glides there with the
+   * title's orbit and the glide into a level, else takes them at once (`immediate`: always at once); a level on screen
+   * is redrawn right away, so the frame being painted (a new level's first, a resize's) already has them.
    */
   setViewInsets(insets: ViewInsets, immediate = false): void {
     if (this.disposed) return;
     this.rig.setInsets(insets, immediate);
+    if (this.level && this.sized) {
+      this.rig.update(0);
+      this.renderer.render(this.scene, this.rig.camera);
+    }
   }
 
   /** Counters of the last rendered frame (dev / diagnostics). */
