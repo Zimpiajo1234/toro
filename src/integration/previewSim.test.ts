@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { PreviewSim, snapshotFromLevel } from '../../dev/previewSim';
 import { GAME_CONFIG } from '../config';
 import { cellToWorld, type CellPos, type GameEvent } from '../core/types';
+import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
 import { validateLevel } from '../data/validateLevel';
 import { GameState } from '../logic/GameState';
@@ -89,8 +90,30 @@ describe('dev render preview simulation', () => {
     expect(sim.drop({ x: 4, z: 2 })).toEqual([{ type: 'actionIdle', carrying: true }]);
   });
 
-  it('sorts like the game: a zone takes the boxes it accepts, by color and / or symbol (level 23)', () => {
-    const sample = LEVELS.find((l) => l.id === 'la-muestra')!;
+  it('sorts like the game: a zone takes the boxes it accepts, by color and / or symbol (the old level 23)', () => {
+    // «La muestra» inline: levels 4–24 were removed for the redesign.
+    const sample = parseLevel(
+      [
+        '# 23 · La muestra',
+        'id: la-muestra',
+        'limit: 1',
+        '',
+        '  0123456789',
+        '0 p.........',
+        '1 .1.2.3.4..',
+        '2 ..........',
+        '3 ..........',
+        '4 ....b..a..',
+        '5 ..c.......',
+        '6 .....d.^.p',
+        '',
+        '1 2 = zona ▲        3 = zona azul ■     4 = zona azul',
+        'a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●',
+        '',
+      ].join('\n'),
+      'la-muestra.level',
+    ).level;
+    expect(snapshotFromLevel(sample)).toEqual(new GameState(sample).getSnapshot());
     const sim = new PreviewSim(sample);
     const zones = sim.snapshot.zones;
     const exact = zones.find((z) => z.accepts.color === 'blue' && z.accepts.symbol === 'square')!;

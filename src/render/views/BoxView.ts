@@ -1,8 +1,11 @@
-import { Euler, Group, Mesh, Quaternion, Vector3, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
+import { Color, Euler, Group, Mesh, Quaternion, Vector3, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
 import type { BoxState, ColorId } from '../../core/types';
 import { damp, easeInOutSine, easeOutBack, easeOutCubic } from '../../core/math';
 import { GAME_CONFIG } from '../../config';
+import type { BoxPalette } from '../../themes/types';
+import { rackSlotY } from '../dims';
 import { OneShot, bump } from '../tween';
+import { FLASH_SEC, LOCK_SEC } from './success';
 
 type Phase = 'rest' | 'picking' | 'carried' | 'dropping';
 
@@ -17,6 +20,12 @@ const PICK_HOP = 0.14;
 const SETTLE_SEC = 0.36;
 /** Pick-target cue: the only "you can act now" affordance, so it must read at play scale (still gentle). */
 const HOVER_LIFT = 0.05;
+/**
+ * Inside a rack slot the beam of the slot above is close (dims RACK): the pick target lifts less and the pick hop is
+ * a small one, so the box never touches it. The glow still reads.
+ */
+const SLOT_HOVER_LIFT = 0.03;
+const SLOT_PICK_HOP = 0.02;
 const HOVER_GLOW = 0.16;
 const CORRECT_GLOW = 0.1;
 const WAVE_GLOW = 0.16;
@@ -36,6 +45,13 @@ const SLIDE_FROM = 0.4;
 /** Opacity of an upper stacked box while it hides something the player needs to see (colors stay readable). */
 const GHOST_OPACITY = 0.55;
 const GHOST_RATE = 6;
+/**
+ * Levels with racks: a box locked on its destiny (BoxState.locked) deepens once it has landed and its target's flash
+ * has settled (views/success), over LOCK_SEC; its faint "correct" lift fades with it, so it reads done and fixed.
+ */
+export const LOCK_DELAY = DROP_GLIDE_SEC + FLASH_SEC;
+/** Back to its own tone if a box ever stops being locked (never expected in play: a locked box cannot be picked). */
+const UNLOCK_RATE = 4;
 const QUARTER = Math.PI / 2;
 /** Larger turns (e.g. a triangle glyph aligning to its zone) finish calmly after landing. */
 const MAX_GLIDE_TURN = 0.9;
@@ -72,6 +88,13 @@ export class BoxView {
   private hover = 0;
   private correctGlow: number;
   private glideTurn = 1;
+  /** Resting in a rack slot (last seen while not carried): sets the hover lift and the next pick hop. */
+  private inSlot: boolean;
+  /** Last seen BoxState.locked, and how far the box has eased to its deeper tone (0 = own tone, 1 = locked tone). */
+  private locked: boolean;
+  private lockTone: number;
+  private lockFrom = 0;
+  private readonly lockAnim = new OneShot(LOCK_SEC);
 
   constructor(
     state: BoxState,
@@ -83,6 +106,11 @@ export class BoxView {
     private readonly stackStep = 0,
     /** Stack levels only: the material may fade (ghost) while the box hides the forklift. */
     ghostable = false,
+    /**
+     * Levels with racks: the tint that takes the box to its locked tone (lockTintOf), multiplying every painted tone of
+     * the box (material colour); null = never tinted (levels without racks: `locked` is always false there).
+     */
+    private readonly lockTint: Color | null = null,
   ) {
     if (ghostable) {
       // Always transparent (opacity 1 while solid) so fading never switches shader programs mid-game.
@@ -95,9 +123,14 @@ export class BoxView {
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.userData.boxId = state.id;
-    this.group.position.set(state.pos.x, state.level * stackStep, state.pos.z);
+    this.inSlot = state.slotId !== null;
+    this.group.position.set(state.pos.x, this.restY(state), state.pos.z);
     this.phase = state.carried ? 'carried' : 'rest';
-    this.correctGlow = state.correct ? 1 : 0;
+    // A level loaded (or restarted) with a box already locked shows it done at once: nothing replays.
+    this.locked = lockTint !== null && state.locked;
+    this.lockTone = this.locked ? 1 : 0;
+    this.correctGlow = state.correct ? 1 - this.lockTone : 0;
+    this.applyLockTone();
   }
 
   /** actionIdle while carrying: a tiny, gentle side-to-side wobble. */
@@ -132,6 +165,8 @@ export class BoxView {
     if (state.carried && (this.phase === 'rest' || this.phase === 'dropping')) this.beginPick();
     else if (!state.carried && (this.phase === 'picking' || this.phase === 'carried')) this.beginDrop(state);
 
+    if (!state.carried) this.inSlot = state.slotId !== null;
+
     const g = this.group;
     switch (this.phase) {
       case 'picking': {
@@ -140,7 +175,7 @@ export class BoxView {
         anchor.getWorldPosition(_target);
         anchor.getWorldQuaternion(_targetQuat);
         g.position.lerpVectors(this.from, _target, e);
-        g.position.y += bump(this.pick.p) * PICK_HOP;
+        g.position.y += bump(this.pick.p) * (this.inSlot ? SLOT_PICK_HOP : PICK_HOP);
         g.quaternion.slerpQuaternions(this.fromQuat, _targetQuat, e);
         if (!this.pick.active) this.phase = 'carried';
         break;
@@ -152,7 +187,7 @@ export class BoxView {
       case 'dropping': {
         this.drop.step(dt);
         const p = this.drop.p;
-        const restY = state.level * this.stackStep;
+        const restY = this.restY(state);
         let e: number;
         if (restY > this.from.y + 1e-3) {
           // Landing up on a stack from lower forks: lift first, then slide (and turn) on top.
@@ -174,13 +209,19 @@ export class BoxView {
       case 'rest':
         g.position.x = damp(g.position.x, state.pos.x, 18, dt);
         g.position.z = damp(g.position.z, state.pos.z, 18, dt);
-        g.position.y = damp(g.position.y, state.level * this.stackStep, 18, dt);
+        g.position.y = damp(g.position.y, this.restY(state), 18, dt);
         g.quaternion.slerp(this.restQuat, 1 - Math.exp(-7 * dt));
         break;
     }
 
     this.applySettle(dt);
+    this.applyLock(state, dt);
     this.applyHighlight(state, isTarget, dt);
+  }
+
+  /** Resting height: its stack level, or the floor of its rack slot. */
+  private restY(state: BoxState): number {
+    return state.slotId !== null ? rackSlotY(state.level) : state.level * this.stackStep;
   }
 
   private beginPick(): void {
@@ -217,15 +258,57 @@ export class BoxView {
     }
   }
 
+  /** Levels with racks: ease to the locked tone once the box is locked (after LOCK_DELAY), back if it ever unlocks. */
+  private applyLock(state: BoxState, dt: number): void {
+    if (!this.lockTint) return;
+    const locked = state.locked;
+    if (locked !== this.locked) {
+      this.locked = locked;
+      if (locked) {
+        this.lockFrom = this.lockTone;
+        this.lockAnim.start(LOCK_DELAY);
+      } else {
+        this.lockAnim.stop();
+      }
+    }
+    const before = this.lockTone;
+    if (this.lockAnim.step(dt)) this.lockTone = this.lockFrom + (1 - this.lockFrom) * easeInOutSine(this.lockAnim.p);
+    else if (!this.lockAnim.active && !this.locked && this.lockTone > 0) {
+      this.lockTone = damp(this.lockTone, 0, UNLOCK_RATE, dt);
+      if (this.lockTone < 1e-3) this.lockTone = 0;
+    }
+    if (this.lockTone !== before) this.applyLockTone();
+  }
+
+  private applyLockTone(): void {
+    const t = this.lockTint;
+    if (!t) return;
+    const k = this.lockTone;
+    this.material.color.setRGB(1 + (t.r - 1) * k, 1 + (t.g - 1) * k, 1 + (t.b - 1) * k);
+  }
+
   private applyHighlight(state: BoxState, isTarget: boolean, dt: number): void {
-    this.hover = damp(this.hover, isTarget && !state.carried ? 1 : 0, 10, dt);
-    this.correctGlow = damp(this.correctGlow, state.correct ? 1 : 0, 3, dt);
+    // A locked box is done: no pick affordance, whatever the hint says.
+    this.hover = damp(this.hover, isTarget && !state.carried && !state.locked ? 1 : 0, 10, dt);
+    this.correctGlow = damp(this.correctGlow, state.correct ? 1 - this.lockTone : 0, 3, dt);
     let yaw = 0;
     if (this.wobble.step(dt)) yaw = Math.sin(this.wobble.p * Math.PI * 5) * (1 - this.wobble.p) * 0.07;
     const wave = this.wave.step(dt) ? bump(this.wave.p) : 0;
     const bob = this.waveBob ? wave * 0.02 : 0;
-    this.mesh.position.y = this.hover * HOVER_LIFT + bob - STACK_SETTLE_DEPTH * this.stackStep * this.stackDip;
+    this.mesh.position.y = this.hover * (this.inSlot ? SLOT_HOVER_LIFT : HOVER_LIFT) + bob - STACK_SETTLE_DEPTH * this.stackStep * this.stackDip;
     this.mesh.rotation.y = yaw;
     this.material.emissiveIntensity = Math.max(this.hover * HOVER_GLOW, this.correctGlow * CORRECT_GLOW) + wave * WAVE_GLOW;
   }
+}
+
+/**
+ * Levels with racks: the material tint (a colour multiplier, linear) that turns a box painted from `palette` into its
+ * locked tone: `locked / base` per channel, clamped to 0‥1, so the base becomes exactly `palette.locked` and the tape
+ * and the symbol deepen by the same factor (their contrast with the base stays).
+ */
+export function lockTintOf(palette: Pick<BoxPalette, 'base' | 'locked'>, target = new Color()): Color {
+  const base = new Color(palette.base);
+  const locked = new Color(palette.locked);
+  const ratio = (a: number, b: number) => (b > 1e-6 ? Math.min(1, Math.max(0, a / b)) : 1);
+  return target.setRGB(ratio(locked.r, base.r), ratio(locked.g, base.g), ratio(locked.b, base.b));
 }

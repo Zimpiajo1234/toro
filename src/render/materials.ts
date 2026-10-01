@@ -58,6 +58,14 @@ export function createGlowMaterial(bag: ResourceBag, glow: ColorRepresentation):
 }
 
 /**
+ * Unlit, opaque, not tone mapped (a rack slot's cue): vertex colours exactly as painted, never shaded by the lights or
+ * the shadows, never faded. Per instance: its colour scales above 1 to glow (views/RackView).
+ */
+export function createCueMaterial(bag: ResourceBag): MeshBasicMaterial {
+  return bag.track(new MeshBasicMaterial({ vertexColors: true, toneMapped: false }));
+}
+
+/**
  * Flat translucent overlay drawn on the floor (rings, drop preview, halos).
  * `vertexAlpha` multiplies by an RGBA vertex color (feathered edges).
  */

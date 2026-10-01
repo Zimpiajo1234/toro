@@ -31,6 +31,44 @@ export const ZONE = {
   padRadius: 0.14,
 } as const;
 
+/**
+ * Storage rack heights (docs/RACKS.md). Slot `n` of a column has its floor (the bottom of the box resting in it) at
+ * `base + n·pitch` (rackSlotY). A slot is taller than a stack level (the box height, 0.64): at a rack the load rides
+ * only `forkCarry` above the slot floor, so it clears the beam of the slot above while it goes in and out.
+ */
+export const RACK = {
+  /** Top of the bottom deck: slot 0's floor. */
+  base: 0.04,
+  pitch: 0.74,
+  /** Height of the cream beams: under every slot floor above the deck and on top of each column. */
+  beam: 0.04,
+  /** Fork top above the selected slot floor at a rack: empty (tines just over the beam) and under the load. */
+  forkRest: 0.03,
+  forkCarry: 0.045,
+} as const;
+
+/**
+ * Loading docks (docs/DOCKS.md). The truck bed is level with the warehouse floor (the dock pit is outside), so a box
+ * on it rests at the heights of a floor stack (level n = n · box height) and the forks need nothing special.
+ */
+export const DOCK = {
+  /** Top of the dock door opening in its wall (the lintel goes on up to the wall top). Over a full 3-level column. */
+  doorTop: 2.02,
+  /** The wall stays below the door down to here: the trailer deck passes over it. */
+  sillTop: -0.07,
+  /** Gap between the door opening and each end of its truck's run of bed cells. */
+  doorInset: 0.03,
+  /** Top of the bed planks: a hair over the floor (no z-fighting); boxes sink into it like into a zone pad. */
+  bedTop: 0.02,
+  /** Driveway outside, a step below the warehouse slab (the dock pit): the truck's wheels stand on it. */
+  apronTop: -0.44,
+} as const;
+
+/** World y of the floor of rack slot `level` (fractional levels interpolate: the forks between slots). */
+export function rackSlotY(level: number): number {
+  return RACK.base + level * RACK.pitch;
+}
+
 export interface BoxDims {
   /** Footprint side (config.box.size). */
   size: number;

@@ -5,20 +5,20 @@
  */
 import {
   DEFAULT_SYMBOL,
-  type ColorId,
+  type ColorSymbol,
   type LevelBox,
   type LevelData,
   type LevelZone,
+  type RackSlot,
   type SymbolId,
   type ZoneCriteria,
   type ZoneState,
 } from './types';
+import { racksOf, slotsOf } from './racks';
+import { trucksOf, truckSlotsOf, usesTargetRules } from './docks';
 
-/** What sorting looks at on a box. */
-export interface Sortable {
-  color: ColorId;
-  symbol: SymbolId;
-}
+/** What sorting looks at on a box: its colour and symbol (boxes alike in both are interchangeable). */
+export type Sortable = ColorSymbol;
 
 /** How a zone matched the box it accepted: the chime's timbre (colour = bell, symbol = wood, exact = both). */
 export type MatchKind = 'color' | 'symbol' | 'exact';
@@ -82,14 +82,31 @@ export function matchKind(criteria: ZoneCriteria): MatchKind {
   return criteria.color === undefined ? 'symbol' : 'exact';
 }
 
-/** Match kind of every zone of a level, by zone id. */
-export function zoneMatchKinds(level: Pick<LevelData, 'zones'>): Map<string, MatchKind> {
-  return new Map(level.zones.map((zone) => [zone.id, matchKind(criteriaOf(zone))]));
+/**
+ * Match kind of every zone of a level, by zone id, of every rack slot with a cue, by slot id, and of every truck slot
+ * (docs/DOCKS.md), by truck slot id.
+ */
+export function zoneMatchKinds(level: Pick<LevelData, 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): Map<string, MatchKind> {
+  const kinds = new Map(level.zones.map((zone) => [zone.id, matchKind(criteriaOf(zone))]));
+  for (const slot of slotsOf(level)) {
+    const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
+    if (cue) kinds.set(slot.id, matchKind(cue));
+  }
+  for (const slot of truckSlotsOf(level)) kinds.set(slot.id, matchKind(slot.cue));
+  return kinds;
 }
 
-/** A level sorts by symbol when any of its boxes or zones names a symbol (levels 1–18 never do). */
-export function usesSymbols(level: Pick<LevelData, 'boxes' | 'zones'>): boolean {
-  return level.boxes.some((b) => b.symbol !== undefined) || level.zones.some((z) => z.symbol !== undefined);
+/**
+ * A level sorts by symbol when any of its boxes, zones, rack slot cues or truck cues names a symbol (levels 1–18
+ * never do).
+ */
+export function usesSymbols(level: Pick<LevelData, 'boxes' | 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): boolean {
+  return (
+    level.boxes.some((b) => b.symbol !== undefined) ||
+    level.zones.some((z) => z.symbol !== undefined) ||
+    racksOf(level).some((rack) => rack.columns.some((slots) => slots.some((slot) => slot.symbol !== undefined))) ||
+    trucksOf(level).some((truck) => truck.columns.some((levels) => levels.some((cue) => cue.symbol !== undefined)))
+  );
 }
 
 /**
@@ -118,4 +135,158 @@ export function assignBoxes(boxes: readonly Sortable[], zones: readonly ZoneCrit
     augment(b);
   }
   return zoneOfBox;
+}
+
+/* ------------------------------------------------------------------ */
+/* Storage racks: cues, destined boxes, unique complete assignment      */
+/* ------------------------------------------------------------------ */
+
+/** Same colour and symbol (identical boxes are interchangeable). */
+export function sameKind(a: Sortable, b: Sortable): boolean {
+  return a.color === b.color && a.symbol === b.symbol;
+}
+
+/** A rack slot's cue as criteria, or null for a «libre» slot (it asks for nothing: plain storage). */
+export function cueOf(slot: RackSlot): ZoneCriteria | null {
+  const cue = criteriaOf(slot);
+  return cue.color === undefined && cue.symbol === undefined ? null : cue;
+}
+
+/**
+ * The box fits the target's cue (a zone's criteria, a slot's cue; never a «libre» slot): what breathes while it is
+ * carried and what the zone magnet pulls toward. In a level with racks it does not mean the box is the right one.
+ */
+export function cueFits(target: { readonly accepts: ZoneCriteria | null }, box: Sortable): boolean {
+  return target.accepts !== null && meets(target.accepts, box);
+}
+
+/** The box is the target's destined one (levels with racks: the only box that lights a zone or a slot). */
+export function isDestined(target: { readonly destined: Sortable | null }, box: Sortable): boolean {
+  return target.destined !== null && sameKind(target.destined, box);
+}
+
+/**
+ * What satisfies a target as its (bottom) box: its destined kind when it has one (levels with racks), else any box its
+ * criteria accept (every level without racks, unchanged).
+ */
+export function satisfiesTarget(
+  target: { readonly accepts: ZoneCriteria | null; readonly destined: Sortable | null },
+  box: Sortable,
+): boolean {
+  return target.destined !== null ? sameKind(target.destined, box) : cueFits(target, box);
+}
+
+/** Result of assignmentsOf. */
+export interface Assignments {
+  /** Complete assignments found, up to the limit asked for (with limit 2: 0, 1 or «two or more»). */
+  count: number;
+  /** The first assignments found (at most two): the box kind each target gets, in target order. */
+  found: Sortable[][];
+}
+
+/**
+ * Complete assignments of `boxes` to `targets`: every target gets one box that meets its criteria and every box is
+ * used, counted up to identical boxes (two assignments differ when some target gets a box of another colour or
+ * symbol). Backtracking over the targets with a matching check at every step, so it only walks branches that end in
+ * an assignment; stops at `limit`. validateLevel needs exactly one in a level with racks.
+ */
+export function assignmentsOf(boxes: readonly Sortable[], targets: readonly ZoneCriteria[], limit = 2): Assignments {
+  const found: Sortable[][] = [];
+  if (boxes.length !== targets.length) return { count: 0, found };
+  const kinds: Sortable[] = [];
+  const left: number[] = [];
+  for (const b of boxes) {
+    const k = kinds.findIndex((kind) => sameKind(kind, b));
+    if (k >= 0) left[k]++;
+    else {
+      kinds.push({ color: b.color, symbol: b.symbol });
+      left.push(1);
+    }
+  }
+  const pick: number[] = [];
+  let count = 0;
+  /** The boxes still unused can fill targets t… (a perfect matching exists). */
+  const feasible = (t: number): boolean => {
+    const rest: Sortable[] = [];
+    kinds.forEach((kind, k) => {
+      for (let n = 0; n < left[k]; n++) rest.push(kind);
+    });
+    return assignBoxes(rest, targets.slice(t)).every((z) => z >= 0);
+  };
+  const place = (t: number): void => {
+    if (t === targets.length) {
+      count++;
+      if (found.length < 2) found.push(pick.map((k) => kinds[k]));
+      return;
+    }
+    for (let k = 0; k < kinds.length && count < limit; k++) {
+      if (left[k] === 0 || !meets(targets[t], kinds[k])) continue;
+      left[k]--;
+      pick.push(k);
+      if (feasible(t + 1)) place(t + 1);
+      pick.pop();
+      left[k]++;
+    }
+  };
+  if (feasible(0)) place(0);
+  return { count, found };
+}
+
+/**
+ * A target of a level with racks or trucks: a floor zone, a rack slot with a cue («libre» slots are never targets) or
+ * a truck slot (every level of a truck bed column, docs/DOCKS.md).
+ */
+export interface LevelTarget {
+  kind: 'zone' | 'slot' | 'truck';
+  /** Zone id, slot id or truck slot id. */
+  id: string;
+  /** Index in level.zones, in the flattened slot list (core/racks `slotsOf`) or in core/docks `truckSlotsOf`. */
+  index: number;
+  criteria: ZoneCriteria;
+}
+
+/**
+ * Every target of a level: its zones (level order), then its slots with a cue (core/racks `slotsOf` order), then its
+ * truck slots (core/docks `truckSlotsOf` order).
+ */
+export function targetsOf(level: Pick<LevelData, 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): LevelTarget[] {
+  const targets: LevelTarget[] = level.zones.map((zone, index) => ({ kind: 'zone', id: zone.id, index, criteria: criteriaOf(zone) }));
+  slotsOf(level).forEach((slot, index) => {
+    const cue = cueOf(slot.rack.columns[slot.column][slot.level]);
+    if (cue) targets.push({ kind: 'slot', id: slot.id, index, criteria: cue });
+  });
+  truckSlotsOf(level).forEach((slot, index) => targets.push({ kind: 'truck', id: slot.id, index, criteria: criteriaOf(slot.cue) }));
+  return targets;
+}
+
+/** The destined box kind of every target of a level with racks or trucks (docs/RACKS.md, docs/DOCKS.md). */
+export interface LevelDestinies {
+  /** Per zone, in level.zones order. */
+  zones: Sortable[];
+  /** Per slot, in core/racks `slotsOf` order: its destined kind, null for a «libre» slot. */
+  slots: (Sortable | null)[];
+  /** Per truck slot, in core/docks `truckSlotsOf` order (empty without trucks). */
+  trucks: Sortable[];
+}
+
+/**
+ * Levels with racks or trucks: the kind of box the level's unique complete assignment puts on every zone, slot and
+ * truck slot (identical boxes are interchangeable, so a destiny is a kind, not a box id). null for a level with
+ * neither, or one with no complete assignment or more than one (validateLevel refuses those).
+ */
+export function levelDestinies(level: Pick<LevelData, 'boxes' | 'zones'> & Partial<Pick<LevelData, 'racks' | 'trucks'>>): LevelDestinies | null {
+  if (!usesTargetRules(level)) return null;
+  const targets = targetsOf(level);
+  const { count, found } = assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria));
+  if (count !== 1) return null;
+  const [assignment] = found;
+  const zones = new Array<Sortable>(level.zones.length);
+  const slots = new Array<Sortable | null>(slotsOf(level).length).fill(null);
+  const trucks = new Array<Sortable>(truckSlotsOf(level).length);
+  targets.forEach((t, i) => {
+    if (t.kind === 'zone') zones[t.index] = assignment[i];
+    else if (t.kind === 'slot') slots[t.index] = assignment[i];
+    else trucks[t.index] = assignment[i];
+  });
+  return { zones, slots, trucks };
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
 import { accepts, criteriaOf, symbolOf } from '../core/sorting';
 import { cellToWorld, type BoxState, type GameSnapshot, type LevelData, type ZoneState } from '../core/types';
+import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
 import { validateLevel } from '../data/validateLevel';
 import { defaultTheme } from '../themes/default';
@@ -49,13 +50,90 @@ function snapshot(level: LevelData = LEVEL): GameSnapshot {
   return {
     level,
     forklift: { pos: cellToWorld(level.forklift, size), heading: Math.PI / 2, speed: 0, forkLift: 0, forkHeight: 0, carrying: null, wheelSpin: 0, steer: 0 },
-    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, symbol: symbolOf(b), kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, correct: false })),
-    zones: level.zones.map((z) => ({ id: z.id, color: z.color ?? null, accepts: criteriaOf(z), cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color ?? null], stack: [], occupiedBy: null, satisfied: false, next: z.color ?? null })),
-    hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0 },
+    boxes: level.boxes.map((b) => ({ id: b.id, color: b.color, symbol: symbolOf(b), kind: 'standard' as const, pos: cellToWorld(b, size), cell: { x: b.x, z: b.z }, level: 0, carried: false, zoneId: null, slotId: null, correct: false, locked: false })),
+    zones: level.zones.map((z) => ({ id: z.id, color: z.color ?? null, accepts: criteriaOf(z), cell: { x: z.x, z: z.z }, pos: cellToWorld(z, size), recipe: [z.color ?? null], stack: [], occupiedBy: null, satisfied: false, next: z.color ?? null, destined: null })),
+    slots: [],
+    hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null },
     completed: false,
     progress: { satisfied: 0, total: level.zones.length },
   };
 }
+
+/** Inline `.level` layouts (the shipped levels 4–24 are being redone: tests never depend on them). */
+const level = (text: string): LevelData => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
+
+/** Sorting sample (the former level 23 «La muestra»): symbol and colour criteria, a trap for blue ▲. */
+const SAMPLE_LEVEL = level(`
+# 1 · La muestra
+id: la-muestra
+limit: 1
+ventanas: norte 2-4, oeste 3-4
+
+  0123456789
+0 p.........
+1 .1.2.3.4..
+2 ..........
+3 ..........
+4 ....b..a..
+5 ..c.......
+6 .....d.^.p
+
+1 2 = zona ▲        3 = zona azul ■     4 = zona azul
+a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●
+`);
+
+/** A big sorting room (the former level 24 «El gran reparto»): every colour and symbol. */
+const BIG_SORTING_LEVEL = level(`
+# 2 · El gran reparto
+id: el-gran-reparto
+limit: 1
+ventanas: norte 3-5, norte 7-8, oeste 3-5
+
+  012345678901
+0 p..........p
+1 .1.2.3.4.5..
+2 ............
+3 .6...e.g.##.
+4 ...f........
+5 .7...h.b.d..
+6 ....c.......
+7 .8.......a.<
+8 p...........
+
+1 = zona ▲             2 = zona lavanda ▲     3 = zona azul          4 = zona menta ●
+5 = zona ◆             6 = zona amarillo      7 = zona coral ■       8 = zona ✚
+a = caja lavanda ✚     b = caja azul ▲        c = caja menta ▲       d = caja amarillo ◆
+e = caja coral ◆       f = caja menta ●       g = caja coral ■       h = caja lavanda ▲
+`);
+
+/** A big classic room (the former level 12 «El gran almacén»): colours only, a box on a wrong zone at start. */
+const BIG_CLASSIC_LEVEL = level(`
+# 3 · El gran almacén
+id: el-gran-almacen
+limit: 1
+ventanas: norte 2-4, norte 9-11, oeste 7-8
+
+   01234567890123
+ 0 p............p
+ 1 .12345.v67890.
+ 2 ..............
+ 3 .a............
+ 4 ...#b.##c.#d..
+ 5 ...#..##..#...
+ 6 ...#..##..#...
+ 7 ...#..##..#...
+ 8 .e.......f....
+ 9 .....g......h.
+10 p.............
+
+1 = zona azul                 2 = zona menta                3 = zona amarillo
+4 = zona coral                5 = zona lavanda + caja coral
+6 = zona lavanda              7 = zona coral                8 = zona amarillo
+9 = zona menta + caja azul    0 = zona azul
+a = caja lavanda              b = caja azul                 c = caja coral
+d = caja menta                e = caja amarillo             f = caja menta
+g = caja amarillo             h = caja lavanda
+`);
 
 function step(view: LevelView, snap: GameSnapshot, seconds: number, yaw = Math.PI / 4): void {
   for (let i = 0; i < Math.round(seconds * 60); i++) view.update(snap, 1 / 60, i / 60, yaw, 0);
@@ -426,7 +504,7 @@ describe('LevelView: stacks', () => {
 });
 
 describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
-  const SAMPLE = LEVELS.find((l) => l.id === 'la-muestra')!;
+  const SAMPLE = SAMPLE_LEVEL;
   const zoneGroup = (view: LevelView, id: string) => view.root.children.find((c) => c.userData.zoneId === id)!;
   const pad = (view: LevelView, id: string) => zoneGroup(view, id).children[1] as Mesh<BufferGeometry, MeshStandardMaterial>;
   const lid = (view: LevelView, id: string) => boxGroup(view, id).children[0] as Mesh<BufferGeometry, MeshStandardMaterial>;
@@ -491,7 +569,7 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
   });
 
   it('classic levels keep the tone-on-tone glyph of their color on every pad, and the small lid glyph', () => {
-    for (const level of [LEVEL, ...LEVELS.slice(0, 18)]) {
+    for (const level of [LEVEL, BIG_CLASSIC_LEVEL, ...LEVELS]) {
       const snap = new GameState(level).getSnapshot();
       const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
       for (const z of snap.zones) {
@@ -599,10 +677,10 @@ describe('LevelView: sorting by color + symbol (docs/SORTING.md)', () => {
   });
 
   it('stays compact and releases everything on dispose', () => {
-    const snap = new GameState(LEVELS.find((l) => l.id === 'el-gran-reparto')!).getSnapshot();
+    const snap = new GameState(BIG_SORTING_LEVEL).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
     // One mesh per pad (the engraving is part of it), one per box, as in the classic levels.
-    const classic = new LevelView(new GameState(LEVELS[11]).getSnapshot(), defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const classic = new LevelView(new GameState(BIG_CLASSIC_LEVEL).getSnapshot(), defaultTheme, GAME_CONFIG, Math.PI / 4);
     expect(meshCount(view.root)).toBeLessThanOrEqual(meshCount(classic.root) + 2);
     classic.dispose();
     const geometries = new Set<BufferGeometry>();

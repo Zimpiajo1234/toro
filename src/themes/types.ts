@@ -15,6 +15,12 @@ export interface BoxPalette {
    * readable from the default camera.
    */
   ink: string;
+  /**
+   * Levels with storage racks: the box once it is done and fixed on its destined zone or slot (BoxState.locked). A
+   * deeper tone of `base` (same hue, never black, never red): the whole box eases toward it (render scales every
+   * painted tone by `locked / base`, so the tape and the symbol keep their contrast).
+   */
+  locked: string;
 }
 
 export interface ZonePalette {
@@ -40,6 +46,52 @@ export interface Theme {
   wall: { base: string; trim: string; top: string };
   window: { frame: string; glass: string; light: string };
   shelf: { frame: string; board: string; storedBoxes: string[] };
+  /**
+   * Storage racks (docs/RACKS.md): painted metal, clearly apart from the wooden shelves. `frame` = the slate uprights,
+   * `beam` = the cream load beams, `panel` = the plain back and end panels (a slot's cue is drawn on them), `deck` =
+   * the deck and slot floors, `line` = the loading line painted on the floor in front. Never a functional hue.
+   * Cues are unlit stickers: a colour cue is the box's own `base` rimmed in its `ink`; a symbol-only cue is `cueFill`
+   * rimmed in `cueRim` (neutral, never a functional hue); every glyph is `cueInk` (deep and bold, never black).
+   */
+  rack: {
+    frame: string;
+    beam: string;
+    panel: string;
+    deck: string;
+    line: string;
+    cueFill: string;
+    cueRim: string;
+    cueInk: string;
+  };
+  /**
+   * Loading docks (docs/DOCKS.md): the dock door in its wall and the truck parked in it. Soft, never a functional hue
+   * (the box colours) and never red. `cab` / `cabAccent` (a stripe) / `roof` = the cab, `glass` its windows, `lamp` its
+   * headlights; `deck` / `deckLine` = the wooden bed planks and their seams; `trim` = rails, chassis, bumpers and the
+   * cue board's posts and bars; `board` = the plain panels of the cue board (its stickers are Theme.rack.cue*, like a
+   * rack's); `wheel` / `hub`; `leveller` = the dock leveller plate at the bed's loading edge; `apron` / `apronEdge` /
+   * `apronLine` = the driveway outside, the face of the dock pit and its painted guide lines; `doorFrame` / `shutter` =
+   * the door opening's frame and its rolled-up door; `rubber` = the dock seals and bumpers (warm deep gray, never black).
+   */
+  truck: {
+    cab: string;
+    cabAccent: string;
+    roof: string;
+    glass: string;
+    lamp: string;
+    deck: string;
+    deckLine: string;
+    trim: string;
+    board: string;
+    wheel: string;
+    hub: string;
+    leveller: string;
+    apron: string;
+    apronEdge: string;
+    apronLine: string;
+    doorFrame: string;
+    shutter: string;
+    rubber: string;
+  };
   plant: { pot: string; soil: string; leaves: string[] };
   forklift: {
     body: string;

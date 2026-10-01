@@ -51,6 +51,10 @@ function browserStorage(): Storage | null {
  * Callers talk in level indices, but levels are resolved by id against `levelIds` (the current play order):
  * inserting a warehouse mid-sequence never re-locks a level nor moves "Continuar" to another one.
  *
+ * A save written by a longer game (levels removed since, e.g. levels 4–24 on 2026-09-30) reads within the current
+ * levels: indices past the last level read as the last one, and times of ids no longer in `levelIds` are ignored
+ * (kept in the document untouched, never counted as progress). Reading never rewrites the document.
+ *
  * @param storage `undefined` = use `localStorage` when available; `null` = memory only.
  * @param levelIds Level ids in play order (default: the game's level list).
  */
@@ -105,16 +109,17 @@ export class ProgressStore {
 
   /**
    * Highest unlocked level index: the one after the furthest completed level (a completed level always has a
-   * ranking), or the saved index when that is higher (older saves). Never locks anything back.
+   * ranking), or the saved index when that is higher (older saves). Never locks anything back, and never points past
+   * the last level (a save from a game with more levels).
    */
   getHighestUnlocked(): number {
     this.sync();
-    const last = this.levelIds.length - 1;
+    const last = this.lastIndex();
     let highest = this.data.highestUnlocked;
     this.levelIds.forEach((id, index) => {
       if (this.data.rankings.has(id)) highest = Math.max(highest, Math.min(index + 1, last));
     });
-    return highest;
+    return Math.min(highest, last);
   }
 
   /** Unlocks every level up to `index` (never locks anything back). */
@@ -125,12 +130,15 @@ export class ProgressStore {
     this.save();
   }
 
-  /** Index of the level "Continuar" leads to: the saved level id in the current order, else the saved index. */
+  /**
+   * Index of the level "Continuar" leads to: the saved level id in the current order, else the saved index (never past
+   * the last level).
+   */
   getLastLevel(): number {
     this.sync();
     const { lastLevelId, lastLevel } = this.data;
     const index = lastLevelId === null ? -1 : this.levelIds.indexOf(lastLevelId);
-    return index >= 0 ? index : lastLevel;
+    return index >= 0 ? index : Math.min(lastLevel, this.lastIndex());
   }
 
   setLastLevel(index: number): void {
@@ -143,9 +151,14 @@ export class ProgressStore {
     this.save();
   }
 
-  /** True once the player has played beyond a fresh start (title shows "Continuar"). */
+  /**
+   * True once the player has played beyond a fresh start (title shows "Continuar"). Times of levels no longer in the
+   * game do not count.
+   */
   hasProgress(): boolean {
-    return this.getHighestUnlocked() > 0 || this.getLastLevel() > 0 || this.data.rankings.size > 0;
+    // The getters re-read storage first.
+    if (this.getHighestUnlocked() > 0 || this.getLastLevel() > 0) return true;
+    return this.levelIds.some((id) => this.data.rankings.has(id));
   }
 
   getSettings(): Settings {
@@ -170,6 +183,11 @@ export class ProgressStore {
       changed = true;
     }
     if (changed) this.save();
+  }
+
+  /** Index of the last level (0 with no levels at all). */
+  private lastIndex(): number {
+    return Math.max(0, this.levelIds.length - 1);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LEVELS } from '../data/levels';
 import { ProgressStore } from './ProgressStore';
 import { insertTime, parseProgress, PROGRESS_VERSION } from './progressData';
 
@@ -50,21 +51,21 @@ class ThrowingStorage extends FakeStorage {
 
 describe('ProgressStore — times', () => {
   it('starts empty', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     expect(p.getBest('a')).toBeNull();
     expect(p.getRanking('a')).toEqual([]);
     expect(p.hasProgress()).toBe(false);
   });
 
   it('first record is a new best at rank 1', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     expect(p.record('a', 42_300)).toEqual({ bestMs: 42_300, isNewBest: true, previousBestMs: null, rank: 1 });
     expect(p.getBest('a')).toBe(42_300);
     expect(p.hasProgress()).toBe(true);
   });
 
   it('keeps the best and reports slower times without replacing it', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     p.record('a', 40_000);
     expect(p.record('a', 45_000)).toEqual({ bestMs: 40_000, isNewBest: false, previousBestMs: 40_000, rank: 2 });
     expect(p.record('a', 30_000)).toEqual({ bestMs: 30_000, isNewBest: true, previousBestMs: 40_000, rank: 1 });
@@ -72,7 +73,7 @@ describe('ProgressStore — times', () => {
   });
 
   it('an equal time is not a new best and ranks after the existing one', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     p.record('a', 40_000);
     const r = p.record('a', 40_000);
     expect(r.isNewBest).toBe(false);
@@ -80,7 +81,7 @@ describe('ProgressStore — times', () => {
   });
 
   it('keeps an ascending top-5 per level and reports rank 0 outside it', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     for (const t of [50, 20, 40, 10, 30]) p.record('a', t * 1000);
     expect(p.getRanking('a')).toEqual([10_000, 20_000, 30_000, 40_000, 50_000]);
     expect(p.record('a', 60_000).rank).toBe(0);
@@ -89,7 +90,7 @@ describe('ProgressStore — times', () => {
   });
 
   it('tracks levels independently', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     p.record('a', 10_000);
     p.record('b', 20_000);
     expect(p.getBest('a')).toBe(10_000);
@@ -98,7 +99,7 @@ describe('ProgressStore — times', () => {
 
   it('ignores invalid times', () => {
     const storage = new FakeStorage();
-    const p = new ProgressStore(storage, KEY);
+    const p = new ProgressStore(storage, KEY, IDS);
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -5, 0]) {
       expect(p.record('a', bad)).toEqual({ bestMs: 0, isNewBest: false, previousBestMs: null, rank: 0 });
     }
@@ -109,7 +110,7 @@ describe('ProgressStore — times', () => {
   });
 
   it('getRanking returns a copy', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     p.record('a', 10_000);
     p.getRanking('a').push(1);
     expect(p.getRanking('a')).toEqual([10_000]);
@@ -118,7 +119,7 @@ describe('ProgressStore — times', () => {
 
 describe('ProgressStore — levels & settings', () => {
   it('unlock only moves forward and ignores invalid indices', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     expect(p.getHighestUnlocked()).toBe(0);
     p.unlock(2);
     p.unlock(1);
@@ -129,7 +130,7 @@ describe('ProgressStore — levels & settings', () => {
   });
 
   it('stores the last level', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     p.setLastLevel(3);
     p.setLastLevel(Number.NaN);
     expect(p.getLastLevel()).toBe(3);
@@ -137,7 +138,7 @@ describe('ProgressStore — levels & settings', () => {
   });
 
   it('merges settings and returns copies', () => {
-    const p = new ProgressStore(new FakeStorage(), KEY);
+    const p = new ProgressStore(new FakeStorage(), KEY, IDS);
     expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
     p.setSettings({ muted: true });
     p.getSettings().showTimer = false;
@@ -163,7 +164,7 @@ describe('ProgressStore — levels & settings', () => {
 describe('ProgressStore — persistence', () => {
   it('round-trips through storage under one versioned key', () => {
     const storage = new FakeStorage();
-    const a = new ProgressStore(storage, KEY);
+    const a = new ProgressStore(storage, KEY, IDS);
     a.record('lvl-1', 31_000);
     a.record('lvl-1', 29_500);
     a.unlock(1);
@@ -173,7 +174,7 @@ describe('ProgressStore — persistence', () => {
     expect(storage.length).toBe(1);
     expect(JSON.parse(storage.getItem(KEY) ?? '{}').version).toBe(PROGRESS_VERSION);
 
-    const b = new ProgressStore(storage, KEY);
+    const b = new ProgressStore(storage, KEY, IDS);
     expect(b.getRanking('lvl-1')).toEqual([29_500, 31_000]);
     expect(b.getHighestUnlocked()).toBe(1);
     expect(b.getLastLevel()).toBe(1);
@@ -184,7 +185,7 @@ describe('ProgressStore — persistence', () => {
     for (const bad of ['{nope', '[]', 'null', JSON.stringify({ version: 99, highestUnlocked: 4 })]) {
       const storage = new FakeStorage();
       storage.setItem(KEY, bad);
-      const p = new ProgressStore(storage, KEY);
+      const p = new ProgressStore(storage, KEY, IDS);
       expect(p.hasProgress()).toBe(false);
       expect(p.getSettings()).toEqual({ muted: false, showTimer: true, testMode: false });
     }
@@ -209,7 +210,7 @@ describe('ProgressStore — persistence', () => {
   });
 
   it('never throws when storage throws, and keeps working in memory', () => {
-    const p = new ProgressStore(new ThrowingStorage(), KEY);
+    const p = new ProgressStore(new ThrowingStorage(), KEY, IDS);
     expect(p.record('a', 10_000).isNewBest).toBe(true);
     p.unlock(3);
     p.setLastLevel(2);
@@ -260,6 +261,61 @@ describe('ProgressStore — levels by id', () => {
     storage.setItem(KEY, JSON.stringify({ version: PROGRESS_VERSION, lastLevel: 1, lastLevelId: 'gone', rankings: {} }));
     expect(p.getLastLevel()).toBe(1);
     expect(parseProgress(storage.getItem(KEY)).lastLevelId).toBe('gone');
+  });
+
+  it('a save from a game with more levels reads within the current ones, and reading never rewrites it', () => {
+    // Written by a 24-level build (levels 4–24 were removed on 2026-09-30): every level cleared, "Continuar" on a
+    // level that is gone.
+    const storage = new FakeStorage();
+    const old = Array.from({ length: 24 }, (_, i) => `level-${i + 1}`);
+    const raw = JSON.stringify({
+      version: PROGRESS_VERSION,
+      rankings: Object.fromEntries(old.map((id) => [id, [60_000]])),
+      highestUnlocked: 23,
+      lastLevel: 12,
+      lastLevelId: 'level-13',
+      settings: { muted: false, showTimer: true },
+    });
+    storage.setItem(KEY, raw);
+    const writes = storage.writes;
+    const p = new ProgressStore(storage, KEY, old.slice(0, 3));
+    expect(p.getHighestUnlocked()).toBe(2); // the last level, not beyond
+    expect(p.getLastLevel()).toBe(2);
+    expect(p.hasProgress()).toBe(true);
+    expect(p.getBest('level-3')).toBe(60_000);
+    // Nothing unlocks past the end, and the removed levels' times stay in the document for a later build.
+    p.unlock(2);
+    expect(storage.writes).toBe(writes);
+    expect(storage.getItem(KEY)).toBe(raw);
+  });
+
+  it('times of levels no longer in the game are not progress', () => {
+    const storage = new FakeStorage();
+    storage.setItem(KEY, JSON.stringify({ version: PROGRESS_VERSION, rankings: { gone: [30_000] }, highestUnlocked: 0, lastLevel: 0 }));
+    const p = new ProgressStore(storage, KEY, IDS);
+    expect(p.hasProgress()).toBe(false);
+    expect(p.getHighestUnlocked()).toBe(0);
+    expect(p.getBest('gone')).toBe(30_000); // still there, only ignored
+  });
+
+  it('with a single level, completing it is progress and nothing points past it', () => {
+    const p = new ProgressStore(new FakeStorage(), KEY, ['solo']);
+    expect(p.hasProgress()).toBe(false);
+    p.record('solo', 12_000);
+    p.setLastLevel(0);
+    expect(p.getHighestUnlocked()).toBe(0);
+    expect(p.getLastLevel()).toBe(0);
+    expect(p.hasProgress()).toBe(true);
+  });
+
+  it("defaults to the game's levels", () => {
+    const storage = new FakeStorage();
+    storage.setItem(KEY, JSON.stringify({ version: PROGRESS_VERSION, rankings: {}, highestUnlocked: 99, lastLevel: 99 }));
+    const p = new ProgressStore(storage, KEY);
+    expect(p.getHighestUnlocked()).toBe(LEVELS.length - 1);
+    expect(p.getLastLevel()).toBe(LEVELS.length - 1);
+    p.record(LEVELS[0].id, 10_000);
+    expect(p.getBest(LEVELS[0].id)).toBe(10_000);
   });
 });
 

@@ -2,6 +2,11 @@
 
 Decisiones (2026-09-28): altura máx. 3 (`stackLimit` por nivel, niveles 13–14 = 2) · apilar en cualquier celda · recetas mixtas.
 
+**Niveles retirados (2026-09-30):** los niveles 13–18 (con todos los del 4 al 24) se retiraron para rehacerlos; hoy
+ningún nivel del juego apila. El sistema sigue entero (recetas, pilas iniciales, horquilla, render, audio) y sus tests
+usan disposiciones escritas en el propio test (entre ellas los antiguos 13, 14, 16 y 17, en
+`src/data/levels/metrics.test.ts`).
+
 ## Reglas
 1. Cualquier caja apoyada es apilable hasta `stackLimit` (por defecto `stack.maxHeight` = 3 si el nivel apila —receta > 1 o pila inicial—, si no 1: los niveles clásicos no apilan). Sin teclas nuevas: Espacio.
 2. Recoger: coge siempre la caja superior de la pila frente a la horquilla.
@@ -19,8 +24,8 @@ Decisiones (2026-09-28): altura máx. 3 (`stackLimit` por nivel, niveles 13–14
 - Posar encima de una zona cumplida: la zona se libera (brillo y tic) cuando la caja aterriza. Quitar la caja errónea de encima y dejar la zona cumplida otra vez: su campanita (`zoneRestored`), sin fanfarria.
 - Oclusión: una caja apilada (nivel > 0) se vuelve fantasma (0,55) si tapa la cabina, la tapa de otra caja o una zona; las bases nunca; todo vuelve a sólido al completar el nivel.
 
-## Niveles 13–18
-13 pila de 2, base ya cerca · 14 pila de 2 con la de arriba más cerca (orden) · 15 dos pilas de 2 · 16 desmontar pila mal hecha · 17 pila de 3 + aparcamiento · 18 mixto final. Todos empiezan conduciendo en sentido contrario a la cámara.
+## Niveles 13–18 (retirados, para rehacerlos)
+Lo que enseñaban: 13 pila de 2, base ya cerca · 14 pila de 2 con la de arriba más cerca (orden) · 15 dos pilas de 2 · 16 desmontar pila mal hecha · 17 pila de 3 + aparcamiento · 18 mixto final. Todos empezaban conduciendo en sentido contrario a la cámara.
 
 ## Técnica
 - `LevelData.stackLimit?`, `LevelZone.recipe?`; `validateLevel`: recetas válidas, longitud ≤ límite, colores de cajas = suma de recetas, cajas iniciales pueden apilarse (mismas `x, z`, de abajo arriba en orden de lista; sin campo de altura).
@@ -28,4 +33,5 @@ Decisiones (2026-09-28): altura máx. 3 (`stackLimit` por nivel, niveles 13–14
 - Horquilla: objetivo = máx(`dropLevel`, altura de paso) al cargar; ritmo `forkRiseRate` = `forkRiseSpeed / (1 + 0,25·nivel)` (`logic/forkRise.ts`, `forkRiseSpeed` 3,2). Todo condicionado a `stackLimit > 1`.
 - Render: y = level·size; alturas de horquilla discretas; receta en zona; preview con altura; fantasmas por oclusión.
 - Audio: variantes de drop por altura; arpegio al completar pila; `setMotor(…, forkHeight)`.
-- Tests: solver de levels.test y autopiloto de integración con estado de pila por celda.
+- Tests: solver de levels.test / metrics.test (sobre disposiciones escritas en el test) y autopiloto de integración con
+  estado de pila por celda.

@@ -4,12 +4,13 @@ import { GAME_CONFIG } from '../../config';
 import { BOX_KINDS, COLOR_IDS } from '../../core/types';
 import { defaultTheme } from '../../themes/default';
 import type { GlyphShape } from '../../themes/types';
-import { boxDims, ZONE } from '../dims';
+import { RACK, boxDims, ZONE } from '../dims';
 import { GLYPH_SYMMETRY, glyphShape } from '../glyphs';
 import { PartList } from '../paint';
 import { flatShapeGeometry } from '../shapes';
 import { BOX_BUILDERS, SYMBOL_RATIO, buildBoxGeometry } from './box';
 import { FORKLIFT_LAYOUT, buildForkliftGeometry } from './forklift';
+import { PANEL_HEIGHT, SLOT_GLOW, buildSlotGlowGeometry } from './rack';
 import { ENGRAVE, RECIPE_MARKER, buildHaloGeometry, buildRecipeGeometry, buildZoneGeometry, recipeStepY } from './zone';
 
 function bounds(geo: BufferGeometry): Box3 {
@@ -212,5 +213,33 @@ describe('forklift geometry', () => {
     expect(wheel.min.y).toBeLessThan(-GAME_CONFIG.forklift.wheelRadius + 0.01);
     expect(wheel.min.y).toBeGreaterThanOrEqual(-GAME_CONFIG.forklift.wheelRadius - 1e-6);
     expect(FORKLIFT_LAYOUT.trackHalf).toBeLessThan(GAME_CONFIG.forklift.bodyRadius);
+  });
+});
+
+describe('rack slot glow band', () => {
+  it('frames the slot opening on both faces, solid then feathered, never reaching into the slot above or below', () => {
+    const geo = buildSlotGlowGeometry();
+    const pos = geo.getAttribute('position');
+    const col = geo.getAttribute('color');
+    expect(col.itemSize).toBe(4);
+    const faces = new Set<number>();
+    let solid = 0;
+    let clear = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const x = Math.abs(pos.getX(i));
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      faces.add(Math.sign(z));
+      // Just outside the front and back faces (slot-local ±0.5), over the uprights and the beams around the opening.
+      expect(Math.abs(z)).toBeCloseTo(0.5 + SLOT_GLOW.gap, 6);
+      expect(x).toBeLessThan(0.55);
+      expect(y).toBeGreaterThanOrEqual(-RACK.beam - 0.02);
+      expect(y).toBeLessThanOrEqual(PANEL_HEIGHT + RACK.beam + 0.02);
+      if (col.getW(i) > 0.99) solid++;
+      if (col.getW(i) < 0.01) clear++;
+    }
+    expect([...faces].sort()).toEqual([-1, 1]);
+    expect(solid).toBeGreaterThan(0);
+    expect(clear).toBeGreaterThan(0);
   });
 });

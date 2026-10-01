@@ -23,6 +23,21 @@ describe('resolveKey', () => {
     expect(resolveKey('', 'Esc')).toBe('back');
   });
 
+  it('binds the fork level keys: F up, V down (docs/RACKS.md), by position or character', () => {
+    expect(resolveKey('KeyF', 'f')).toBe('forkUp');
+    expect(resolveKey('KeyV', 'v')).toBe('forkDown');
+    expect(resolveKey('', 'F')).toBe('forkUp');
+    expect(resolveKey(undefined, 'v')).toBe('forkDown');
+  });
+
+  it('no two game keys share a physical key or a character', () => {
+    // F / V were free; the fork keys must not steal a key another binding already uses.
+    const codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyM', 'KeyT', 'KeyU', 'KeyF', 'KeyV', 'Space', 'Enter', 'Escape'];
+    const bound = codes.map((c) => resolveKey(c, ''));
+    expect(bound.every((b) => b !== null)).toBe(true);
+    expect(new Set(bound).size).toBe(bound.length);
+  });
+
   it('prefers the physical code over the character (AZERTY: the A key sits on KeyQ)', () => {
     expect(resolveKey('KeyQ', 'a')).toBe('rotateLeft');
     expect(resolveKey('KeyW', 'z')).toBe('up');

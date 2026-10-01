@@ -48,11 +48,48 @@ export const CHIME_LEVELS: Readonly<Record<MatchKind, { bell: number; wood: numb
   symbol: { bell: 0, wood: 0.64, final: 0.36 },
   exact: { bell: 0.4, wood: 0.38, final: 0.3 },
 };
+/**
+ * [ratio, relative level, decay factor] — a damped painted-steel beam (storage racks): its two lowest free-bar modes.
+ * Inharmonic, so the "toc" reads as metal and never as a note (the success chime stays the only pitched sound).
+ */
+export const BEAM_MODES: readonly (readonly [number, number, number])[] = [
+  [1, 1, 1],
+  [2.76, 0.45, 0.5],
+];
+/** Low-pass over the beam modes: warm, never a clang. */
+export const BEAM_LOWPASS_HZ = 2400;
+/**
+ * The wrong-target buzz (levels with racks): its hum starts here and sags to WRONG_BUZZ_SAG of it. Low, yet still in
+ * the range laptop speakers reproduce (a sub-only "no" would vanish on them).
+ */
+export const WRONG_BUZZ_HZ = 185;
+export const WRONG_BUZZ_SAG = 0.86;
+/** Its partner sits this ratio above the hum: ≈ 10 Hz of slow beating, the soft "bzz" (a flutter, never a rasp). */
+export const WRONG_BUZZ_DETUNE = 1.055;
+/** Warm low-pass over the buzz: no bright partials, a muffled "no" behind a closed door. */
+export const WRONG_BUZZ_LOWPASS_HZ = 620;
+
+/**
+ * [frequency Hz, peak, decay τ s] — the wooden trailer floor of a truck bed (loading docks): its two lowest body modes,
+ * a hollow "thunk". The pair is inharmonic (≈ 1 : 1.9), so it reads as a resonant box of planks, never as a note.
+ */
+export const TRUCK_BED_MODES: readonly (readonly [number, number, number])[] = [
+  [150, 0.2, 0.075],
+  [286, 0.12, 0.05],
+];
+/** The planks' body sags a little in pitch as it rings (a soft "thunk", not a "tock"). */
+export const TRUCK_BED_SAG = 0.82;
+/** Warm low-pass over the bed's body. */
+export const TRUCK_BED_LOWPASS_HZ = 900;
+/** The trailer's hollow: a boxy cavity resonance under the planks. */
+export const TRUCK_BED_CAVITY_HZ = 330;
+/** Per truck level above the bed, the bed's body and hollow answer this much more faintly (the box below damps it). */
+export const TRUCK_LEVEL_DAMP = 0.55;
 
 /**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
- * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh, nothing sounds
- * "wrong".
+ * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh; the only "no" is
+ * the soft, muffled wrong-target buzz of the levels with racks (wrongBuzz).
  */
 export class SfxPlayer {
   private readonly pool: VoicePool;
@@ -77,17 +114,28 @@ export class SfxPlayer {
   }
 
   /**
-   * Light wooden knock + a soft servo glide as the forks take the box. `level` = stack height it was lifted from:
-   * higher up, the knock and servo sit a little higher and the servo glides a little longer.
+   * Light wooden knock as the forks take the box. `level` = stack height it was lifted from: higher up, the knock sits
+   * a little higher. The lift itself is the forks' continuous pump whir (MotorSound), which follows the real motion,
+   * so there is no one-shot servo glide on top of it (the two would stack into a blur).
    */
   pickup(t: number, level = 0): void {
     const r = this.rng;
     const lift = 1 + LEVEL_PITCH * Math.max(0, level);
     this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1150 * lift, VARIANCE), q: 3.2, peak: vary(r, 0.5, VARIANCE), attack: 0.002, tau: 0.018 });
     this.toneHit(t, { type: 'sine', freq: vary(r, 196, VARIANCE), freqEnd: vary(r, 150, VARIANCE), glideSec: 0.06, peak: vary(r, 0.34, VARIANCE), attack: 0.003, tau: 0.05 });
-    const servo = vary(r, 210 * lift, VARIANCE);
-    const glide = 0.3 * (1 + 0.25 * Math.max(0, level));
-    this.toneHit(t + 0.03, { type: 'triangle', freq: servo, freqEnd: servo * 1.42, glideSec: glide, peak: vary(r, 0.045, VARIANCE), attack: 0.06, hold: 0.18, tau: 0.07, lowpass: 900 });
+  }
+
+  /**
+   * The forks lifting a box out of a rack slot at `level`: a softer knock of the tines and the box easing off the
+   * painted beam (a faint beam tone and a brief slide); the lift is the forks' pump whir, as for any pickup. Neutral:
+   * taking a box out, even the destined one, never sounds like a mistake.
+   */
+  slotLift(t: number, level = 0): void {
+    const r = this.rng;
+    const k = 1 + LEVEL_PITCH * Math.max(0, level);
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1050 * k, VARIANCE), q: 2.6, peak: vary(r, 0.3, VARIANCE), attack: 0.002, tau: 0.016 });
+    this.beam(t + 0.02, vary(r, 500 * k, VARIANCE), vary(r, 0.035, VARIANCE));
+    this.noiseHit(t + 0.03, { type: 'bandpass', freq: vary(r, 820 * k, VARIANCE), q: 1.4, peak: vary(r, 0.07, VARIANCE), attack: 0.03, tau: 0.05 });
   }
 
   /**
@@ -119,6 +167,75 @@ export class SfxPlayer {
     }
     if (chimeMidi === null) return;
     this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, stackNotes, match);
+  }
+
+  /**
+   * A box settling into a rack slot at `level`, at `t` (as it lands): a soft, muted metallic "toc" (the box's felt body
+   * on the painted beam, then the beam's two damped modes), a little higher per level, no floor sub. Pass `chimeMidi`
+   * only when the slot now holds its destined box: it adds the chime in the timbre of the cue's `match` (see
+   * chime()). A box that merely fits the cue settles with the same neutral toc and nothing else.
+   */
+  slotDrop(t: number, chimeMidi: number | null, final = false, level = 0, match: MatchKind = 'color'): void {
+    const r = this.rng;
+    const k = 1 + LEVEL_PITCH * Math.max(0, level);
+    this.toneHit(t, { type: 'sine', freq: vary(r, 165 * k, VARIANCE), freqEnd: vary(r, 104 * k, VARIANCE), glideSec: 0.07, peak: vary(r, 0.18, VARIANCE), attack: 0.004, tau: 0.055, lowpass: 520 });
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 680 * k, VARIANCE), q: 1.3, peak: vary(r, 0.22, VARIANCE), attack: 0.002, tau: 0.03 });
+    this.noiseHit(t, { type: 'lowpass', freq: vary(r, 450 * k, VARIANCE), q: 0.6, peak: vary(r, 0.14, VARIANCE), attack: 0.003, tau: 0.03 });
+    this.beam(t + 0.004, vary(r, 470 * k, VARIANCE), vary(r, 0.075, VARIANCE));
+    if (chimeMidi === null) return;
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Loading docks: a box set down on a truck bed column at `level` (0 = on the bed), at `t` (as it lands). A hollow
+   * wooden "thunk": the plank floor of the trailer over the air under it (TRUCK_BED_MODES: two low wooden body modes
+   * that ring a little, never a note), a boxy cavity resonance and the soft contact of the box on the boards. Rounder
+   * and lower than the rack slot's metal toc, hollower than the concrete floor's felt thump (no sub). Onto a box already
+   * loaded, the contact is that box's lighter "toc", the whole thunk sits a little higher per level (as docs/DOCKS.md
+   * proposes) and the bed answers more faintly (TRUCK_LEVEL_DAMP per level). `chimeMidi` only when its truck slot is now satisfied (see chime()).
+   */
+  truckDrop(t: number, chimeMidi: number | null, final = false, level = 0, match: MatchKind = 'color'): void {
+    const r = this.rng;
+    const up = Math.max(0, level);
+    const k = vary(r, 1 + 0.5 * LEVEL_PITCH * up, VARIANCE);
+    const bed = Math.pow(TRUCK_LEVEL_DAMP, up);
+    for (const [freq, peak, tau] of TRUCK_BED_MODES) {
+      this.toneHit(t, { type: 'sine', freq: freq * k, freqEnd: freq * k * TRUCK_BED_SAG, glideSec: 0.09, peak: vary(r, peak * bed, VARIANCE), attack: 0.004, tau, lowpass: TRUCK_BED_LOWPASS_HZ });
+    }
+    // The hollow of the trailer (a boxy resonance), then the box's felt contact on the planks (or on the box below).
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, TRUCK_BED_CAVITY_HZ, VARIANCE), q: 3, peak: vary(r, 0.24 * bed, VARIANCE), attack: 0.003, tau: 0.05 });
+    const c = 1 + LEVEL_PITCH * up;
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, (up > 0 ? 760 : 950) * c, VARIANCE), q: 1.3, peak: vary(r, up > 0 ? 0.22 : 0.14, VARIANCE), attack: 0.002, tau: up > 0 ? 0.028 : 0.018 });
+    if (chimeMidi === null) return;
+    this.chime(t + range(r, 0.04, 0.06), chimeMidi, final, null, match);
+  }
+
+  /**
+   * Soft detent click as the forks step one rack slot (F / V, the wheel, pad X / B): a tiny muffled latch, a little
+   * higher per `level` (the slot just selected) and a hair brighter going up (`direction` +1) than down. About half a
+   * UI click: it confirms the step without competing with the servo or the music.
+   */
+  forkClick(t: number, level: number, direction: 1 | -1): void {
+    const r = this.rng;
+    const k = (1 + LEVEL_PITCH * Math.max(0, level)) * (direction > 0 ? 1.04 : 0.96);
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, 1250 * k, VARIANCE), q: 3.5, peak: vary(r, 0.1, VARIANCE), attack: 0.0015, tau: 0.007 });
+    this.toneHit(t, { type: 'sine', freq: vary(r, 520 * k, VARIANCE), freqEnd: vary(r, 470 * k, VARIANCE), glideSec: 0.03, peak: vary(r, 0.04, VARIANCE), attack: 0.002, tau: 0.018 });
+  }
+
+  /**
+   * Levels with racks: a box set down on a target that is not its destiny (a floor zone, or a slot with a cue, even
+   * one it fits), at `t` (just after its landing thump / toc). A soft, low, muffled "nuh": a warm triangle hum and a
+   * quieter sawtooth a few hertz above it beating against it (the gentle buzz), both sagging a little in pitch under
+   * a warm low-pass, ≈ 0.2 s. Says "not here" without alarm: no bright partials, no second hit, far softer than the
+   * drop itself (and well under the music).
+   */
+  wrongBuzz(t: number): void {
+    const r = this.rng;
+    const hum = vary(r, WRONG_BUZZ_HZ, VARIANCE);
+    const beat = hum * WRONG_BUZZ_DETUNE;
+    const lowpass = WRONG_BUZZ_LOWPASS_HZ;
+    this.toneHit(t, { type: 'triangle', freq: hum, freqEnd: hum * WRONG_BUZZ_SAG, glideSec: 0.18, peak: vary(r, 0.05, VARIANCE), attack: 0.014, hold: 0.1, tau: 0.03, lowpass });
+    this.toneHit(t, { type: 'sawtooth', freq: beat, freqEnd: beat * WRONG_BUZZ_SAG, glideSec: 0.18, peak: vary(r, 0.022, VARIANCE), attack: 0.02, hold: 0.09, tau: 0.03, lowpass });
   }
 
   /**
@@ -186,6 +303,13 @@ export class SfxPlayer {
     this.bell.releaseAll();
     this.wood.releaseAll();
     this.swell.releaseAll();
+  }
+
+  /** A damped painted-steel beam at `base` Hz (BEAM_MODES): short sine modes under a warm low-pass. */
+  private beam(t: number, base: number, peak: number): void {
+    for (const [ratio, level, decay] of BEAM_MODES) {
+      this.toneHit(t, { type: 'sine', freq: base * ratio, peak: peak * level, attack: 0.002, tau: 0.07 * decay, lowpass: BEAM_LOWPASS_HZ });
+    }
   }
 
   private noiseHit(t0: number, p: NoiseHit): void {

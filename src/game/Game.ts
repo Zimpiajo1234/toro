@@ -1,18 +1,20 @@
 import type { Store } from '../core/store';
 import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/types';
 import { clamp } from '../core/math';
-import { zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { matchKind, zoneMatchKinds, type MatchKind } from '../core/sorting';
+import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
-import { LEVELS, getLevel } from '../data/levels';
+import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
 import { forkRiseRate } from '../logic/forkRise';
 import { Timer } from '../logic/Timer';
 import { GameRenderer } from '../render/GameRenderer';
 import { AudioEngine } from '../audio/AudioEngine';
+import { ForkStepWatcher } from '../audio/forkSteps';
 import { PROGRESS_STORAGE_KEY, ProgressStore } from '../storage/ProgressStore';
 import { getTheme } from '../themes';
-import type { GameActions, LevelResult, UIState } from '../ui/uiState';
+import type { GameActions, LevelResult, ScreenInsets, UIState } from '../ui/uiState';
 import { Input, type InputSample } from './Input';
 import { inputToDrive, inputToWorld, parseMoveMapping, type ControlMappings, type DriveInput } from './cameraInput';
 import {
@@ -21,7 +23,6 @@ import {
   continueIndexAfter,
   continueTarget,
   resolveStartLevel,
-  shouldShowHint,
   type SavedProgress,
 } from './flow';
 import { MessagePicker } from './messages';
@@ -68,24 +69,32 @@ export class Game implements GameActions {
   private readonly jumpHold = new Countdown();
   private jumpStep: -1 | 1 = 1;
   /** World-space input handed to the simulation; reused every frame. */
-  private readonly frameInput: InputFrame & { drive: DriveInput } = {
+  private readonly frameInput: InputFrame & { drive: DriveInput; forkStep: -1 | 0 | 1 } = {
     move: { x: 0, z: 0 },
     drive: { throttle: 0, steer: 0 },
     actionPressed: false,
+    forkStep: 0,
   };
+  /** The level on screen has storage racks: F / V, the wheel and pad X / B step the forks there (docs/RACKS.md). */
+  private levelHasRacks = false;
+  /** Levels with racks: each fork step that takes effect at a rack column gets a soft click. */
+  private readonly forkSteps = new ForkStepWatcher();
 
   private rt: Runtime | null = null;
   private rafId = 0;
   private lastFrameMs = -1;
   private levelIndex = 0;
   private level: LevelData | null = null;
+  /**
+   * The level on screen is the «Benchmark» (test mode's special level, SPECIAL_LEVELS): it never touches progress, and
+   * `levelIndex` keeps naming the game level "Continuar" knows.
+   */
+  private benchmark = false;
   private state: GameState | null = null;
   /** How each zone of the level matches its box (color / symbol / exact): the timbre audio gives its chime. */
   private zoneMatch = new Map<string, MatchKind>();
   /** Result of the level just completed, shown once the completion delay runs out. */
   private pendingResult: LevelResult | null = null;
-  /** The control hint disappears for the whole session after the first drop. */
-  private dropDone = false;
   /** A box was picked since the level loaded: restarting by key now needs a hold. */
   private workAtStake = false;
   /** The level on screen was left mid-way for the title (Esc): "Continuar" resumes it as it was. */
@@ -94,6 +103,8 @@ export class Game implements GameActions {
   private resumeTimerOnInput = false;
   /** Last hold-to-restart progress published to the store (0 … 1). */
   private publishedHold = 0;
+  /** Last overlay bands the UI reported (setViewInsets); handed to a renderer created after them. */
+  private viewInsets: ScreenInsets | null = null;
 
   constructor(container: HTMLElement, store: Store<UIState>) {
     this.container = container;
@@ -106,6 +117,8 @@ export class Game implements GameActions {
     this.toggleMute = this.toggleMute.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
+    this.startBenchmark = this.startBenchmark.bind(this);
+    this.setViewInsets = this.setViewInsets.bind(this);
   }
 
   /** Start the frame loop and show the title screen. */
@@ -130,6 +143,7 @@ export class Game implements GameActions {
     });
     const rt: Runtime = { renderer, audio, progress, input };
     this.rt = rt;
+    if (this.viewInsets) renderer.setViewInsets(this.viewInsets, true);
 
     const settings = progress.getSettings();
     audio.setMuted(settings.muted);
@@ -146,10 +160,10 @@ export class Game implements GameActions {
       elapsedMs: 0,
       timerStarted: false,
       result: null,
-      showHint: false,
       showTimer: settings.showTimer,
       muted: settings.muted,
       testMode: settings.testMode,
+      benchmark: false,
       ...this.progressSummary(rt, settings.testMode),
     });
 
@@ -189,12 +203,16 @@ export class Game implements GameActions {
     this.unlockAudio(rt); // called from a click / keydown, so this is a user gesture
     rt.audio.uiClick();
     // "Continuar" (no level asked for; a click event may come through as the argument) resumes the level left with
-    // Esc, even one only "Modo prueba" opened (never saved as the last level).
+    // Esc, even one only "Modo prueba" opened (never saved as the last level), the Benchmark included.
     const resumeSuspended = typeof levelIndex !== 'number' && this.suspended && this.level !== null;
+    if (resumeSuspended && this.benchmark) {
+      this.playBenchmark(rt);
+      return;
+    }
     const index = resumeSuspended ? this.levelIndex : resolveStartLevel(levelIndex, this.savedProgress(rt), LEVELS.length);
     rt.renderer.setIdleOrbit(false);
     // The level left with Esc picks up exactly where it was; any other level (or a finished one) loads fresh.
-    const resume = this.suspended && index === this.levelIndex && this.level !== null;
+    const resume = this.suspended && !this.benchmark && index === this.levelIndex && this.level !== null;
     this.suspended = false;
     const level = resume && this.level ? this.level : this.loadLevel(rt, index);
     // "Modo prueba" may open a level that is still locked: it never becomes the saved "Continuar" target.
@@ -204,13 +222,26 @@ export class Game implements GameActions {
       screen: 'playing',
       levelIndex: index,
       levelName: level.name,
+      benchmark: false,
       elapsedMs: this.timer.elapsedMs,
       timerStarted: resume ? this.store.get().timerStarted : false,
       result: null,
-      showHint: shouldShowHint(index, GAME_CONFIG.flow.hintLevels, this.dropDone),
       canContinue: rt.progress.hasProgress(),
     });
     rt.audio.setScene('playing');
+  }
+
+  /**
+   * "Modo prueba": play the «Benchmark» (src/data/levels/especiales/benchmark.level, outside LEVELS). It never touches
+   * progress: no best time, no unlock, never the saved "Continuar" level. A Benchmark left with Esc picks up where it
+   * was, like the dot of a suspended level; otherwise it loads fresh.
+   */
+  startBenchmark(): void {
+    const rt = this.rt;
+    if (!rt || this.completeDelay.active || !this.store.get().testMode) return;
+    this.unlockAudio(rt); // called from a click / keydown, so this is a user gesture
+    rt.audio.uiClick();
+    this.playBenchmark(rt);
   }
 
   restart(): void {
@@ -219,20 +250,21 @@ export class Game implements GameActions {
     if (!rt || !this.level || this.completeDelay.active) return;
     rt.audio.uiClick();
     rt.renderer.setIdleOrbit(false);
-    this.loadLevel(rt, this.levelIndex);
+    if (this.benchmark) this.loadBenchmark(rt, this.level);
+    else this.loadLevel(rt, this.levelIndex);
     this.store.set({
       screen: 'playing',
       elapsedMs: 0,
       timerStarted: false,
       result: null,
-      showHint: shouldShowHint(this.levelIndex, GAME_CONFIG.flow.hintLevels, this.dropDone),
     });
     rt.audio.setScene('playing');
   }
 
   nextLevel(): void {
     if (!this.rt) return;
-    if (this.levelIndex >= LEVELS.length - 1) this.toTitle();
+    // The Benchmark is not part of the game's order: its card leads back to the title.
+    if (this.benchmark || this.levelIndex >= LEVELS.length - 1) this.toTitle();
     else this.start(this.levelIndex + 1);
   }
 
@@ -257,9 +289,10 @@ export class Game implements GameActions {
       this.publishElapsed(true); // the exact paused time, not the last throttled one
     } else {
       this.suspended = false;
-      // Show the level "Continuar" leads to. If it is the one on screen (e.g. the finished last level), keep it.
+      // Show the level "Continuar" leads to. If it is the one on screen (e.g. the finished last level), keep it; a
+      // finished Benchmark always gives way to it.
       index = resolveStartLevel(undefined, this.savedProgress(rt), LEVELS.length);
-      if (index !== this.levelIndex || !level) level = this.loadLevel(rt, index);
+      if (index !== this.levelIndex || !level || this.benchmark) level = this.loadLevel(rt, index);
     }
     rt.renderer.setIdleOrbit(true);
     rt.audio.setScene('title');
@@ -267,10 +300,16 @@ export class Game implements GameActions {
       screen: 'title',
       levelIndex: index,
       levelName: level ? level.name : '',
+      benchmark: this.benchmark,
       result: null,
-      showHint: false,
       ...this.progressSummary(rt),
     });
+  }
+
+  /** The overlay's reserved bands changed: the camera eases to frame the level clear of them (plumbing only). */
+  setViewInsets(insets: ScreenInsets): void {
+    this.viewInsets = { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left };
+    this.rt?.renderer.setViewInsets(this.viewInsets);
   }
 
   toggleMute(): void {
@@ -298,19 +337,47 @@ export class Game implements GameActions {
     rt.audio.uiClick();
     const testMode = !this.store.get().testMode;
     rt.progress.setSettings({ testMode });
-    if (!testMode && this.suspended && !this.isGenuinelyOpen(rt, this.levelIndex)) {
-      // A still-locked level left mid-way cannot stay behind the title as the "Continuar" target: show the real one.
+    if (!testMode && (this.benchmark || (this.suspended && !this.isGenuinelyOpen(rt, this.levelIndex)))) {
+      // A still-locked level left mid-way cannot stay behind the title as the "Continuar" target, nor can the
+      // Benchmark (only test mode reaches it): show the real one.
       this.suspended = false;
       const index = resolveStartLevel(undefined, this.savedProgress(rt), LEVELS.length);
       const level = this.loadLevel(rt, index);
-      this.store.set({ testMode, levelIndex: index, levelName: level.name, ...this.progressSummary(rt, testMode) });
+      this.store.set({
+        testMode,
+        levelIndex: index,
+        levelName: level.name,
+        benchmark: false,
+        ...this.progressSummary(rt, testMode),
+      });
       return;
     }
     this.store.set({ testMode, ...this.progressSummary(rt, testMode) });
   }
 
-  /** "Modo prueba" while playing: load the previous / next level fresh (timer reset). */
+  /** Enter the Benchmark: resume the one left with Esc, else load it fresh (timer reset). */
+  private playBenchmark(rt: Runtime): void {
+    const resume = this.suspended && this.benchmark && this.level !== null;
+    const level = resume && this.level ? this.level : getSpecialLevel(BENCHMARK_ID);
+    if (!level) return;
+    rt.renderer.setIdleOrbit(false);
+    this.suspended = false;
+    if (!resume) this.loadBenchmark(rt, level);
+    this.elapsedThrottle.markPublished(this.timer.elapsedMs);
+    this.store.set({
+      screen: 'playing',
+      levelName: level.name,
+      benchmark: true,
+      elapsedMs: this.timer.elapsedMs,
+      timerStarted: resume ? this.store.get().timerStarted : false,
+      result: null,
+    });
+    rt.audio.setScene('playing');
+  }
+
+  /** "Modo prueba" while playing: load the previous / next level fresh (timer reset). Never from the Benchmark. */
   private jumpLevel(step: -1 | 1): void {
+    if (this.benchmark) return;
     const index = clamp(this.levelIndex + step, 0, LEVELS.length - 1);
     if (index === this.levelIndex) return;
     this.suspended = false;
@@ -355,8 +422,10 @@ export class Game implements GameActions {
       inputToWorld(input, rt.renderer.getCameraYaw(), CONTROLS, frame.move);
       inputToDrive(input, CONTROLS, frame.drive);
       frame.actionPressed = input.actionPressed && wasPlaying;
+      frame.forkStep = wasPlaying ? input.forkStep : 0;
       const driving = Math.abs(frame.drive.throttle) > MOVE_EPSILON || Math.abs(frame.drive.steer) > MOVE_EPSILON;
-      if (this.resumeTimerOnInput && (frame.actionPressed || driving || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
+      const forking = frame.forkStep !== 0 && this.levelHasRacks;
+      if (this.resumeTimerOnInput && (frame.actionPressed || driving || forking || Math.hypot(frame.move.x, frame.move.z) > MOVE_EPSILON)) {
         // A resumed level's clock picks up on the first input, like a fresh level's.
         this.resumeTimerOnInput = false;
         this.timer.start();
@@ -368,6 +437,7 @@ export class Game implements GameActions {
       frame.drive.throttle = 0;
       frame.drive.steer = 0;
       frame.actionPressed = false;
+      frame.forkStep = 0;
     }
 
     const liftBefore = state.getSnapshot().forklift.forkLift;
@@ -382,16 +452,29 @@ export class Game implements GameActions {
       this.publishElapsed(false);
     }
 
+    if (this.levelHasRacks) {
+      // One soft click per fork step that took effect at a rack column (none at the top / bottom, none off a rack).
+      const rack = snapshot.hint.rack;
+      const forkStep = this.forkSteps.observe(rack, frame.forkStep);
+      if (rack && forkStep !== 0) rt.audio.forkClick(rack.level, forkStep);
+    }
+
     const forklift = snapshot.forklift;
     const cfg = GAME_CONFIG.forklift;
     // The climb slows with height (rate set by the higher of the current and target levels; while rising the target
     // is the next whole level up): normalise by that rate so a slower climb whines just as clearly.
     const climb = forklift.forkHeight - heightBefore;
     const climbRate = forkRiseRate(GAME_CONFIG, climb > 0 ? Math.ceil(forklift.forkHeight) : heightBefore);
+    // The fork sounds answer both the carry lift and the climb to a stack / slot height (whichever moves faster), with
+    // its direction: raising = the pump whir, lowering = the soft tone and hiss. They sit higher up a stack.
+    const lift = forklift.forkLift - liftBefore;
+    const liftMotion = forkMotion01(lift, dt, cfg.forkLiftSpeed);
+    const climbMotion = forkMotion01(climb, dt, climbRate);
+    const forkMotion = liftMotion >= climbMotion ? Math.sign(lift) * liftMotion : Math.sign(climb) * climbMotion;
     rt.audio.setMotor(
-      speed01(forklift.speed, cfg.maxSpeed),
-      // The servo answers both the carry lift and the climb to a stack's height, and sits higher up a stack.
-      Math.max(forkMotion01(forklift.forkLift - liftBefore, dt, cfg.forkLiftSpeed), forkMotion01(climb, dt, climbRate)),
+      // Signed: backing up (speed < 0, S or leaving a rack slot) sounds the reverse beeper.
+      Math.sign(forklift.speed) * speed01(forklift.speed, cfg.maxSpeed),
+      forkMotion,
       forklift.forkHeight,
     );
     rt.renderer.update(snapshot, dt);
@@ -415,7 +498,8 @@ export class Game implements GameActions {
           this.jumpHold.cancel();
           break;
         }
-        const step = testMode ? this.levelJumpRequested(input, dt) : 0;
+        // Level jumps walk the game's order: the Benchmark is outside it, so they do nothing there.
+        const step = testMode && !this.benchmark ? this.levelJumpRequested(input, dt) : 0;
         if (step !== 0) this.jumpLevel(step);
         else if (input.backPressed) this.toTitle();
         else if (this.restartRequested(input, dt)) this.restart();
@@ -473,7 +557,7 @@ export class Game implements GameActions {
 
   private dispatch(rt: Runtime, event: GameEvent, snapshot: GameSnapshot): void {
     rt.renderer.handleEvent(event, snapshot);
-    rt.audio.handleEvent(event, this.matchOf(event));
+    rt.audio.handleEvent(event, this.matchOf(event, snapshot));
     switch (event.type) {
       case 'firstInput':
         this.timer.start();
@@ -481,12 +565,6 @@ export class Game implements GameActions {
         break;
       case 'boxPicked':
         this.workAtStake = true;
-        break;
-      case 'boxDropped':
-        if (!this.dropDone) {
-          this.dropDone = true;
-          this.store.set({ showHint: false });
-        }
         break;
       case 'levelComplete':
         this.onLevelComplete(rt);
@@ -504,11 +582,13 @@ export class Game implements GameActions {
     this.jumpHold.cancel();
     this.publishElapsed(true);
     const timeMs = Math.round(this.timer.elapsedMs);
-    const isLast = this.levelIndex >= LEVELS.length - 1;
+    const benchmark = this.benchmark;
+    const isLast = !benchmark && this.levelIndex >= LEVELS.length - 1;
     // A level only "Modo prueba" opened leaves the real progress untouched: a stored time would unlock the next one
-    // (a completed level always unlocks its successor), so its time is shown but not recorded.
-    const genuine = this.isGenuinelyOpen(rt, this.levelIndex);
-    const previousBest = rt.progress.getBest(level.id);
+    // (a completed level always unlocks its successor), so its time is shown but not recorded. The Benchmark never
+    // reaches ProgressStore at all (its times and unlocks are keyed by the game's levels).
+    const genuine = !benchmark && this.isGenuinelyOpen(rt, this.levelIndex);
+    const previousBest = benchmark ? null : rt.progress.getBest(level.id);
     const record = genuine
       ? rt.progress.record(level.id, timeMs)
       : { bestMs: Math.min(timeMs, previousBest ?? timeMs), isNewBest: false, previousBestMs: previousBest };
@@ -535,25 +615,52 @@ export class Game implements GameActions {
     const result = this.pendingResult;
     if (!result) return;
     this.confirmGrace.arm(GAME_CONFIG.flow.confirmGraceSec);
-    this.store.set({ screen: 'complete', result, showHint: false });
+    this.store.set({ screen: 'complete', result });
   }
 
   /* ---------------------------------------------------------------- */
   /* Helpers                                                           */
   /* ---------------------------------------------------------------- */
 
-  /** Kind of match of the zone a drop / restore event is about (the classic color bell for anything else). */
-  private matchOf(event: GameEvent): MatchKind {
+  /**
+   * Kind of match of the zone (or rack slot, or truck slot) a drop / restore event is about (the classic color bell for
+   * anything else). A truck slot's comes from its cue in the snapshot when the level's match table does not list it.
+   */
+  private matchOf(event: GameEvent, snapshot: GameSnapshot): MatchKind {
     if (event.type !== 'boxDropped' && event.type !== 'zoneRestored') return 'color';
-    return (event.zoneId !== null && this.zoneMatch.get(event.zoneId)) || 'color';
+    if (event.type === 'boxDropped' && event.truckSlotId !== undefined) {
+      const id = event.truckSlotId;
+      const known = this.zoneMatch.get(id);
+      if (known) return known;
+      const slot = snapshot.truckSlots?.find((s) => s.id === id);
+      return slot ? matchKind(slot.accepts) : 'color';
+    }
+    const target = event.type === 'boxDropped' ? (event.slotId ?? event.zoneId) : event.zoneId;
+    return (target !== null && this.zoneMatch.get(target)) || 'color';
   }
 
-  /** Fresh simulation + scene for a level; resets the timer and any pending completion or suspended level. */
+  /**
+   * Fresh simulation + scene for a level of the game (LEVELS); resets the timer and any pending completion or suspended
+   * level.
+   */
   private loadLevel(rt: Runtime, index: number): LevelData {
     const level = getLevel(index);
     this.levelIndex = clamp(index, 0, Math.max(0, LEVELS.length - 1));
+    this.benchmark = false;
+    return this.loadScene(rt, level);
+  }
+
+  /** Fresh Benchmark, like loadLevel; `levelIndex` stays on the game level "Continuar" knows. */
+  private loadBenchmark(rt: Runtime, level: LevelData): LevelData {
+    this.benchmark = true;
+    return this.loadScene(rt, level);
+  }
+
+  private loadScene(rt: Runtime, level: LevelData): LevelData {
     this.level = level;
     this.zoneMatch = zoneMatchKinds(level);
+    this.levelHasRacks = hasRacks(level);
+    this.forkSteps.reset();
     this.state = new GameState(level);
     rt.renderer.loadLevel(this.state.getSnapshot(), getTheme(level.theme));
     this.timer.reset();
@@ -566,6 +673,8 @@ export class Game implements GameActions {
     this.workAtStake = false;
     this.suspended = false;
     this.resumeTimerOnInput = false;
+    // The control hint's fork row goes with the level on screen.
+    if (this.store.get().racks !== this.levelHasRacks) this.store.set({ racks: this.levelHasRacks });
     return level;
   }
 

@@ -4,11 +4,28 @@ Cada nivel es un archivo de texto `src/data/levels/*.level`: un mapa ASCII que s
 leyenda. El registro (`src/data/levels/index.ts`) carga todos los `*.level` (y, por compatibilidad, los `*.json`
 antiguos), los valida al importar y los ordena por su número. Los ids y los números no se pueden repetir.
 
+**Hoy el juego trae los niveles 1–3.** Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los sistemas que
+usaban (recetas de pila, símbolos, estanterías almacenables) siguen en el juego, en el formato y en las métricas, y sus
+tests usan disposiciones escritas en el propio test (entre ellas varias de los niveles retirados, como «La muestra» de
+abajo). Un progreso guardado con los 24 niveles carga igual: lo desbloqueado y «Continuar» se quedan dentro de los
+niveles que hay y los tiempos de los ids retirados se ignoran (`ProgressStore`; el documento guardado no se reescribe).
+Al rehacerlos: usa **ids nuevos** (un id retirado recuperaría los tiempos guardados del nivel antiguo), y ten en cuenta
+que ese progreso antiguo guarda «desbloqueado hasta el 24» como índice, así que abrirá los niveles nuevos hasta ese
+número.
+
+**Niveles especiales**: `src/data/levels/especiales/*.level`, mismo formato, fuera de la progresión del juego. El glob
+de `LEVELS` no entra en subcarpetas, así que nunca llegan a `LEVELS`, a los tiempos guardados, a los desbloqueos ni a
+«Continuar». El registro los carga aparte (`SPECIAL_LEVEL_SOURCES`, `SPECIAL_LEVELS`, `getSpecialLevel(id)`), los valida
+igual y rechaza un id o un número que choque con un nivel del juego (`loadSpecialSources`), para que las herramientas
+puedan nombrar cualquier nivel sin ambigüedad. Hoy solo hay uno: el **Benchmark** (`BENCHMARK_ID = 'benchmark'`, número
+100), que se juega desde el Modo prueba y reúne todo el juego de estanterías almacenables (`docs/RACKS.md`) y del
+muelle de carga (`docs/DOCKS.md`).
+
 - Parser y renderer: `src/data/asciiLevel.ts` (texto → `validateLevel` → `LevelData`, y `LevelData` → texto canónico).
 - Modelo de rejilla y búsquedas: `src/data/levels/solver.ts` (el mismo para tests, piloto automático y métricas).
 - Métricas: `src/data/levels/metrics.ts` · Informe: `src/data/levels/report.ts` · Objetivos: `src/data/difficulty.ts`.
 
-## Un ejemplo: el nivel 23
+## Un ejemplo: «La muestra» (el antiguo nivel 23)
 
 ```
 # 23 · La muestra
@@ -69,12 +86,20 @@ Cualquier otro carácter imprimible (letras, números, signos; nunca `=` ni `:`)
 
 ```
 descripción = elemento { "+" elemento }     (como mucho una zona y una caja o pila por carácter)
+            | almacén                       (una estantería almacenable va sola)
+            | camión                        (un camión de muelle va solo)
 elemento    = caja | pila | zona | estantería | planta
 caja        = "caja" color [símbolo] ["tipo" tipo] [id]
 pila        = "pila" color [símbolo] [id] { "," color [símbolo] [id] }      (de abajo arriba)
 zona        = "zona" [color] [símbolo] ["pila" color { "," color }] [id]   (al menos color o símbolo)
             | "zona" color "," color { "," color } [id]                   (atajo de «zona pila …»)
 estantería  = "estantería" ["de"] [alturas ["alturas"]]                   (sin número: 2)
+almacén     = "estantería" "frente" dirección [id] ":" columna { "|" columna }
+columna     = hueco { "/" hueco }                                         (de abajo arriba, 1–3 huecos)
+hueco       = ("libre" | color [símbolo] | símbolo) [ "+" caja ]
+camión      = ("camión" ["muelle"] | "muelle") ("norte" | "oeste") [id] ":" niveles { "|" niveles }
+niveles     = nivel { "/" nivel }                                         (de abajo arriba, 1–3 niveles)
+nivel       = (color [símbolo] | símbolo) [ "+" caja ]                    (nunca «libre»)
 planta      = "planta" ["variante"] [número]
 id          = "(" texto sin espacios ")"
 ```
@@ -83,7 +108,7 @@ id          = "(" texto sin espacios ")"
 - Símbolos: `● ▲ ■ ◆ ✚` o `círculo triángulo cuadrado rombo cruz` (también `○ △ □ ◇`, y los ids en inglés).
 - Sin mayúsculas ni tildes que importen; un símbolo puede ir pegado (`caja azul▲`).
 - `caja azul` no nombra símbolo (lleva el de su color, azul ●) y **no** es lo mismo que `caja azul ●`: un nivel usa
-  símbolos (capítulo 19–24) si alguna caja o zona nombra uno.
+  símbolos (como los antiguos niveles 19–24) si alguna caja o zona nombra uno.
 - `tipo`: tipo de caja (`standard`, alias `estándar`); solo existe uno hoy.
 
 | Escribes | Resultado |
@@ -100,6 +125,23 @@ id          = "(" texto sin espacios ")"
 | `H = estantería 3 alturas` | estantería alta (las altas, solo contra los muros del fondo) |
 | `E = estantería` | otra estantería de 2 alturas: sirve para pegarla a una `#` |
 | `P = planta variante 2` | planta con otra forma |
+| `R = estantería frente sur: azul / ▲ + caja coral / libre` | estantería **almacenable** de 1 columna, se carga desde el sur: hueco de abajo «azul», el del medio «▲» con una caja coral dentro, arriba libre |
+| `T = camión muelle oeste: coral ◆ + caja menta ▲ / ■` | **camión** en una puerta del muro oeste (el carácter en la columna 0), 1 columna: abajo «coral ◆» con una menta ▲ cargada al empezar, encima «■» |
+| `R = estantería frente oeste: azul ● / libre \| menta` | 2 columnas (el carácter en 2 casillas de una columna del mapa), separadas por `\|` |
+
+Las **estanterías almacenables** (reglas, lógica y datos: `docs/RACKS.md`) ocupan una fila recta (frente norte o sur)
+o una columna recta (frente este u oeste) de 1 casilla de fondo, con una columna de la leyenda por casilla (de oeste a
+este, o de norte a sur). Se cargan solo por el frente; la pista de cada hueco se ve desde las dos caras. Cada zona y
+cada hueco con pista es un **objetivo**: tiene que haber una caja por objetivo y un único reparto completo (cajas
+idénticas no cuentan dos veces), y cada objetivo solo se cumple con su caja destinada. Las cajas de los huecos se
+numeran después de las del suelo; las estanterías, `r1, r2…`.
+
+Los **camiones** (muelles de carga; reglas, lógica y datos: `docs/DOCKS.md`, gramática completa allí) ocupan una
+tirada recta pegada a su muro: casillas de la fila 0 (muelle norte) o de la columna 0 (muelle oeste), una columna de la
+leyenda por casilla (de oeste a este, o de norte a sur); la puerta del muro es esa tirada (`ventanas:` no puede
+pisarla). Se cargan solo de frente, como una pila del suelo, de abajo arriba; cada nivel lleva su pista y es un
+objetivo más del reparto único. Las cajas del camión se numeran después de las de las estanterías; los camiones,
+`t1, t2…` (nunca el id de una estantería).
 
 ## Reglas que conviene saber
 
@@ -110,16 +152,18 @@ id          = "(" texto sin espacios ")"
   pila, de abajo arriba). El juego no depende de esos ids; los tiempos guardados dependen del id del **nivel**.
 - **Orden de lectura**: plantas y estanterías se leen fila a fila, de izquierda a derecha.
 - El nivel pasa después por `validateLevel` (las reglas de siempre: colores de cajas = huecos de las zonas, un nivel
-  con símbolos no apila y tiene un reparto completo, no empieza resuelto, `limit` suficiente para pilas…).
+  con símbolos no apila y tiene un reparto completo, no empieza resuelto, `limit` suficiente para pilas…). Con
+  estanterías almacenables: sitio delante de cada columna, zonas de una sola caja (apilar en el suelo solo aparca,
+  y entonces sí se permite con símbolos), una caja por objetivo y **un solo** reparto completo.
 
 ## Errores
 
-Todos dicen archivo, línea y columna, en español, y qué hacer:
+Todos dicen archivo, línea y columna, en español, y qué hacer (aquí, errores metidos en el ejemplo de arriba):
 
 ```
-src/data/levels/level-23.level:6:7: «x» no está en la leyenda: defínelo debajo del mapa, p. ej. «x = caja azul»
-src/data/levels/level-23.level:12:10: palabra desconocida «azu» en una caja: …; ¿quisiste decir «azul»?
-src/data/levels/level-23.level:12:1: sobran cajas menta: hay más que huecos menta en las zonas (…)
+src/data/levels/level-04.level:6:7: «x» no está en la leyenda: defínelo debajo del mapa, p. ej. «x = caja azul»
+src/data/levels/level-04.level:12:10: palabra desconocida «azu» en una caja: …; ¿quisiste decir «azul»?
+src/data/levels/level-04.level:12:1: sobran cajas menta: hay más que huecos menta en las zonas (…)
 ```
 
 Salen al arrancar el juego (`npm run dev`), en `npm test` y en `npm run levels`.
@@ -129,7 +173,8 @@ Salen al arrancar el juego (`npm run dev`), en `npm test` y en `npm run levels`.
 `renderLevel` escribe cualquier `LevelData` en forma canónica (lo que ves en los archivos): cabecera en orden fijo
 (`limit` siempre), regla y números de fila, zonas con `1 2 3 … 9 0 A B…`, cajas con `a b c…` (sin `p` ni `v`), glifos para los
 símbolos, entradas iguales seguidas agrupadas (`b c = caja amarillo`) e ids solo si no son los generados.
-`parseLevel(renderLevel(nivel))` devuelve exactamente el mismo nivel (test permanente para los 24) y volver a
+`parseLevel(renderLevel(nivel))` devuelve exactamente el mismo nivel (test permanente para todos, también los
+especiales) y volver a
 escribirlo da el mismo texto. `npm run levels:fmt` reescribe los archivos así (conserva `dificultad:` y `nota:`).
 Casos raros que el formato normaliza (ninguno se da en los niveles del juego): plantas y estanterías listadas fuera
 del orden de lectura, cajas de una misma pila no seguidas en la lista, o una zona con una caja de más adelante en la
@@ -139,13 +184,18 @@ lista mientras otra zona anterior tiene una de antes (se conservan ids y casilla
 
 Se miden en el **modelo conservador de carga** (el mismo que usan los tests de solubilidad y el piloto automático):
 la carretilla va de centro en centro de casilla mirando a uno de 4 lados, la caja cargada ocupa la casilla de
-delante, solo avanza (sin marcha atrás) y un giro de 90° con carga necesita libre la casilla nueva de delante y la
-diagonal que barre la caja (un cuadrado 2×2 libre). Las pilas bloquean como cajas, salvo como destino. El juego real
-es más permisivo (desliza, traza curvas, da marcha atrás): lo que el modelo resuelve, un jugador lo resuelve.
+delante, avanza o retrocede en línea recta (la marcha atrás de S: libre la casilla de detrás) y un giro de 90° con
+carga necesita libre la casilla nueva de delante y la diagonal que barre la caja (un cuadrado 2×2 libre). Las pilas
+bloquean como cajas, salvo como destino. El juego real es más permisivo (desliza, traza curvas): lo que el modelo
+resuelve, un jugador lo resuelve. Con la marcha atrás en el modelo, `movimientos` y `extra` valen también para quien
+usa S (un pasillo estrecho no se «salta» dando marcha atrás). `LevelGrid(level, { reverse: false })` da el modelo
+antiguo, solo hacia delante, para comparar. Estanterías almacenables: cada hueco es una posición más; se carga con un
+paso adelante desde la casilla de detrás de su frente y una caja sacada de un hueco sale marcha atrás
+(`docs/RACKS.md`).
 
 | Nombre (`dificultad:`) | Qué mide |
 |---|---|
-| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (voraz y luego ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa: cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver), y una más si ninguna caja puede colocarse ya o hay una trampa. Si agota su presupuesto (`--estados`, 150 000 por defecto: segundos incluso en un nivel grande hecho para ser difícil) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
+| `movimientos` | Mínimo de movimientos de caja (coger + dejar) para terminar. Primero se busca un plan rápido (un poco de voraz y luego búsqueda ponderada) y después A* lo demuestra mínimo, con una cota que nunca se pasa (y que un movimiento nunca baja en más de uno: tests en `metrics.test.ts`): cada caja suelta se mueve al menos una vez, dos si solo encaja en su propia pila (tiene que salir y volver); una más si ninguna caja puede colocarse ya o hay una trampa; una más por cada **corro cerrado** (cajas en zonas ajenas sin ninguna zona libre de esos colores, como dos cajas cambiadas; en símbolos, con destinos fijos, cajas cada una en el destino de otra); y las que exige el orden de un **pasillo sin salida** (lo que está más cerca de la boca tiene que salir para llenar el fondo: una caja ya colocada delante de una zona vacía del fondo sale y vuelve, +2). Con estanterías o camiones, las cotas de corros y pasillos no se usan; en su lugar, +1 por cada ciclo de cajas que descansan cada una en el destino de la siguiente (zonas y huecos; `docs/RACKS.md`). Si agota su presupuesto (`--estados`, 150 000 por defecto) da una cota inferior demostrada «≥ n» y el mejor plan encontrado como cota superior. |
 | `obligadas` | Cajas que tienen que moverse al menos una vez: las que no forman parte de la base correcta de su zona (en una pila, la parte de abajo que ya encaja cuenta como colocada). |
 | `extra` | `movimientos − obligadas`: aparcar, reordenar una pila, deshacer una trampa. |
 | `bloqueos` | Cajas que hay que apartar antes de poder usar otra cosa: **tapan** (están sobre una zona sin encajar en ella, o encima de una caja que tiene que moverse) o **cierran paso** (quitándolas, la carretilla vacía llega junto a una caja o una zona libre a la que antes no llegaba). |
@@ -153,10 +203,37 @@ es más permisivo (desliza, traza curvas, da marcha atrás): lo que el modelo re
 | `libre` | % de casillas sin estantería, planta ni caja al empezar. |
 | `ambiguas` | Cajas con más de un destino posible (zonas distintas, o pisos distintos de pilas; zonas idénticas cuentan una vez). |
 | `trampas` | Niveles con símbolos: colocaciones aceptadas (tipo de caja → tipo de zona) que dejan a otra caja sin zona. |
-| `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). En otros niveles no aplica. |
+| `repartos` | Niveles con símbolos: repartos completos distintos (cajas idénticas y zonas idénticas no cuentan como distintos). Con estanterías o camiones: repartos por posición (cajas idénticas no cuentan como distintas); siempre 1. En otros niveles no aplica. |
+| `callejones` | Estados a los que la carretilla puede llegar desde los que ya no se puede terminar (ver abajo). Se buscan alrededor de un plan mínimo; «0 (60)» = ninguno en los 60 estados explorados; exacto solo si la búsqueda recorre todos los estados alcanzables. |
+| `huecos` | Huecos de estantería almacenable (en el informe: total, con pista y libres). |
+| `camion` | Niveles de camión (alias `camiones`; en el informe: columnas, camiones y cuántos empiezan cargados; `docs/DOCKS.md`). |
 | `cajas`, `zonas` | Cuántas hay. |
 
-Coste: los 24 niveles de hoy se miden en ~0,6 s, todos exactos.
+Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de
+callejones; el mínimo de movimientos, menos de 1 s por nivel; con los 24 niveles de antes eran ~15 s).
+
+## Callejones
+
+Un **callejón** es un estado del que ya no se puede terminar: el jugador tendría que reiniciar (R). Ningún nivel puede
+tener uno, y los tests lo comprueban (`levels.test.ts`, «no dead ends»).
+
+- **Cómo se busca** (`solver.deadEnds`): se parte de los estados de un plan mínimo (así se cubre primero cualquier
+  despiste en cualquier momento de una buena partida) y se exploran en anchura. De cada estado se prueban **todos** los
+  movimientos posibles. Un movimiento que se puede deshacer (volver a llevar la caja a donde estaba, con la carretilla
+  en la misma zona del suelo: `carryBackTo`) lleva a un estado tan bueno como el de partida; cualquier otro recibe una
+  comprobación completa (voraz y luego la búsqueda exacta, con presupuesto). Resultado: callejones encontrados (demostrados:
+  todo lo alcanzable desde ellos se recorrió), estados sin decidir, estados explorados y si la búsqueda llegó a todos.
+- **Por qué siempre sale 0**: con la marcha atrás, **todo movimiento se puede deshacer** (se recorren las mismas
+  posturas al revés: avanzar ↔ retroceder, girar ↔ girar al otro lado, con la misma diagonal libre; meter en un hueco ↔
+  sacar marcha atrás), así que desde cualquier estado alcanzable se puede volver al principio y de ahí terminar. La
+  búsqueda lo confirma en cada nivel y avisaría si una regla nueva (una puerta de un solo sentido, una caja que no se
+  puede volver a coger) lo rompiera.
+- **Sin marcha atrás sí los hay**: con `reverse: false`, el antiguo nivel 14 tiene uno (dos cajas empujadas al rincón
+  entre la estantería y la planta solo salen marcha atrás; sigue como disposición en `metrics.test.ts`). No es un callejón para el jugador, que tiene S, pero explica por qué
+  el modelo incluye la marcha atrás.
+- Los tests exploran todos los estados de un plan mínimo de cada nivel (cada movimiento posible desde cada uno) y
+  exigen 0 callejones, 0 sin decidir y que todos esos movimientos se puedan deshacer. `npm run levels` explora 60
+  estados por nivel (`--callejones N` para más).
 
 ## Objetivos de dificultad
 
@@ -168,16 +245,22 @@ Métricas de la tabla, comparaciones `>= <= = > <` (también `≥ ≤`), número
 (`levels.test.ts`) miden cada nivel que declara objetivos y fallan si alguno no está **demostrado**: una cota «≥ n»
 demuestra `>=`/`>` pero no `<=`, `<` ni `=` (sube `--estados` o simplifica el nivel). Solo buscan movimientos si algún
 objetivo habla de `movimientos` o `extra`, y paran en cuanto cada objetivo queda demostrado o descartado. Una métrica
-que no aplica (`repartos` sin símbolos) nunca se cumple.
+que no aplica (`repartos` sin símbolos, estanterías ni camiones) nunca se cumple (`huecos` y `camion` valen 0 sin
+estanterías o sin camiones). `callejones` también se puede pedir
+(`callejones=0`), pero en un nivel grande la búsqueda no llega a todos los estados, así que solo demuestra `>=`: el
+«ninguno» de todos los niveles lo garantiza el test de arriba.
 
 ## Herramientas
 
 ```bash
-npm run levels                  # todos: mapa, leyenda y métricas de cada nivel + tabla resumen
-npm run levels -- 23            # uno en detalle (por número, #posición, id o archivo): texto, métricas,
+npm run levels                  # todos (los del juego y luego los especiales): mapa, leyenda y métricas de cada
+                                #   nivel + tabla resumen, con la cabecera «Toro · 3 niveles + 1 especial»
+npm run levels -- 3             # uno en detalle (por número, #posición, id o archivo): texto, métricas,
                                 #   objetivos, un plan mínimo movimiento a movimiento y las casillas estrechas
-npm run levels -- 23 --estados 1000000  # más presupuesto para la búsqueda exacta
-npm run levels:fmt              # reescribe los .level en forma canónica
+npm run levels -- benchmark     # igual con un nivel especial (su id, su número 100 o su archivo)
+npm run levels -- 3 --estados 1000000   # más presupuesto para la búsqueda exacta
+npm run levels -- 3 --callejones 2000   # explorar más estados buscando callejones (60 por defecto)
+npm run levels:fmt              # reescribe los .level (también los de especiales/) en forma canónica
 npm run levels:fmt -- --check   # solo avisa (código de salida 1) de los que no lo están
 ```
 
@@ -186,14 +269,21 @@ consola muestra mal los símbolos, usa Windows Terminal (UTF-8).
 
 ## Añadir o editar un nivel
 
-1. Copia un archivo parecido (`level-23.level` → `level-25.level`); cambia número y nombre del título y pon un `id`
+1. Copia un archivo parecido (`level-03.level` → `level-04.level`); cambia número y nombre del título y pon un `id`
    nuevo (en minúsculas con guiones; no lo cambies después: guarda los tiempos).
 2. Dibuja el mapa y la leyenda. Para editar un nivel existente, cambia solo el mapa y la leyenda: `id` y número se
    quedan.
-3. `npm run levels -- 25`: mira las métricas y el plan; ajusta hasta que midan lo que buscas y fíjalo con
+3. `npm run levels -- 4`: mira las métricas y el plan; ajusta hasta que midan lo que buscas y fíjalo con
    `dificultad:`.
 4. `npm test`: además de validar, comprueba las reglas de diseño (plantas y ventanas, nada escondido tras una
-   estantería, solubilidad, el piloto automático lo juega con los controles reales a 60 y 20 fps) y los objetivos.
+   estantería, solubilidad, sin callejones, el piloto automático lo juega con los controles reales a 60 y 20 fps) y
+   los objetivos.
 5. Añadir, quitar o reordenar niveles: actualiza la lista `SHIPPED` de `src/data/levels/levels.test.ts` (ids y
    números a propósito: de ellos dependen tiempos guardados y desbloqueos) y los tests de capítulo si cambian.
 6. Opcional: `npm run levels:fmt` para dejarlo en forma canónica.
+
+Un nivel **especial** (fuera de la progresión) va en `src/data/levels/especiales/` con un id y un número que no use
+ningún nivel del juego (el Benchmark usa 100). No hace falta tocar `SHIPPED`: pasa las mismas validaciones, la forma
+canónica (`levels.test.ts`) y `npm run levels`; sus reglas de diseño y su piloto automático van en tests propios
+(`benchmark.test.ts`, `src/integration/benchmarkPlayable.test.ts`). Para jugarlo hace falta una entrada en la UI (hoy,
+el botón «Benchmark» del Modo prueba, `Game.startBenchmark`); nunca pasa por ProgressStore.

@@ -8,7 +8,8 @@ import { bassNote, buildChord, chimeNote, completionArpeggio, padVoicing, stackA
 import { TONIC_CHORD } from './music/progressions';
 import { MusicPlayer } from './MusicPlayer';
 import { SfxPlayer, STACK_NOTE_GAP } from './sfx';
-import { MotorSound } from './motor';
+import { CLUNK, MotorSound } from './motor';
+import { beepFrequency } from './beeper';
 import { glideParam, rampParam } from './nodes';
 
 export type { AudioScene } from './types';
@@ -30,6 +31,11 @@ export const DROP_LAND_SEC = GAME_CONFIG.box.dropLandSec;
  * stack's figure delays that chime further, and the arpeggio waits for that too.
  */
 export const COMPLETE_AFTER_LAND_SEC = 0.2;
+/**
+ * Levels with racks: a box set down on a target that is not its destiny buzzes softly this long after it lands (its
+ * thump / toc first, where a destined box's chime would ring).
+ */
+export const WRONG_AFTER_LAND_SEC = 0.05;
 /** A zone un-completed by a box stacked on top ticks just after that box lands (its knock first). */
 export const RELEASE_AFTER_LAND_SEC = 0.03;
 /** A zone satisfied again by lifting a wrong top box chimes this long after the pickup knock. */
@@ -90,9 +96,9 @@ export class AudioEngine {
   }
 
   /**
-   * `match`: how the zone of a `boxDropped` / `zoneRestored` event matches its box (core/sorting `matchKind` of its
-   * criteria), which picks the chime's timbre: color = the bell, symbol = a soft wooden marimba, exact = both. Game
-   * passes it (audio never reads the level); omitted = color, the classic bell.
+   * `match`: how the zone (or rack slot cue) of a `boxDropped` / `zoneRestored` event matches its box (core/sorting
+   * `matchKind` of its criteria), which picks the chime's timbre: color = the bell, symbol = a soft wooden marimba,
+   * exact = both. Game passes it (audio never reads the level); omitted = color, the classic bell.
    */
   handleEvent(event: GameEvent, match: MatchKind = 'color'): void {
     if (this.disposed) return;
@@ -101,16 +107,32 @@ export class AudioEngine {
     this.guard('handleEvent', (rt, now) => {
       switch (event.type) {
         case 'boxPicked':
-          rt.sfx.pickup(now, event.level ?? 0);
+          // Out of a rack slot the box eases off a metal beam; anywhere else (a truck bed too: wood), the classic knock.
+          if (event.fromSlotId !== undefined) rt.sfx.slotLift(now, event.level ?? 0);
+          else rt.sfx.pickup(now, event.level ?? 0);
           break;
         case 'boxDropped': {
           const chord = this.composer.currentChord() ?? undefined;
           const chime = event.correct ? chimeNote(this.composer.keyPc, event.satisfiedCount, event.total, chord) : null;
-          const stack =
-            event.correct && event.recipeLength > 1
-              ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
-              : null;
-          rt.sfx.drop(now + DROP_LAND_SEC, chime, event.correct && event.satisfiedCount >= event.total, event.level ?? 0, stack, match);
+          const final = event.correct && event.satisfiedCount >= event.total;
+          if (event.slotId !== undefined) {
+            // Into a rack slot: the metal toc. `correct` = the slot now holds its destined box, the only one that
+            // chimes; a box that merely fits the cue (or any box in a «libre» slot) just settles, never a success sound.
+            rt.sfx.slotDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
+          } else if (event.truckSlotId !== undefined) {
+            // Onto a truck bed (loading docks): the hollow wooden trailer-floor thunk; the chime only when its truck
+            // slot is now satisfied (`correct`), like a rack slot.
+            rt.sfx.truckDrop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, match);
+          } else {
+            const stack =
+              event.correct && event.recipeLength > 1
+                ? stackArpeggio(this.composer.keyPc, event.satisfiedCount, event.total, event.recipeLength, chord)
+                : null;
+            rt.sfx.drop(now + DROP_LAND_SEC, chime, final, event.level ?? 0, stack, match);
+          }
+          // Levels with racks or trucks: on a floor zone, a cued slot or a truck slot it does not satisfy (trap boxes
+          // included), the soft "no" follows the landing. A «libre» slot, plain floor and every other level never set it.
+          if (isWrongTarget(event)) rt.sfx.wrongBuzz(now + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC);
           break;
         }
         case 'zoneRestored': {
@@ -140,17 +162,21 @@ export class AudioEngine {
       }
     });
     this.noteDrop(event);
+    this.hushForkClunk(event);
   }
 
   /**
-   * Called every frame. speed01 = |speed| / maxSpeed, forkMotion01 = how fast the forks are moving,
-   * forkHeight = their stack height (0 = floor; the servo sits a little higher per level).
+   * Called every frame with the forklift's motion (MotorSound). `speed` = speed / maxSpeed, signed −1‥1: the electric
+   * whine and tyre roll follow |speed|, and moving in reverse (negative) sounds the back-up beeper. `forkMotion` = how
+   * fast the forks move, signed −1‥1 (+ raising: the pump whir; − lowering: the soft tone and hiss; a 0‥1 value reads
+   * as raising). `forkHeight` = their stack / slot height (0 = floor; the pump sits a little higher per level).
+   * Continuous sounds go through the master gain, so mute (M) silences them too.
    */
-  setMotor(speed01: number, forkMotion01: number, forkHeight = 0): void {
+  setMotor(speed: number, forkMotion: number, forkHeight = 0): void {
     const rt = this.rt;
     if (!rt) return;
     try {
-      rt.motor.set(speed01, forkMotion01, forkHeight);
+      rt.motor.set(speed, forkMotion, forkHeight);
     } catch (err) {
       warn('setMotor', err);
     }
@@ -187,6 +213,15 @@ export class AudioEngine {
   /** Soft click for UI buttons. */
   uiClick(): void {
     this.guard('uiClick', (rt, now) => rt.sfx.uiClick(now));
+  }
+
+  /**
+   * Levels with racks: soft detent click for one fork step at a rack column. Game calls it only for a step that took
+   * effect (never at the top / bottom slot, never away from a rack). `level` = the slot selected now, `direction` +1
+   * up / −1 down.
+   */
+  forkClick(level: number, direction: 1 | -1): void {
+    this.guard('forkClick', (rt, now) => rt.sfx.forkClick(now, level, direction));
   }
 
   /** Dev / diagnostics snapshot (chord, scene, live voices). */
@@ -235,7 +270,8 @@ export class AudioEngine {
       const graph = createAudioGraph(ctx, this.config, this.rng, this.muted);
       const music = new MusicPlayer(graph, this.composer, this.rng);
       const sfx = new SfxPlayer(ctx, graph.sfxIn, graph.noise, this.rng);
-      const motor = new MotorSound(ctx, graph.motorIn);
+      // The reverse beep is tuned to the song's tonic (the key is fixed for the session).
+      const motor = new MotorSound(ctx, graph.motorIn, graph.noise, beepFrequency(this.composer.keyPc));
       this.rt = { ctx, graph, music, sfx, motor };
 
       this.composer.setScene(this.scene);
@@ -309,6 +345,21 @@ export class AudioEngine {
     } else if (event.type === 'boxPicked' || event.type === 'levelComplete') {
       this.droppedBoxId = null;
       this.completeTail = 0;
+    }
+  }
+
+  /**
+   * A box picked or set down: its knock / thump marks the moment, so the forks' end-of-travel clunk keeps quiet while
+   * the carry lift (or the lowering after the drop) finishes. Outside guard() so it stays in step while muted.
+   */
+  private hushForkClunk(event: GameEvent): void {
+    if (event.type !== 'boxPicked' && event.type !== 'boxDropped') return;
+    const rt = this.rt;
+    if (!rt) return;
+    try {
+      rt.motor.hushClunk(rt.ctx.currentTime + CLUNK.hushSec);
+    } catch (err) {
+      warn('hushForkClunk', err);
     }
   }
 
@@ -391,6 +442,14 @@ export class AudioEngine {
 }
 
 const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'] as const;
+
+/**
+ * Whether a drop earns the soft wrong-target buzz: only a `boxDropped` flagged `wrongTarget` (levels with racks), and
+ * never one that is also `correct` (the destined box keeps its chime alone, whatever the flag says).
+ */
+export function isWrongTarget(event: GameEvent): boolean {
+  return event.type === 'boxDropped' && event.wrongTarget === true && !event.correct;
+}
 
 function audioContextCtor(): AudioContextCtor | null {
   const g = globalThis as { AudioContext?: AudioContextCtor; webkitAudioContext?: AudioContextCtor };

@@ -1,19 +1,28 @@
-import { BufferAttribute, BufferGeometry, Color, PlaneGeometry, Vector3 } from 'three';
-import type { LevelData, WallSide } from '../../core/types';
+import { BufferAttribute, BufferGeometry, Color, CylinderGeometry, PlaneGeometry, Vector3 } from 'three';
+import { trucksOf } from '../../core/docks';
+import type { LevelData, LevelTruck, WallSide } from '../../core/types';
 import type { Theme } from '../../themes/types';
-import { DIORAMA } from '../dims';
+import { DIORAMA, DOCK } from '../dims';
 import { PartList } from '../paint';
 
 /**
- * The two low back walls (north, west) with baseboard, top cap and windows (light-wood frames,
- * warm glass, faint additive light shafts). Each wall is built in a local frame:
- * it runs along +x, its inner face is the plane z = 0 facing +z, thickness goes toward -z.
+ * The two low back walls (north, west) with baseboard, top cap, windows (light-wood frames,
+ * warm glass, faint additive light shafts) and the door of each loading dock (docs/DOCKS.md: an opening
+ * from the floor with a slate frame, the rolled-up door in its head and rubber seals outside).
+ * Each wall is built in a local frame: it runs along +x, its inner face is the plane z = 0 facing +z,
+ * thickness goes toward -z. Trucks are built in this same frame (builders/truck: "dock-local").
  */
 
 export interface WallOpening {
   a: number;
   b: number;
   cells: number;
+}
+
+/** A dock door: its opening along the wall (local x), from the floor up to DOCK.doorTop. */
+export interface WallDoor {
+  a: number;
+  b: number;
 }
 
 export interface WallLayout {
@@ -26,6 +35,8 @@ export interface WallLayout {
   /** Inner face length (baseboard). */
   innerLength: number;
   openings: WallOpening[];
+  /** Dock doors (loading docks in this wall), sorted along the wall. Never overlap a window (validateLevel). */
+  doors: WallDoor[];
   /** Group transform placing the local frame in the world. */
   position: Vector3;
   rotationY: number;
@@ -44,6 +55,21 @@ const MULLION = 0.04;
 const SHAFT_ALPHA = 0.065;
 const PATCH_ALPHA = 0.055;
 const FEATHER = 0.22;
+/**
+ * Dock door (docs/DOCKS.md): its slate frame just outside the opening, the rolled-up door in the head of the opening
+ * (a soft cream roll and the bottom rail of the shutter under it) and the rubber dock seals on the outer face, down its
+ * sides and across its head, with two bumpers at the foot of the jambs.
+ */
+export const DOOR = {
+  frame: 0.07,
+  roll: 0.075,
+  rail: 0.035,
+  seal: 0.08,
+  sealOut: 0.07,
+  bumperW: 0.12,
+  bumperOut: 0.09,
+  bumperY: [-0.24, -0.09],
+} as const;
 
 export function wallLayouts(level: LevelData): WallLayout[] {
   const { width: w, depth: d } = level.size;
@@ -58,6 +84,7 @@ export function wallLayouts(level: LevelData): WallLayout[] {
     capTo: w + ov,
     innerLength: w,
     openings: [],
+    doors: [],
     position: new Vector3(-w / 2, 0, -d / 2),
     rotationY: 0,
     inward: new Vector3(0, 0, 1),
@@ -71,6 +98,7 @@ export function wallLayouts(level: LevelData): WallLayout[] {
     capTo: d - ov,
     innerLength: d,
     openings: [],
+    doors: [],
     position: new Vector3(-w / 2, 0, d / 2),
     rotationY: Math.PI / 2,
     inward: new Vector3(1, 0, 0),
@@ -82,9 +110,27 @@ export function wallLayouts(level: LevelData): WallLayout[] {
       west.openings.push({ a: d - win.at - win.width + inset, b: d - win.at - inset, cells: win.width });
     }
   }
-  north.openings.sort((p, q) => p.a - q.a);
-  west.openings.sort((p, q) => p.a - q.a);
+  for (const truck of trucksOf(level)) {
+    const span = dockSpan(truck, level);
+    const door = { a: span.a + DOCK.doorInset, b: span.b - DOCK.doorInset };
+    (truck.wall === 'north' ? north : west).doors.push(door);
+  }
+  for (const layout of [north, west]) {
+    layout.openings.sort((p, q) => p.a - q.a);
+    layout.doors.sort((p, q) => p.a - q.a);
+  }
   return [north, west];
+}
+
+/**
+ * The run of a truck's bed cells along its wall, in the wall's local x (see wallLayouts): a north dock's column c
+ * spans x + c‥x + c + 1; a west dock's runs the other way (local x = depth − z), so its first column is the last span.
+ */
+export function dockSpan(truck: Pick<LevelTruck, 'wall' | 'x' | 'z' | 'columns'>, level: Pick<LevelData, 'size'>): { a: number; b: number } {
+  const n = truck.columns.length;
+  if (truck.wall === 'north') return { a: truck.x, b: truck.x + n };
+  const d = level.size.depth;
+  return { a: d - truck.z - n, b: d - truck.z };
 }
 
 /** World direction toward the sun expressed in a wall's local frame (inverse of its Y rotation). */
@@ -102,20 +148,32 @@ export function buildWallGeometry(layout: WallLayout, theme: Theme, toSunLocal: 
   const y1 = DIORAMA.windowTop;
   const body = new PartList();
 
-  // Wall body around the openings.
+  // Wall body around the openings: under and over a window, only under (the sill) and over (the lintel) a door.
+  const gaps = [
+    ...layout.openings.map((o) => ({ a: o.a, b: o.b, below: y0, above: y1 })),
+    ...layout.doors.map((o) => ({ a: o.a, b: o.b, below: DOCK.sillTop, above: DOCK.doorTop })),
+  ].sort((p, q) => p.a - q.a);
   let cursor = layout.start;
-  for (const o of layout.openings) {
+  for (const o of gaps) {
     if (o.a > cursor + 1e-3) body.block(theme.wall.base, cursor, o.a, -S, H, -T, 0);
-    body.block(theme.wall.base, o.a, o.b, -S, y0, -T, 0);
-    body.block(theme.wall.base, o.a, o.b, y1, H, -T, 0);
+    body.block(theme.wall.base, o.a, o.b, -S, o.below, -T, 0);
+    body.block(theme.wall.base, o.a, o.b, o.above, H, -T, 0);
     cursor = o.b;
   }
   if (layout.end > cursor + 1e-3) body.block(theme.wall.base, cursor, layout.end, -S, H, -T, 0);
 
-  // Baseboard and top cap.
-  body.block(theme.wall.trim, 0, layout.innerLength, 0, DIORAMA.baseboardHeight, 0, DIORAMA.baseboardDepth);
+  // Baseboard (broken by each door and its frame) and top cap.
+  const B = DIORAMA.baseboardHeight;
+  let from = 0;
+  for (const door of layout.doors) {
+    const to = door.a - DOOR.frame;
+    if (to > from + 1e-3) body.block(theme.wall.trim, from, to, 0, B, 0, DIORAMA.baseboardDepth);
+    from = door.b + DOOR.frame;
+  }
+  if (layout.innerLength > from + 1e-3) body.block(theme.wall.trim, from, layout.innerLength, 0, B, 0, DIORAMA.baseboardDepth);
   const ov = DIORAMA.capOverhang;
   body.block(theme.wall.top, layout.capFrom, layout.capTo, H, H + DIORAMA.capHeight, -T - ov, ov);
+  for (const door of layout.doors) addDoor(body, theme, door);
 
   if (layout.openings.length === 0) return { body: body.build(), glass: null, shafts: null };
 
@@ -127,6 +185,37 @@ export function buildWallGeometry(layout: WallLayout, theme: Theme, toSunLocal: 
     addLightShaft(shafts, theme, o, toSunLocal);
   }
   return { body: body.build(), glass: glass.build(), shafts: shafts.build() };
+}
+
+/**
+ * A dock door (DOOR): the slate frame around the opening (jambs from the floor, a head under the lintel), both faces;
+ * the rolled-up door in the head of the opening with the bottom rail of the shutter under it; outside, the rubber seals
+ * down both sides and across the head and a bumper at the foot of each jamb. The opening itself stays clear for the
+ * trailer deck (builders/truck).
+ */
+function addDoor(parts: PartList, theme: Theme, door: WallDoor): void {
+  const T = DIORAMA.wallThickness;
+  const D = DOOR;
+  const top = DOCK.doorTop;
+  const c = theme.truck;
+  const z0 = -T - 0.012;
+  const z1 = 0.025;
+  parts.block(c.doorFrame, door.a - D.frame, door.a, 0, top, z0, z1);
+  parts.block(c.doorFrame, door.b, door.b + D.frame, 0, top, z0, z1);
+  parts.block(c.doorFrame, door.a - D.frame, door.b + D.frame, top, top + D.frame, z0, z1);
+  // The roll lies along the opening in its head, inside the wall; the shutter's bottom rail just shows under it.
+  const roll = new CylinderGeometry(D.roll, D.roll, door.b - door.a, 10);
+  parts.add(roll, c.shutter, { x: (door.a + door.b) / 2, y: top - D.roll, z: -T / 2, rz: Math.PI / 2 });
+  const railY = top - 2 * D.roll;
+  parts.block(c.doorFrame, door.a, door.b, railY - D.rail, railY, -T / 2 - 0.02, -T / 2 + 0.02);
+  // Dock seals and bumpers on the outer face.
+  const s0 = -T - D.sealOut;
+  parts.block(c.rubber, door.a - D.seal, door.a + 0.01, DOCK.sillTop, top - 0.02, s0, -T);
+  parts.block(c.rubber, door.b - 0.01, door.b + D.seal, DOCK.sillTop, top - 0.02, s0, -T);
+  parts.block(c.rubber, door.a - D.seal, door.b + D.seal, top - 0.02, top + D.seal - 0.02, s0, -T);
+  const [by0, by1] = D.bumperY;
+  parts.block(c.rubber, door.a - D.seal - D.bumperW, door.a - D.seal, by0, by1, -T - D.bumperOut, -T);
+  parts.block(c.rubber, door.b + D.seal, door.b + D.seal + D.bumperW, by0, by1, -T - D.bumperOut, -T);
 }
 
 function addWindowFrame(parts: PartList, theme: Theme, o: WallOpening): void {

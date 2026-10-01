@@ -116,6 +116,8 @@ export class ForkliftController {
   private assistRate = 0;
   /** Vehicle control: turn rate actually applied last sub-step (steering + assist), for the visual steer. */
   private driveRate = 0;
+  /** The carried load is inside a storage rack slot: the heading holds, the rig only goes straight in or out. */
+  private headingLocked = false;
   private readonly probe: Vec2 = { x: 0, z: 0 };
 
   constructor(state: ForkliftState, world: CollisionWorld, tuning: ForkliftTuning) {
@@ -137,6 +139,20 @@ export class ForkliftController {
     this.endDetour();
   }
 
+  /**
+   * Storage racks (docs/RACKS.md): while the carried load is inside a rack slot the heading holds, so the rig goes in
+   * and out straight; steering does nothing and a move vector drives along the heading (pulling away from the rack
+   * backs out, like S). GameState sets it every frame.
+   */
+  setHeadingLock(locked: boolean): void {
+    if (locked && !this.headingLocked) {
+      this.angularVelocity = 0;
+      this.assistRate = 0;
+      this.endDetour();
+    }
+    this.headingLocked = locked;
+  }
+
   /** Where the forks hold a box: pos + forward * forkReach. Writes into `out`. */
   forkPoint(out: Vec2): Vec2 {
     const s = this.state;
@@ -150,6 +166,11 @@ export class ForkliftController {
     const s = this.state;
     if (!Number.isFinite(moveX)) moveX = 0;
     if (!Number.isFinite(moveZ)) moveZ = 0;
+    if (this.headingLocked) {
+      // In a rack column: only straight in or out, as much as the move vector points along the heading.
+      this.stepDrive(dt, clamp(moveX * Math.sin(s.heading) + moveZ * Math.cos(s.heading), -1, 1), 0);
+      return;
+    }
     const length = Math.sqrt(moveX * moveX + moveZ * moveZ);
     const hasMove = length > MOVE_EPSILON;
     const magnitude = hasMove ? Math.min(1, length) : 0;
@@ -360,6 +381,12 @@ export class ForkliftController {
   private turnDrive(dt: number, throttle: number, steer: number): void {
     const s = this.state;
     const t = this.tuning;
+    if (this.headingLocked) {
+      this.angularVelocity = 0;
+      this.assistRate = 0;
+      this.driveRate = 0;
+      return;
+    }
     if (steer !== 0) this.angularVelocity = approach(this.angularVelocity, steer * t.driveTurnRate, t.turnAcceleration * dt);
     else this.angularVelocity = damp(this.angularVelocity, 0, DRIVE_TURN_RELEASE_LAMBDA, dt);
     // The assist is its own eased turn rate, proportional to speed: it never rotates a parked or pinned rig and

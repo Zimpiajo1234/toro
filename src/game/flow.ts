@@ -41,11 +41,6 @@ export function continueIndexAfter(index: number, levelCount: number): number {
   return clampIndex(index + 1, levelCount);
 }
 
-/** The control hint shows on the first `hintLevels` levels until the player has dropped a box once. */
-export function shouldShowHint(index: number, hintLevels: number, dropDone: boolean): boolean {
-  return index < hintLevels && !dropDone;
-}
-
 export function buildLevelSummaries(
   levels: readonly LevelData[],
   getBest: (levelId: string) => number | null,

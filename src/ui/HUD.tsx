@@ -1,9 +1,10 @@
 import type { CSSProperties, MouseEvent } from 'react';
 import { useStore, type Store } from '../core/store';
-import { formatClock, TEST_MODE_TIP } from './format';
+import { BENCHMARK_TIP, formatClock, TEST_MODE_TIP } from './format';
 import { ClockIcon, RestartIcon } from './icons';
 import { onScreen } from './interaction';
 import { Presence } from './Presence';
+import { useReservedArea } from './reservedAreas';
 import type { GameActions, UIState } from './uiState';
 
 interface HUDProps {
@@ -24,15 +25,19 @@ function keepFocus(e: MouseEvent<HTMLButtonElement>): void {
   e.preventDefault();
 }
 
-/** In-game HUD — only three things: level, time, restart. */
+/**
+ * In-game HUD — only three things: level, time, restart. Its corners reserve the top band (the camera frames the level
+ * below them); a pill added elsewhere at the top takes `useReservedArea('top')` too.
+ */
 export function HUD({ store, actions, show, dimmed }: HUDProps) {
+  const reserveTop = useReservedArea<HTMLDivElement>('top');
   return (
     <Presence show={show} inert={dimmed} className={`hud${dimmed ? ' is-dimmed' : ''}`}>
-      <div className="hud__corner hud__corner--start">
+      <div className="hud__corner hud__corner--start" ref={reserveTop}>
         <LevelBadge store={store} />
         <RestartButton store={store} actions={actions} />
       </div>
-      <div className="hud__corner hud__corner--end">
+      <div className="hud__corner hud__corner--end" ref={reserveTop}>
         <TimerButton store={store} actions={actions} />
       </div>
     </Presence>
@@ -40,17 +45,21 @@ export function HUD({ store, actions, show, dimmed }: HUDProps) {
 }
 
 function LevelBadge({ store }: { store: Store<UIState> }) {
-  const level = useStore(store, (s) => s.levelIndex + 1);
+  // The Benchmark (test mode's special level) has no number: its name, and a quiet "sin récord" (nothing is saved).
+  const label = useStore(store, (s) => (s.benchmark ? 'Benchmark' : `Nivel ${s.levelIndex + 1}`));
+  const benchmark = useStore(store, (s) => s.benchmark);
   const testMode = useStore(store, (s) => s.testMode);
+  const tag = benchmark ? 'sin récord' : testMode ? 'prueba' : null;
   return (
     <div className="hud-pill hud-level ui-enter">
       {/* Keyed so a new level number eases in instead of snapping. */}
-      <span key={level} className="ui-swap">{`Nivel ${level}`}</span>
-      {testMode && (
-        // Read as "Nivel 3, modo prueba" (whitespace between flex items is dropped, so it is spelled out).
-        <span className="hud-level__test" title={TEST_MODE_TIP}>
-          <span aria-hidden="true">prueba</span>
-          <span className="ui-visually-hidden">, modo prueba</span>
+      <span key={label} className="ui-swap">{label}</span>
+      {tag && (
+        // Read as "Nivel 3, modo prueba" or "Benchmark, sin récord" (whitespace between flex items is dropped, so it
+        // is spelled out).
+        <span className="hud-level__test" title={benchmark ? BENCHMARK_TIP : TEST_MODE_TIP}>
+          <span aria-hidden="true">{tag}</span>
+          <span className="ui-visually-hidden">{benchmark ? ', sin récord' : ', modo prueba'}</span>
         </span>
       )}
     </div>

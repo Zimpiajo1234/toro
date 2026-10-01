@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LevelData } from '../core/types';
-import { Countdown, buildLevelSummaries, continueIndexAfter, continueTarget, resolveStartLevel, shouldShowHint } from './flow';
+import { Countdown, buildLevelSummaries, continueIndexAfter, continueTarget, resolveStartLevel } from './flow';
 
 const fresh = { lastLevel: 0, highestUnlocked: 0, hasProgress: false };
 
@@ -72,13 +72,14 @@ describe('continueTarget', () => {
     expect(continueTarget(7, 7, clearedUpTo(7))).toBe(7); // everything cleared: nothing after the last level
     expect(continueTarget(0, 0, () => false)).toBe(0); // fresh save
   });
-});
 
-describe('shouldShowHint', () => {
-  it('shows only on the first hint levels until the first drop', () => {
-    expect(shouldShowHint(0, 1, false)).toBe(true);
-    expect(shouldShowHint(0, 1, true)).toBe(false);
-    expect(shouldShowHint(1, 1, false)).toBe(false);
+  it('a save from a game with more levels (removed since) still starts on a level that exists', () => {
+    // Saved on level 13 of 24 with everything open; only 3 levels are left, all cleared.
+    const cleared = (i: number) => i >= 0 && i < 3;
+    const lastLevel = continueTarget(12, 23, cleared);
+    expect(resolveStartLevel(undefined, { lastLevel, highestUnlocked: 23, hasProgress: true }, 3)).toBe(2);
+    const levels = [level('a', 1), level('b', 2), level('c', 3)];
+    expect(buildLevelSummaries(levels, () => 1000, 23).every((s) => s.unlocked)).toBe(true);
   });
 });
 

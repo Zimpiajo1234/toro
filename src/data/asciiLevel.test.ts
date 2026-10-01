@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import readme from '../../README.md?raw';
 import levelsDoc from '../../docs/LEVELS.md?raw';
-import level23 from './levels/level-23.level?raw';
 import type { LevelData } from '../core/types';
 import { LevelFormatError, arrowOf, formatLevel, parseLevel, renderLevel } from './asciiLevel';
 import { formatRange, parseTargets, targetHolds, targetRefuted } from './difficulty';
@@ -462,9 +461,33 @@ describe('documentation examples stay true', () => {
         .join('\n'),
     );
 
-  it('docs/LEVELS.md shows the real level 23 file', () => {
+  /** The old level 23 file «La muestra» (levels 4–24 were removed for the redesign), byte for byte. */
+  const LEVEL_23 = [
+    '# 23 · La muestra',
+    'id: la-muestra',
+    'limit: 1',
+    'ventanas: norte 2-4, oeste 3-4',
+    '',
+    '  0123456789',
+    '0 p.........',
+    '1 .1.2.3.4..',
+    '2 ..........',
+    '3 ..........',
+    '4 ....b..a..',
+    '5 ..c.......',
+    '6 .....d.^.p',
+    '',
+    '1 2 = zona ▲        3 = zona azul ■     4 = zona azul',
+    'a = caja azul ▲     b = caja azul ■     c = caja menta ▲    d = caja azul ●',
+    '',
+  ].join('\n');
+
+  it('docs/LEVELS.md shows the old level 23 file, a valid level in canonical form', () => {
     const block = codeBlocks(lf(levelsDoc)).find((b) => b.startsWith('# 23 · La muestra'));
-    expect(block).toBe(lf(level23));
+    expect(block).toBe(LEVEL_23);
+    const { level } = parseLevel(block!);
+    expect(level).toMatchObject({ id: 'la-muestra', order: 23 });
+    expect(formatLevel(block!)).toBe(LEVEL_23);
   });
 
   it('the README example is a valid level', () => {

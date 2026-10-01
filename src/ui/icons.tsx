@@ -41,6 +41,16 @@ export function SoundIcon({ className, off = false }: IconProps & { off?: boolea
   );
 }
 
+/** Mouse seen from above, its wheel marked: "rueda" in the fork hint. */
+export function MouseWheelIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...LINE}>
+      <rect x="6.5" y="3.5" width="11" height="17" rx="5.5" />
+      <path d="M12 7.2v3.2" />
+    </svg>
+  );
+}
+
 /** Soft four-point sparkle for the "new best" tag. */
 export function SparkleIcon({ className }: IconProps) {
   return (
