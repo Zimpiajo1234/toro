@@ -487,6 +487,14 @@ export interface GameSnapshot {
    * slot in levels with trucks.
    */
   progress: { satisfied: number; total: number };
+  /**
+   * Box moves so far this attempt (the optional move counter): one per box picked up and put down somewhere else,
+   * the same count as the solver's «movimientos» metric (src/data/levels/solver.ts), so it compares with
+   * levelMinimum() (src/data/levels/minimums.ts). Putting a box back exactly where it was picked up (same cell and
+   * height, same rack slot) counts nothing. Counted on the drop (before its boxDropped event); 0 on a fresh GameState
+   * (level load, restart).
+   */
+  moves: number;
 }
 
 /** Per-frame input, already converted to world space by the Game orchestrator. */

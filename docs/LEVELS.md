@@ -212,6 +212,29 @@ paso adelante desde la casilla de detrás de su frente y una caja sacada de un h
 Coste: `npm run levels` mide los 3 niveles y el Benchmark, todos exactos, en unos segundos (sobre todo la búsqueda de
 callejones; el mínimo de movimientos, menos de 1 s por nivel; con los 24 niveles de antes eran ~15 s).
 
+## Mínimos del contador de movimientos
+
+El contador de movimientos del juego (HUD "12 · mín. 10", `README.md`) compara con la métrica `movimientos` de cada
+nivel, con el mismo criterio: un movimiento = coger una caja y dejarla en otro sitio (dejarla exactamente donde estaba,
+misma casilla y altura o mismo hueco, no cuenta; `GameSnapshot.moves`). El juego **nunca** ejecuta el solver: lee los
+mínimos precalculados de `src/data/levelMinimums.json` con `levelMinimum(id)` (`src/data/levels/minimums.ts`). El
+archivo vive en `src/data` y no junto a los niveles porque todo `*.json` de `src/data/levels` se carga como un nivel.
+
+- **Generarlo:** `npm run levels -- --minimos` recalcula todos los niveles, los del juego y los especiales
+  (`src/data/levels/minimumsBuild.ts`: `minMoves` de `solver.ts` con los controles del juego, marcha atrás incluida) y
+  reescribe el archivo (una línea por nivel, en el orden de los niveles; conserva los finales de línea) con un resumen
+  de lo que cambió. Un nivel que el modelo no sabe terminar no tiene entrada (y su contador no enseña mínimo).
+- **Presupuesto:** `--estados N` usa más trabajo para la búsqueda exacta (150 000 por defecto, como `npm run levels`).
+  El archivo guarda el presupuesto con que se calculó (`maxWork`) y las siguientes ejecuciones y el test lo reutilizan.
+- **Exacto o cota:** `{ "moves": 10, "exact": true }` = nadie lo hace en menos (en el modelo conservador de arriba; el
+  juego real es algo más permisivo, así que terminar en menos es posible y también cuenta como «mínimo»). Si el
+  presupuesto se agota, `"exact": false` y `moves` es solo una cota inferior demostrada: el HUD y la tarjeta la
+  enseñan como "mín. ≥ 10", u omiten el mínimo si `moves.showLowerBound` es `false` en `gameConfig.json`. Para
+  convertirla en exacta, sube `--estados`. Hoy los 3 niveles y el Benchmark son exactos (1, 2, 3 y 14).
+- **Comprobarlo:** `npm run levels -- --minimos --check` solo dice si el archivo está al día (código de salida 1 si
+  no); `npm test` lo recalcula (`src/data/levels/minimums.test.ts`) y falla con «run `npm run levels -- --minimos`»
+  cuando un nivel (o el solver) cambió y el archivo se quedó atrás. No se edita a mano.
+
 ## Callejones
 
 Un **callejón** es un estado del que ya no se puede terminar: el jugador tendría que reiniciar (R). Ningún nivel puede
@@ -262,6 +285,9 @@ npm run levels -- 3 --estados 1000000   # más presupuesto para la búsqueda exa
 npm run levels -- 3 --callejones 2000   # explorar más estados buscando callejones (60 por defecto)
 npm run levels:fmt              # reescribe los .level (también los de especiales/) en forma canónica
 npm run levels:fmt -- --check   # solo avisa (código de salida 1) de los que no lo están
+npm run levels -- --minimos     # recalcula src/data/levelMinimums.json (mínimos del contador de movimientos)
+npm run levels -- --minimos --estados 1000000   # igual con más presupuesto (se guarda en el archivo)
+npm run levels -- --minimos --check             # solo avisa (código de salida 1) si está desfasado
 ```
 
 Funcionan en Windows y no molestan al servidor de desarrollo (cargan el código con Vite sin abrir puertos). Si la
@@ -280,7 +306,9 @@ consola muestra mal los símbolos, usa Windows Terminal (UTF-8).
    los objetivos.
 5. Añadir, quitar o reordenar niveles: actualiza la lista `SHIPPED` de `src/data/levels/levels.test.ts` (ids y
    números a propósito: de ellos dependen tiempos guardados y desbloqueos) y los tests de capítulo si cambian.
-6. Opcional: `npm run levels:fmt` para dejarlo en forma canónica.
+6. `npm run levels -- --minimos` para que el contador de movimientos conozca su mínimo (si no, `npm test` falla en
+   `minimums.test.ts`). Un `id` nuevo necesita su entrada; un mapa cambiado, su mínimo nuevo.
+7. Opcional: `npm run levels:fmt` para dejarlo en forma canónica.
 
 Un nivel **especial** (fuera de la progresión) va en `src/data/levels/especiales/` con un id y un número que no use
 ningún nivel del juego (el Benchmark usa 100). No hace falta tocar `SHIPPED`: pasa las mismas validaciones, la forma

@@ -112,6 +112,17 @@ describe('Input keyboard', () => {
     ]);
   });
 
+  it('reports T (timer) and N (move counter) as separate edges', () => {
+    const { input, down } = setup();
+    down({ code: 'KeyN', key: 'n' });
+    const s = input.poll();
+    expect([s.movesPressed, s.timerPressed, s.any]).toEqual([true, false, true]);
+    expect(input.poll().movesPressed).toBe(false);
+    down({ code: 'KeyT', key: 't' });
+    const t = input.poll();
+    expect([t.movesPressed, t.timerPressed]).toEqual([false, true]);
+  });
+
   it('tracks R as held until released (hold-to-restart), re-synced by repeats', () => {
     const { input, down, up, win } = setup();
     down({ code: 'KeyR', key: 'r' });

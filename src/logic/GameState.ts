@@ -149,6 +149,11 @@ export class GameState {
   private readonly truckHeadings: number[] = [];
   /** Truck bed column the rig faces (or is still held at), -1 = none. */
   private truckEngaged = -1;
+  /**
+   * Where the carried box was picked up (its cell, height and rack slot): a drop right back there is no move for
+   * snapshot.moves (see countMove).
+   */
+  private readonly origin = { x: -1, z: -1, level: 0, slotId: null as string | null };
 
   constructor(level: LevelData, config: GameConfig = GAME_CONFIG) {
     this.config = config;
@@ -279,6 +284,7 @@ export class GameState {
       hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null, ...(trucks ? { dropTruckSlotId: null } : {}) },
       completed: false,
       progress: { satisfied: 0, total: zones.length + slots.filter((slot) => slot.accepts !== null).length + this.truckSlots.length },
+      moves: 0,
     };
     for (const zone of zones) this.refreshZone(zone);
     for (const slot of slots) this.refreshSlot(slot);
@@ -368,6 +374,11 @@ export class GameState {
     let released: ZoneState | null = null;
     let restored: ZoneState | null = null;
     let releasedSlot: SlotState | null = null;
+    const origin = this.origin;
+    origin.x = cell ? cell.x : -1;
+    origin.z = cell ? cell.z : -1;
+    origin.level = fromLevel;
+    origin.slotId = box.slotId;
     this.world.hardenBox(index);
     this.world.setPassable(index, false);
     box.carried = true;
@@ -469,6 +480,7 @@ export class GameState {
     this.carriedIndex = -1;
     this.driver.detachLoad();
     this.refreshLoadPassage();
+    this.countMove(box);
 
     const progress = this.recountProgress();
     const correct = zone !== null && zone.satisfied;
@@ -512,6 +524,7 @@ export class GameState {
     this.carriedIndex = -1;
     this.driver.detachLoad();
     this.refreshRackPassage();
+    this.countMove(box);
 
     const progress = this.recountProgress();
     const drop: BoxDropped = {
@@ -557,6 +570,7 @@ export class GameState {
     this.carriedIndex = -1;
     this.driver.detachLoad();
     this.refreshLoadPassage();
+    this.countMove(box);
 
     const progress = this.recountProgress();
     const drop: BoxDropped = {
@@ -645,6 +659,18 @@ export class GameState {
     }
     this.truckEngaged = best;
     this.aim.truck = best >= 0 && bestDepth >= -TRUCK_REACH ? best : -1;
+  }
+
+  /**
+   * The move counter (snapshot.moves, the solver's «movimientos»): the box just put down is one more box move, unless
+   * it landed exactly where it was picked up (same cell and height, same rack slot; a truck level is its bed cell and
+   * height), which changes nothing.
+   */
+  private countMove(box: BoxState): void {
+    const o = this.origin;
+    const cell = box.cell;
+    const back = cell !== null && cell.x === o.x && cell.z === o.z && box.level === o.level && box.slotId === o.slotId;
+    if (!back) this.snapshot.moves++;
   }
 
   /** Flat slot index of a box resting in a rack, or -1. */

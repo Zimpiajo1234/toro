@@ -28,6 +28,8 @@ export interface InputSample {
   mutePressed: boolean;
   /** Edge-triggered: T (show / hide the optional timer). */
   timerPressed: boolean;
+  /** Edge-triggered: N (show / hide the optional move counter). */
+  movesPressed: boolean;
   /** Edge-triggered: Enter, gamepad Start (continue on completion card). */
   confirmPressed: boolean;
   /** Edge-triggered: Escape (back to the title). */
@@ -124,6 +126,7 @@ export class Input {
   private restartEdge = false;
   private muteEdge = false;
   private timerEdge = false;
+  private movesEdge = false;
   private confirmEdge = false;
   private backEdge = false;
   private levelStepEdge: -1 | 0 | 1 = 0;
@@ -149,6 +152,7 @@ export class Input {
     retryPressed: false,
     mutePressed: false,
     timerPressed: false,
+    movesPressed: false,
     confirmPressed: false,
     backPressed: false,
     levelStep: 0,
@@ -180,7 +184,7 @@ export class Input {
     if (this.disposed) {
       s.keyX = s.keyY = s.stickX = s.stickY = 0;
       s.actionPressed = s.restartPressed = s.restartHeld = s.retryPressed = false;
-      s.mutePressed = s.timerPressed = s.confirmPressed = s.backPressed = s.any = false;
+      s.mutePressed = s.timerPressed = s.movesPressed = s.confirmPressed = s.backPressed = s.any = false;
       s.testModePressed = false;
       s.rotateCamera = 0;
       s.levelStep = s.levelStepHeld = 0;
@@ -211,6 +215,7 @@ export class Input {
     s.retryPressed = pad.retryPressed;
     s.mutePressed = this.muteEdge;
     s.timerPressed = this.timerEdge;
+    s.movesPressed = this.movesEdge;
     s.confirmPressed = this.confirmEdge || pad.confirmPressed;
     s.backPressed = this.backEdge;
     s.levelStep = this.levelStepEdge;
@@ -234,6 +239,7 @@ export class Input {
       s.retryPressed ||
       s.mutePressed ||
       s.timerPressed ||
+      s.movesPressed ||
       s.confirmPressed ||
       s.backPressed ||
       s.levelStep !== 0 ||
@@ -316,6 +322,9 @@ export class Input {
         break;
       case 'timer':
         this.timerEdge = true;
+        break;
+      case 'moves':
+        this.movesEdge = true;
         break;
       case 'confirm':
         this.confirmEdge = true;
@@ -437,6 +446,7 @@ export class Input {
     this.restartEdge = false;
     this.muteEdge = false;
     this.timerEdge = false;
+    this.movesEdge = false;
     this.confirmEdge = false;
     this.backEdge = false;
     this.levelStepEdge = 0;

@@ -1,5 +1,5 @@
 /**
- * Time formatting for the UI. Values are floored (a time is never shown as more than was played).
+ * Time (and move minimum) formatting for the UI. Values are floored (a time is never shown as more than was played).
  * Minutes are not padded and keep growing past 59 ("75:02"): a relaxed session never needs hours.
  */
 
@@ -25,6 +25,20 @@ export function formatClock(ms: number): string {
 export function formatPrecise(ms: number): string {
   const tenths = Math.floor(safeMs(ms) / 100 + EPSILON);
   return `${minutesSeconds(Math.floor(tenths / 10))}.${tenths % 10}`;
+}
+
+/** A level's move minimum as the HUD and the card print it: "mín. 10", or "mín. ≥ 10" when only a lower bound is known. */
+export function formatMinimum(min: { moves: number; exact: boolean }): string {
+  return min.exact ? `mín. ${min.moves}` : `mín. ≥ ${min.moves}`;
+}
+
+/**
+ * A finished count that reached the minimum: no plan the solver knows is shorter. Fewer counts too (the solver's
+ * carrying model is conservative, so the game may allow a shorter plan), and so does reaching a lower bound (proven
+ * optimal then).
+ */
+export function reachedMinimum(moves: number, min: { moves: number; exact: boolean } | null): boolean {
+  return min !== null && moves <= min.moves;
 }
 
 /** Tooltip of the "Modo prueba" switch and HUD tag: what it opens and how to jump levels while playing. */

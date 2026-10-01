@@ -45,6 +45,12 @@ export function TitleScreen({ store, actions, show }: TitleScreenProps) {
           <span className="title__sep" aria-hidden="true">
             ·
           </span>
+          <span>
+            <Keycap>N</Keycap> movimientos
+          </span>
+          <span className="title__sep" aria-hidden="true">
+            ·
+          </span>
           {/* Esc leaves a level for this screen; "Continuar" picks it up where it was. */}
           <span>
             <Keycap>Esc</Keycap> inicio

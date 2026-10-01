@@ -78,6 +78,8 @@ describe('every shipped level is playable with the real controls', () => {
       const grid = new LevelGrid(level);
       const start = liveStacks(grid, new GameState(level).getSnapshot());
       expect(out.moves).toBeGreaterThanOrEqual(misplacedCount(grid, start, level.boxes.length));
+      // The move counter (GameSnapshot.moves) agrees with the box moves driven.
+      expect(out.snapshot.moves).toBe(out.moves);
     });
   }
 

@@ -56,6 +56,7 @@ function snapshot(level: LevelData = LEVEL): GameSnapshot {
     hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, rack: null },
     completed: false,
     progress: { satisfied: 0, total: level.zones.length },
+    moves: 0,
   };
 }
 

@@ -6,6 +6,8 @@ export type CommandBinding =
   | 'restart'
   | 'mute'
   | 'timer'
+  /** Show / hide the optional move counter (N: "número de movimientos"; far from the driving and fork keys). */
+  | 'moves'
   | 'confirm'
   | 'back'
   /** "Modo prueba" only: previous / next level ([ / ], PageUp / PageDown). */
@@ -35,6 +37,7 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['KeyR', 'restart'],
   ['KeyM', 'mute'],
   ['KeyT', 'timer'],
+  ['KeyN', 'moves'],
   ['Enter', 'confirm'],
   ['NumpadEnter', 'confirm'],
   ['Escape', 'back'],
@@ -64,6 +67,7 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['r', 'restart'],
   ['m', 'mute'],
   ['t', 'timer'],
+  ['n', 'moves'],
   ['enter', 'confirm'],
   ['escape', 'back'],
   ['esc', 'back'],

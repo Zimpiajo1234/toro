@@ -31,6 +31,16 @@ export function ClockIcon({ className }: IconProps) {
   );
 }
 
+/** Small taped box (the mark's box): the move counter's glyph, in its pill and when hidden. */
+export function BoxIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...LINE}>
+      <rect x="4.5" y="6.5" width="15" height="12.5" rx="2.8" />
+      <path d="M12 6.8v4.4" />
+    </svg>
+  );
+}
+
 /** Speaker with sound waves, or crossed out when `off` (muted). */
 export function SoundIcon({ className, off = false }: IconProps & { off?: boolean }) {
   return (

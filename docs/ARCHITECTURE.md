@@ -18,12 +18,13 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | Path | Owner | Responsibility |
 |---|---|---|
 | `src/core/types.ts`, `math.ts`, `store.ts`, `sorting.ts`, `racks.ts`, `docks.ts` | shared | Contracts, helpers, tiny external store; `sorting.ts` = who accepts what (`accepts`, the single source of truth for logic, render and the level solvers; storage racks and trucks: `targetsOf`, `assignmentsOf`, `levelDestinies`, `cueFits`, `isDestined`); `racks.ts` = storage rack geometry (cells, fronts, slot ids); `docks.ts` = loading dock trucks (`trucksOf`, `hasTrucks`, cells, fronts, truck slot ids, `truckSlotsOf`, and `usesTargetRules` = racks or trucks, the gate of every «target rule») |
-| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`) |
+| `src/config/gameConfig.json` | shared | All tunables: `forklift`, `box` (`size`, `dropLandSec`), `stack` (`maxHeight`, `forkRiseSpeed`), `snap`, `camera`, `audio`, `controls`, `flow` (`completeDelaySec`, `confirmGraceSec`, `restartHoldSec`), `moves` (`showLowerBound`: show a minimum that is only a lower bound as "mín. ≥ N", default true) |
 | `src/themes/*` | shared | Palettes (`Theme`). New theme = new file + entry in the `THEMES` map (`themes/index.ts`) |
 | `src/data/validateLevel.ts` | shared | Level schema (`LevelData`) + validation |
 | `src/data/asciiLevel.ts`, `src/data/difficulty.ts` | shared | `.level` text format: parser (→ validateLevel) and canonical renderer; `dificultad:` targets |
 | `src/data/levels/*.level`, `src/data/levels/especiales/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md); `especiales/` = special levels outside the game's order (today the «Benchmark» of test mode) |
 | `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
+| `src/data/levels/minimums.ts`, `minimumsBuild.ts`, `src/data/levelMinimums.json` | **levels** | The move counter's minimums: `levelMinimum(id)` → `{ moves, exact }` or null, read from the precomputed JSON (never solved at runtime); `minimumsBuild.ts` computes / formats / diffs it for `npm run levels -- --minimos` and `minimums.test.ts` (docs/LEVELS.md, «Mínimos del contador de movimientos») |
 | `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions, tests |
 | `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation |
 | `src/audio/**` | **audio** | Procedural music + SFX |
@@ -183,6 +184,10 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   nothing is carried → `levelComplete` exactly once, after which
   updates ignore input (forklift coasts to rest).
 - `firstInput` exactly once, on the first frame with non-zero move, non-zero drive (throttle / steer) or an action press (Game starts the timer).
+- `GameSnapshot.moves`: box moves so far this attempt, the solver's «movimientos» criterion (one pick + one drop
+  somewhere else = 1). A drop exactly where the box was picked up (same cell and height, same rack slot) counts
+  nothing. Counted on the drop, before its `boxDropped` (so a `levelComplete` snapshot already has the final count);
+  0 on a fresh GameState (load, restart).
 
 ## Level data (levels)
 
@@ -381,10 +386,15 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 
 - DOM overlay, Nunito (loaded in `index.html`), warm gray text (`--ui-text`), frosted cream panels
   (`--ui-panel`, `backdrop-filter: blur`), radius 16–20 px, soft shadows, no pure black/white contrast.
-- HUD while playing — only three things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
-  clicking it or T toggles hide/show — hidden shows a small faint clock glyph), restart button (round, icon ↺,
-  `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing else. Fades in
-  gently. HUD buttons never take focus from a mouse press (Space stays the game's key).
+- HUD while playing — only four things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
+  clicking it or T toggles hide/show — hidden shows a small faint clock glyph), the optional move counter (left of
+  the time, same pill family: a small box glyph, the count, then the level's minimum smaller and softer, "12 · mín.
+  10", or "mín. ≥ 10" for a lower bound; clicking it or N toggles it — hidden shows a faint box glyph; each new count
+  settles in with a gentle tick, `.ui-tick`; once the level is finished (`UIState.finished`) at or under the minimum
+  the pill takes a soft accent wash and edge and a sparkle replaces the box, never red), restart button (round, icon
+  ↺, `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing else. Fades in
+  gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners reserve the top
+  band (the camera frames the level below them); under 480 px wide the end corner stacks the counter under the time.
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar" — and, in levels with storage racks
   (`UIState.racks`, published by Game when a level loads), a second row in the same panel: "F V subir / bajar
@@ -394,7 +404,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   short windows such as
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · M silencio (M activar sonido when muted)
-  · T tiempo · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -414,18 +424,28 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   shell takes the theme from the Benchmark while it is on screen.
 - Mute toggles are confirmed by a polite live region and, in a level, a brief top-center pill (~1.6 s).
 - Completion card: compact (≤ 420 px) and anchored at the bottom center so the tidied warehouse stays in view;
-  rises in, settles down on exit. Positive `result.message` as heading, "Tiempo 0:42.3", "Mejor tiempo 0:38.9",
-  soft "Nuevo mejor tiempo" tag when `isNewBest`, one action row: primary "Siguiente almacén" (or "Volver al
-  inicio" when `isLast`, with the line "Todos los almacenes están en orden."), quiet "Repetir". The HUD dims.
-  Never negative wording, never deltas like "+3 s".
+  rises in, settles down on exit. Positive `result.message` as heading, one row of at most two tiles, one per
+  metric, each with the level's record on a small soft line under its value: "Tiempo 0:42.3" over "mejor 0:38.9"
+  (with the timer shown), "Movimientos 12 · mín. 10" over "récord 11" (with the move counter shown; a count at or
+  under the minimum reads "10 ✦ mínimo" on a soft accent tile). A new record (`isNewBest` / `isNewBestMoves`, a first
+  clear has nothing to beat) reads "✦ nuevo récord" in place of the record line, on that tile's soft accent wash:
+  never a row of tags, so the card keeps one stat row and its top edge stays below the middle of the framed diorama
+  (ui.css; measured at 740×360, 800×450, 1280×640 and 360×740). A lone tile (one display hidden) is centred.
+  Practice runs (Benchmark, "Modo prueba") show no record line and add the quiet note ("… este tiempo / estos
+  movimientos / este resultado no se guarda", "Modo prueba · sin récord" for the Benchmark). One action row: primary
+  "Siguiente almacén" (or "Volver al inicio" when `isLast`, with the line "Todos los almacenes están en orden."), quiet "Repetir". The HUD
+  dims. Never negative wording, never deltas like "+3 s" or "+2 movimientos".
 - `unsupported` screen (no WebGL 2, or a render crash caught by the shell's error boundary): one calm centred
   card with a "Recargar" button, nothing else.
-- Time format: `m:ss` in HUD, `m:ss.d` on the card.
+- Time format: `m:ss` in HUD, `m:ss.d` on the card. Move minimum: `formatMinimum` ("mín. 10" / "mín. ≥ 10");
+  `reachedMinimum(moves, min)` = `moves <= min.moves` (a lower bound reached is optimal too).
 - Theme UI tokens: `text`, `textSoft` (≥ 4.5:1 on panels), `panel`, `panelBorder`, `accent`, optional
   `accentDeep` (primary button fill, ≥ 4.5:1 with `accentText`; exposed as `--ui-accent-deep`), `accentText`, `shadow`.
 - Storage (`ProgressStore`, key `PROGRESS_STORAGE_KEY`): versioned JSON under one localStorage key, all access in
-  try/catch with in-memory fallback, best time + top-5 ranking per level id, highest unlocked index, last level
-  (index + `lastLevelId`, additive, same version), settings. Unlocks and "Continuar" resolve by level id against
+  try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
+  additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
+  highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
+  `showMoves` additive default true, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
@@ -439,7 +459,11 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   `unsupported`, nothing else created. A `storage` event for the progress key refreshes the title's summaries.
 - `start(i)`: `audio.unlock()` (user gesture), load level i, screen `playing` (the control hint shows while playing).
   Timer starts on `firstInput`, ticks with dt, stops on `levelComplete`.
-- On `levelComplete`: stop timer, record time (ProgressStore), unlock next, wait `flow.completeDelaySec` (1.6 s;
+- Move counter: every frame Game copies `snapshot.moves` to `UIState.moves` (a store write only when it changes); on
+  load it publishes the level's minimum (`levelMinimum(id)`; a lower bound only if `moves.showLowerBound`, else null)
+  as `UIState.minMoves` and clears `finished`. `toggleMoves()` (N, the pill) persists `showMoves` like the timer.
+- On `levelComplete`: stop timer, record time and moves (ProgressStore `record` / `recordMoves`, both skipped for
+  the Benchmark and a level only test mode opened), set `UIState.finished`, unlock next, wait `flow.completeDelaySec` (1.6 s;
   R / Esc / HUD restart are ignored meanwhile), then screen `complete` with a random positive message from:
   "Buen trabajo", "Almacén organizado", "Perfectamente colocado", "Todo en su sitio", "¡Qué orden tan agradable!".
   For `flow.confirmGraceSec` (0.45 s) after the card appears, keys and pad buttons cannot dismiss it.
@@ -455,7 +479,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, M mute, T timer, U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one slot up / down in front of a storage rack (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, M mute, T timer, N move counter (title and playing; no pad button, like the timer), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

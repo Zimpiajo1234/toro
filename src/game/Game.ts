@@ -5,6 +5,7 @@ import { matchKind, zoneMatchKinds, type MatchKind } from '../core/sorting';
 import { hasRacks } from '../core/racks';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
+import { levelMinimum } from '../data/levels/minimums';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
 import { forkRiseRate } from '../logic/forkRise';
@@ -14,7 +15,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { ForkStepWatcher } from '../audio/forkSteps';
 import { PROGRESS_STORAGE_KEY, ProgressStore } from '../storage/ProgressStore';
 import { getTheme } from '../themes';
-import type { GameActions, LevelResult, ScreenInsets, UIState } from '../ui/uiState';
+import type { GameActions, LevelResult, MoveMinimum, ScreenInsets, UIState } from '../ui/uiState';
 import { Input, type InputSample } from './Input';
 import { inputToDrive, inputToWorld, parseMoveMapping, type ControlMappings, type DriveInput } from './cameraInput';
 import {
@@ -40,6 +41,15 @@ const CONTROLS: ControlMappings = {
   keyboard: parseMoveMapping(GAME_CONFIG.controls.keyboardMapping, 'vehicle'),
   stick: parseMoveMapping(GAME_CONFIG.controls.stickMapping, 'screen'),
 };
+
+/**
+ * The level's move minimum as the HUD and the card show it (precomputed, never solved at runtime): an exact one always;
+ * a lower bound ("mín. ≥ N") unless gameConfig `moves.showLowerBound` is false; null when none is known.
+ */
+function shownMinimum(levelId: string): MoveMinimum | null {
+  const min = levelMinimum(levelId);
+  return min && (min.exact || GAME_CONFIG.moves.showLowerBound) ? min : null;
+}
 
 /** Subsystems that only exist between mount() and dispose(). */
 interface Runtime {
@@ -116,6 +126,7 @@ export class Game implements GameActions {
     this.toTitle = this.toTitle.bind(this);
     this.toggleMute = this.toggleMute.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
+    this.toggleMoves = this.toggleMoves.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
     this.startBenchmark = this.startBenchmark.bind(this);
     this.setViewInsets = this.setViewInsets.bind(this);
@@ -161,6 +172,7 @@ export class Game implements GameActions {
       timerStarted: false,
       result: null,
       showTimer: settings.showTimer,
+      showMoves: settings.showMoves,
       muted: settings.muted,
       testMode: settings.testMode,
       benchmark: false,
@@ -330,6 +342,16 @@ export class Game implements GameActions {
     this.store.set({ showTimer });
   }
 
+  /** The optional move counter (HUD pill + the card's moves), persisted like the timer. */
+  toggleMoves(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const showMoves = !this.store.get().showMoves;
+    rt.progress.setSettings({ showMoves });
+    this.store.set({ showMoves });
+  }
+
   /** "Modo prueba": every level dot opens; turning it off shows the real (untouched) unlock state again. */
   toggleTestMode(): void {
     const rt = this.rt;
@@ -451,6 +473,8 @@ export class Game implements GameActions {
       this.timer.tick(dt);
       this.publishElapsed(false);
     }
+    // The move counter follows the simulation (a count changes on a drop only: a store write a few times a level).
+    if (snapshot.moves !== this.store.get().moves) this.store.set({ moves: snapshot.moves });
 
     if (this.levelHasRacks) {
       // One soft click per fork step that took effect at a rack column (none at the top / bottom, none off a rack).
@@ -484,6 +508,7 @@ export class Game implements GameActions {
   private handleCommands(rt: Runtime, input: InputSample, confirm: boolean, dt: number): void {
     if (input.mutePressed) this.toggleMute();
     if (input.timerPressed) this.toggleTimer();
+    if (input.movesPressed) this.toggleMoves();
     const testMode = this.store.get().testMode;
     if (input.rotateCamera !== 0) rt.renderer.rotateCamera(input.rotateCamera);
     switch (this.store.get().screen) {
@@ -567,16 +592,18 @@ export class Game implements GameActions {
         this.workAtStake = true;
         break;
       case 'levelComplete':
-        this.onLevelComplete(rt);
+        this.onLevelComplete(rt, snapshot);
         break;
       default:
         break;
     }
   }
 
-  private onLevelComplete(rt: Runtime): void {
+  private onLevelComplete(rt: Runtime, snapshot: GameSnapshot): void {
     const level = this.level;
     if (!level) return;
+    // Counted on the final drop, before this event: the finished attempt's box moves.
+    const moves = snapshot.moves;
     this.timer.stop();
     this.restartHold.cancel();
     this.jumpHold.cancel();
@@ -592,6 +619,8 @@ export class Game implements GameActions {
     const record = genuine
       ? rt.progress.record(level.id, timeMs)
       : { bestMs: Math.min(timeMs, previousBest ?? timeMs), isNewBest: false, previousBestMs: previousBest };
+    // Fewest moves go exactly where times go: never the Benchmark, never a level only test mode opened.
+    const movesRecord = genuine ? rt.progress.recordMoves(level.id, moves) : null;
     if (genuine) {
       if (!isLast) rt.progress.unlock(this.levelIndex + 1);
       rt.progress.setLastLevel(continueIndexAfter(this.levelIndex, LEVELS.length));
@@ -600,13 +629,19 @@ export class Game implements GameActions {
     this.pendingResult = {
       timeMs,
       bestMs: record.bestMs,
-      // A first clear has nothing to beat: keep "Nuevo mejor tiempo" for real improvements.
+      // A first clear has nothing to beat: keep the card's "✦ nuevo récord" for real improvements.
       isNewBest: record.isNewBest && record.previousBestMs !== null,
+      moves,
+      bestMoves: movesRecord ? movesRecord.bestMoves : null,
+      // Likewise a first clear sets the move record without a "✦ nuevo récord".
+      isNewBestMoves: movesRecord !== null && movesRecord.isNewBest && movesRecord.previousBestMoves !== null,
+      minMoves: this.store.get().minMoves,
       message: this.messages.next(),
       isLast,
       practice: !genuine,
     };
-    this.store.set(this.progressSummary(rt));
+    // The move pill may now show its accent (finished at the minimum), through the celebration and the card.
+    this.store.set({ ...this.progressSummary(rt), moves, finished: true });
     this.completeDelay.arm(GAME_CONFIG.flow.completeDelaySec);
     rt.audio.setScene('complete');
   }
@@ -673,8 +708,9 @@ export class Game implements GameActions {
     this.workAtStake = false;
     this.suspended = false;
     this.resumeTimerOnInput = false;
-    // The control hint's fork row goes with the level on screen.
-    if (this.store.get().racks !== this.levelHasRacks) this.store.set({ racks: this.levelHasRacks });
+    // The control hint's fork row goes with the level on screen; the move counter starts over, against this level's
+    // minimum.
+    this.store.set({ racks: this.levelHasRacks, moves: 0, minMoves: shownMinimum(level.id), finished: false });
     return level;
   }
 

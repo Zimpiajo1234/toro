@@ -250,6 +250,8 @@ export interface Outcome {
   events: GameEvent[];
   /** Fork level presses (InputFrame.forkStep, F / V) and frames driven in reverse (S, drive throttle < 0). */
   controls: { forkSteps: number; reverseFrames: number };
+  /** The game state where it stopped (e.g. `snapshot.moves`, the move counter the HUD shows). */
+  snapshot: GameSnapshot;
 }
 
 /**
@@ -267,7 +269,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
   const fail = (note: string): Outcome => {
     const f = pilot.snap.forklift;
     log?.(`stopped: ${note} · forklift at ${f.pos.x.toFixed(2)},${f.pos.z.toFixed(2)} heading ${((f.heading * 180) / Math.PI).toFixed(0)}° carrying ${f.carrying ?? '-'}`);
-    return { solved: false, seconds: pilot.seconds, moves, note, events: pilot.events, controls: pilot.controls };
+    return { solved: false, seconds: pilot.seconds, moves, note, events: pilot.events, controls: pilot.controls, snapshot: pilot.snap };
   };
   /** The approach (empty path to a pick-up pose) and carry chain for `plan` from the live state, or null. */
   const route = (stacks: Stacks, fcell: number, plan: Move) => {
@@ -297,7 +299,7 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
   };
   for (let iter = 0; iter < 80; iter++) {
     const snap = pilot.snap;
-    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events, controls: pilot.controls };
+    if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events, controls: pilot.controls, snapshot: snap };
     const stacks = liveStacks(grid, snap);
     const fc = worldToCell(snap.forklift.pos, level.size);
     const fcell = grid.index(fc.x, fc.z);
