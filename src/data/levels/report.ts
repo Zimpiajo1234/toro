@@ -3,8 +3,9 @@
  * level in detail (its canonical text, metrics with their meaning, difficulty targets, a shortest plan and the narrow
  * cells). Pure: the script loads the registry and prints what this returns. Metric definitions: docs/LEVELS.md.
  */
-import { usesSymbols } from '../../core/sorting';
-import { STORAGE_WORDS } from '../../core/storage';
+import { meets, usesSymbols, type Sortable } from '../../core/sorting';
+import { STORAGE_WORDS, baseLevelOf, storageOf } from '../../core/storage';
+import { conveyorsOf } from '../../core/conveyors';
 import { COLOR_NAMES, SYMBOL_GLYPHS, drawLevel, renderLevel, renderMapLines } from '../asciiLevel';
 import { formatRange, formatTarget } from '../difficulty';
 import type { LevelSource } from './index';
@@ -107,15 +108,16 @@ function trucksText(m: LevelMetrics): string {
 }
 
 /**
- * «1 (2 casillas de suelo; 1 salida final con pista)»: the conveyor belts (docs/CONVEYOR.md), their belt cells and their
- * end exits (with a cue: targets; «libre»: they keep any box).
+ * «1 (2 casillas de suelo; 1 salida final con pista; 1 botón)»: the conveyor belts (docs/CONVEYOR.md), their belt cells,
+ * their end exits (with a cue: targets; «libre»: they keep any box) and their buttons (H2), when they have any.
  */
 function beltsText(m: LevelMetrics): string {
   const b = m.belts;
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const cells = `${plural(b.cells, 'casilla', 'casillas')}${b.floor === b.cells ? ' de suelo' : ` (${b.floor} de suelo)`}`;
   const exits = plural(b.exits, 'salida final', 'salidas finales');
-  return `${b.belts} (${cells}; ${b.cued === b.exits ? `${exits} con pista` : `${exits}, ${b.cued} con pista`})`;
+  const buttons = b.buttons > 0 ? `; ${plural(b.buttons, 'botón', 'botones')}` : '';
+  return `${b.belts} (${cells}; ${b.cued === b.exits ? `${exits} con pista` : `${exits}, ${b.cued} con pista`}${buttons})`;
 }
 
 function heading(source: LevelSource): string {
@@ -169,7 +171,12 @@ function detailBlock(source: LevelSource, m: LevelMetrics, checks: TargetCheck[]
   ];
   if (m.slots.total > 0) rows.push(['huecos', slotsText(m), 'huecos de estantería almacenable (docs/RACKS.md)']);
   if (m.trucks.levels > 0) rows.push(['camion', trucksText(m), 'niveles de camión en los muelles de carga: con pista, un objetivo; libre, para aparcar (docs/DOCKS.md)']);
-  if (m.belts.belts > 0) rows.push(['cinta', beltsText(m), 'cintas transportadoras: la caja dejada en su entrada viaja sola hasta su salida final (docs/CONVEYOR.md)']);
+  if (m.belts.belts > 0)
+    rows.push([
+      'cinta',
+      beltsText(m),
+      `cintas transportadoras: la caja dejada en su entrada viaja sola hasta su salida final${m.belts.buttons > 0 ? '; su botón devuelve a la entrada la última mal puesta (0 movimientos)' : ''} (docs/CONVEYOR.md)`,
+    ]);
   const w0 = Math.max(...rows.map((r) => r[0].length));
   const w1 = Math.max(...rows.map((r) => r[1].length));
   lines.push('Métricas', ...rows.map(([name, value, what]) => `  ${name.padEnd(w0)}  ${value.padEnd(w1)}  ${what}`), '');
@@ -230,20 +237,38 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
     const cell = mapCell(pos);
     return grid[cell.z][cell.x];
   };
+  /** The button of the belt of each end exit (H2), by its position: its map cell. */
+  const buttonOf = new Map<number, { x: number; z: number }>();
+  for (const belt of conveyorsOf(level)) {
+    const exit = storageOf(level).find((unit) => unit.id === belt.output);
+    if (belt.button && exit) buttonOf.set(model.posOf(exit.x, exit.z, baseLevelOf(exit)), belt.button);
+  }
   /**
    * A storage position by its skin's words and its unit's letter: a shelf «hueco 2 de R», a stack column «camión T»; a
-   * conveyor belt's input «entrada de cinta A» (docs/CONVEYOR.md).
+   * conveyor belt's input «entrada de cinta A» (docs/CONVEYOR.md); a belt's end exit, whose box its button brings back
+   * to the input to be lifted there (H2), «final B, botón o (x,z) de vuelta a A (x,z)».
    */
   const storageName = (pos: number) => {
     const letter = letterOf(pos);
     if (model.feeds[pos] >= 0) return `entrada de cinta ${letter}`;
+    const button = buttonOf.get(pos);
+    if (button) {
+      const input = model.fedBy[pos];
+      const at = mapCell(input);
+      return `final ${letter}, botón ${grid[button.z][button.x]} (${button.x},${button.z}) de vuelta a ${letterOf(input)} (${at.x},${at.z})`;
+    }
     return onShelf(pos) ? `${wordsOf(pos).level} ${model.levelAt(pos) + 1} de ${letter}` : `${wordsOf(pos).name} ${letter}`;
   };
-  /** A box sent down a belt: set down on its input, it lands in its end exit («cinta A (x,z) → final B»). */
-  const beltName = (exit: number) => {
+  /**
+   * A box sent down a belt: set down on its input, it lands in its end exit («cinta A (x,z) → final B»); one that is not
+   * its destiny parks there until the button brings it back (H2).
+   */
+  const beltName = (exit: number, box: Sortable) => {
     const input = model.fedBy[exit];
     const at = mapCell(input);
-    return `cinta ${letterOf(input)} (${at.x},${at.z}) → final ${letterOf(exit)}`;
+    const steps = model.steps[exit];
+    const parks = steps === null || !meets(steps[0], box);
+    return `cinta ${letterOf(input)} (${at.x},${at.z}) → final ${letterOf(exit)}${parks ? ' (aparcar: vuelve con el botón)' : ''}`;
   };
   /** A level of a stack column (0 = bottom): «, nivel 2». */
   const stackLevel = (pos: number, level: number) => `, ${wordsOf(pos).level} ${level + 1}`;
@@ -261,7 +286,7 @@ function planLines(level: LevelSource['level'], grid: string[][], plan: readonly
     // while its end exit is full, else the box rides on into that end exit).
     const steps = model.steps[move.drop];
     const storageTarget = () => {
-      if (model.fedBy[move.drop] >= 0) return beltName(move.drop);
+      if (model.fedBy[move.drop] >= 0) return beltName(move.drop, box);
       if (model.feeds[move.drop] >= 0) return `${storageName(move.drop)} (aparcar: su final está lleno)`;
       return storageName(move.drop) + (steps && height < steps.length ? '' : ' (libre: aparcar)');
     };

@@ -3,6 +3,7 @@ import type { GameEvent, GameSnapshot, InputFrame, LevelData } from '../core/typ
 import { clamp } from '../core/math';
 import { zoneMatchKinds, type MatchKind } from '../core/sorting';
 import { hasStorage } from '../core/storage';
+import { hasBeltButtons } from '../core/conveyors';
 import { GAME_CONFIG } from '../config';
 import { BENCHMARK_ID, LEVELS, getLevel, getSpecialLevel } from '../data/levels';
 import { levelMinimum } from '../data/levels/minimums';
@@ -779,10 +780,12 @@ export class Game implements GameActions {
     this.workAtStake = false;
     this.suspended = false;
     this.resumeTimerOnInput = false;
-    // The control hint's fork row goes with the level on screen; the move counter starts over, against this level's
-    // minimum; the objectives counter starts at every box this level still needs put in its place.
+    // The control hint's fork row (and its «pulsar», with a belt button) goes with the level on screen; the move counter
+    // starts over, against this level's minimum; the objectives counter starts at every box this level still needs put
+    // in its place.
     this.store.set({
       storage: this.levelStorage,
+      beltButton: hasBeltButtons(level),
       moves: 0,
       minMoves: shownMinimum(level.id),
       objectivesLeft: objectivesLeft(this.state.getSnapshot()),

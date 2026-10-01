@@ -99,9 +99,27 @@ export const BELT_HUM_WHISPER = 0.6;
 export const BELT_HUM_LOWPASS_HZ = 760;
 
 /**
+ * A belt's button (docs/CONVEYOR.md H2): its mushroom cap pressed, a soft mechanical click — the plastic cap going down
+ * (a short band of noise around `hz`, a little tick tone) and, `release` s later, coming back up a touch higher and
+ * softer — at `level` (peak). Refused, the cap goes down on nothing: a duller click (`refusedHz`) and the soft «no» of a
+ * wrong target, shorter and at `refusedBuzz` of its level, `refusedAfter` s later.
+ */
+export const BUTTON_CLICK = {
+  hz: 1650,
+  q: 2.4,
+  tone: 520,
+  level: 0.16,
+  release: 0.11,
+  refusedHz: 900,
+  refusedAfter: 0.06,
+  refusedBuzz: 0.6,
+} as const;
+
+/**
  * Soft, tactile sound effects. Every sound is built from two primitives (filtered noise hit, enveloped
  * tone) plus the bell, the wooden marimba and a pad for the level-complete swell. Nothing is harsh; the only "no" is
- * the soft, muffled wrong-target buzz of the levels with storage (wrongBuzz).
+ * the soft, muffled wrong-target buzz of the levels with storage (wrongBuzz), and its shorter, softer echo when a belt's
+ * button can do nothing (buttonRefused).
  */
 export class SfxPlayer {
   private readonly pool: VoicePool;
@@ -294,6 +312,34 @@ export class SfxPlayer {
     src.loop = true;
     voice.bufferSource(src, range(r, 0, Math.max(0, this.noise.duration - 0.5))).connect(band);
     voice.play(start, end + 0.05);
+  }
+
+  /**
+   * Conveyor belts (H2): its button pressed and accepted, at `t`: the soft mechanical click of its cap going down and
+   * coming back up (BUTTON_CLICK). The belt's hum follows when it starts back (beltHum).
+   */
+  buttonClick(t: number): void {
+    const r = this.rng;
+    const B = BUTTON_CLICK;
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, B.hz, VARIANCE), q: B.q, peak: vary(r, B.level, VARIANCE), attack: 0.0015, tau: 0.009 });
+    this.toneHit(t, { type: 'sine', freq: vary(r, B.tone, VARIANCE), freqEnd: vary(r, B.tone * 0.85, VARIANCE), glideSec: 0.03, peak: vary(r, B.level * 0.35, VARIANCE), attack: 0.002, tau: 0.02 });
+    this.noiseHit(t + B.release, { type: 'bandpass', freq: vary(r, B.hz * 1.15, VARIANCE), q: B.q, peak: vary(r, B.level * 0.5, VARIANCE), attack: 0.0015, tau: 0.007 });
+  }
+
+  /**
+   * Conveyor belts (H2): its button pressed with nothing it can do (the belt busy, its input taken, nothing to bring
+   * back), at `t`: the cap's duller click and, just after, a short, softer version of the wrong-target «no» (wrongBuzz):
+   * muted, never an alarm.
+   */
+  buttonRefused(t: number): void {
+    const r = this.rng;
+    const B = BUTTON_CLICK;
+    this.noiseHit(t, { type: 'bandpass', freq: vary(r, B.refusedHz, VARIANCE), q: B.q * 0.7, peak: vary(r, B.level * 0.8, VARIANCE), attack: 0.002, tau: 0.012 });
+    const hum = vary(r, WRONG_BUZZ_HZ, VARIANCE);
+    const at = t + B.refusedAfter;
+    const lowpass = WRONG_BUZZ_LOWPASS_HZ;
+    this.toneHit(at, { type: 'triangle', freq: hum, freqEnd: hum * WRONG_BUZZ_SAG, glideSec: 0.12, peak: vary(r, 0.05 * B.refusedBuzz, VARIANCE), attack: 0.012, hold: 0.05, tau: 0.025, lowpass });
+    this.toneHit(at, { type: 'sawtooth', freq: hum * WRONG_BUZZ_DETUNE, freqEnd: hum * WRONG_BUZZ_DETUNE * WRONG_BUZZ_SAG, glideSec: 0.12, peak: vary(r, 0.022 * B.refusedBuzz, VARIANCE), attack: 0.016, hold: 0.045, tau: 0.025, lowpass });
   }
 
   /**

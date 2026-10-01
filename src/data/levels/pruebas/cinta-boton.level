@@ -1,0 +1,19 @@
+# 902 · Cinta con botón de prueba
+id: cinta-boton-prueba
+limit: 1
+dificultad: movimientos=3, extra=1, repartos=1, cinta=1
+nota: Nivel de prueba (docs/CONVEYOR.md, H2), fuera del juego: ni el registro ni npm run levels leen src/data/levels/pruebas/. Lo usa src/integration/conveyorButtonFixture.test.ts.
+nota: Un cambio de dos cajas sin sitio en el suelo: el menta ▲ está en la zona azul (al fondo de un pasillo de una casilla, arriba) y el azul ● en la zona menta (abajo). Para cambiarlas hay que aparcar una, y en el suelo una caja aparcada estorba a la otra: sin el botón harían falta 5 movimientos.
+nota: La cinta (A en (3,2), B en (3,0), «libre») es el aparcamiento: el azul ● se deja en A y la cinta lo lleva a B; el menta ▲ va a su zona; el botón «o» (4,2), junto a A y del mismo color que su almohadilla, se pulsa de frente desde (4,3) con Espacio y la cinta, al revés, devuelve el azul ● a A; de allí, con la horquilla en el nivel 1, a su zona. 3 movimientos: pulsar y la vuelta no cuentan.
+
+  012345
+0 p1pBpp
+1 p.p~pp
+2 ..pAop
+3 .^....
+4 pp..pp
+5 p2...p
+
+1 = zona azul + caja menta ▲    2 = zona menta + caja azul ●
+A = cinta entrada               B = cinta final: libre          ~ = cinta
+o = cinta botón

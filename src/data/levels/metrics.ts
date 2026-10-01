@@ -67,10 +67,11 @@ export interface LevelMetrics {
    */
   trucks: { trucks: number; columns: number; levels: number; cued: number; free: number; loaded: number };
   /**
-   * «cinta»: the conveyor belts (docs/CONVEYOR.md): how many, their belt cells (all of them, and the floor ones), and
-   * their end exits (those with a cue are targets; the «libre» ones keep any box).
+   * «cinta»: the conveyor belts (docs/CONVEYOR.md): how many, their belt cells (all of them, and the floor ones), their
+   * end exits (those with a cue are targets; the «libre» ones keep any box) and their buttons (H2: a wrong box at an
+   * exit comes back).
    */
-  belts: { belts: number; cells: number; floor: number; exits: number; cued: number };
+  belts: { belts: number; cells: number; floor: number; exits: number; cued: number; buttons: number };
   /**
    * «callejones»: states the forklift can reach from which the level can no longer be finished, explored around a
    * shortest plan (solver.deadEnds); null when not measured.
@@ -166,6 +167,7 @@ export function levelMetrics(level: LevelData, options: MetricsOptions = {}): Le
       floor: beltCells.filter((cell) => cell.piece === 'suelo').length,
       exits: beltOut.units,
       cued: beltOut.cued,
+      buttons: belts.filter((belt) => belt.button !== undefined).length,
     },
     deadEnds:
       options.deadEndStates === undefined

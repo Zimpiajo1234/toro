@@ -93,7 +93,7 @@
           "e1:0:1 cell 8,2 front 8,3 south · libre",
           "s1:0:1 cell 8,0 front 8,1 south · coral/cross"
         ],
-        "conveyors": ["c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1"]
+        "conveyors": ["c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1 · botón 7,2"]
       },
       "targets": {
         "rules": { "targetRules": true, "symbols": true, "forkRow": true },
@@ -120,14 +120,14 @@
         "exact": true,
         "extra": 2,
         "blockers": { "count": 5, "covering": ["b4", "b10", "b11", "b13"], "gatekeepers": ["b2"] },
-        "narrow": 8,
-        "free": 75,
+        "narrow": 9,
+        "free": 74,
         "ambiguous": 12,
         "traps": 13,
         "sortings": 1,
         "slots": { "total": 12, "cued": 6, "free": 6 },
         "trucks": { "trucks": 1, "columns": 2, "levels": 4, "cued": 3, "free": 1, "loaded": 1 },
-        "belts": { "belts": 1, "cells": 1, "floor": 1, "exits": 1, "cued": 1 }
+        "belts": { "belts": 1, "cells": 1, "floor": 1, "exits": 1, "cued": 1, "buttons": 1 }
       },
       "solver": {
         "lower": 15,
@@ -196,10 +196,11 @@
         "solved": true,
         "moves": 15,
         "counter": 15,
-        "frames": 15229,
+        "frames": 15184,
         "forkSteps": 10,
         "forkStepsAt": { "rack": 7, "truck": 1, "beltIn": 2 },
         "reverseFrames": 2348,
+        "buttonPresses": 0,
         "log": [
           "b12 r2:1:2 → 9,2@0[z2] ok 1/13",
           "b5 7,8@0 → 2,7@0[z3] ok 2/13",
@@ -223,10 +224,11 @@
         "solved": true,
         "moves": 15,
         "counter": 15,
-        "frames": 5560,
+        "frames": 5543,
         "forkSteps": 10,
         "forkStepsAt": { "rack": 7, "truck": 1, "beltIn": 2 },
         "reverseFrames": 772,
+        "buttonPresses": 0,
         "log": [
           "b12 r2:1:2 → 9,2@0[z2] ok 1/13",
           "b5 7,8@0 → 2,7@0[z3] ok 2/13",

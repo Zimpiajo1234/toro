@@ -63,11 +63,12 @@ export const defaultTheme: Theme = {
    * near-black graphite («negro», L ≈ 32: the wheels' and the racks' family, never a deep black); on it a soft
    * light-grey rubber band («un gris algo más claro», L ≈ 57.5: still darker than every box face and ≥ 14.9 ΔE2000 from
    * each, so a box on it always reads) between fine warm-white rails, with white stripes (ΔL ≈ 39 over the band: the
-   * motion reads), and on the input's pad the drop icon in a light cream. Identity colours (the input's pad and the end
-   * exit's skirting), deeper than the pastel boxes so they never read as one: teal (hue ≈ 184°, between mint and blue
-   * and far from both), plum (≈ 320°, far from red), moss and indigo. ΔE2000 ≥ 18 from every box face and zone tone
-   * (≥ 11.8 from the deep lid inks), ≥ 26 from the rails and the beacon, ≥ 15.9 from the leaves, ≥ 25 from each other,
-   * ≥ 18 from the band, ≥ 19.9 from the near-black; the cream icon ≥ 30 points of L over each (themes.test.ts).
+   * motion reads), and on the input's pad the drop icon in a light cream. Identity colours (the input's pad, the end
+   * exit's skirting and the button's cap, its post the near-black), deeper than the pastel boxes so they never read as
+   * one: teal (hue ≈ 184°, between mint and blue and far from both), plum (≈ 320°, far from red), moss and indigo.
+   * ΔE2000 ≥ 18 from every box face and zone tone (≥ 11.8 from the deep lid inks), ≥ 26 from the rails and the beacon,
+   * ≥ 15.9 from the leaves, ≥ 25 from each other, ≥ 18 from the band, ≥ 19.9 from the near-black; the cream icon ≥ 30
+   * points of L over each (themes.test.ts).
    */
   conveyor: {
     belt: '#848b92',

@@ -96,6 +96,11 @@ export interface UIState {
    * pad X / B.
    */
   storage: boolean;
+  /**
+   * The level on screen has a conveyor belt with a button (docs/CONVEYOR.md H2: core/conveyors hasBeltButtons): the
+   * action presses it too, so the control hint reads «recoger / dejar / pulsar» (only there).
+   */
+  beltButton: boolean;
 }
 
 /** Screen bands covered by overlay pieces that stay over the scene while playing, in CSS px from each edge. */
@@ -165,6 +170,7 @@ export const initialUIState: UIState = {
   testMode: false,
   benchmark: false,
   storage: false,
+  beltButton: false,
 };
 
 export function createUIStore(): Store<UIState> {

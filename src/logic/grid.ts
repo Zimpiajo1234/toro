@@ -43,8 +43,9 @@ export interface StorageColumn {
 
 /**
  * Cell-indexed lookups for one level: static obstacles (shelves, plants, storage columns inside the map, conveyor belt
- * cells), resting boxes (per-cell stacks and the boxes of every storage column) and zones. O(1) queries with no
- * allocation (a cell outside the map is looked up among the few columns beyond a wall). Out-of-bounds queries are safe.
+ * cells and buttons), resting boxes (per-cell stacks and the boxes of every storage column) and zones. O(1) queries
+ * with no allocation (a cell outside the map is looked up among the few columns beyond a wall). Out-of-bounds queries
+ * are safe.
  *
  * A storage column keeps its boxes by its support (docs/STORAGE.md «Soporte»): on shelves one box per level (`slotBox`),
  * outside every stack; in a stack a stack of its own, bottom → top, which the stack queries (height, boxAt, baseAt,
@@ -63,7 +64,7 @@ export class LevelGrid {
   readonly columns: readonly StorageColumn[];
   /** Total storage slots (levels of every column). */
   readonly slotCount: number;
-  /** 1 = shelf, plant, storage column inside the map or belt cell (a dock's door cells are plain floor). */
+  /** 1 = shelf, plant, storage column inside the map, belt cell or button (a dock's door cells are plain floor). */
   private readonly blocked: Uint8Array;
   /** Per cell: indices (into the level's box list) of the boxes resting there, bottom → top. */
   private readonly stacks: number[][];
@@ -127,10 +128,13 @@ export class LevelGrid {
     this.slotBoxes = new Int32Array(this.slotCount).fill(-1);
     this.slotColumn = new Int32Array(this.slotCount);
     columns.forEach((c, i) => this.slotColumn.fill(i, c.firstSlot, c.firstSlot + c.levels));
-    // A belt's end exit is filled by its belt only: its box is never lifted (docs/CONVEYOR.md). Its belt cells are solid.
+    // A belt's end exit is filled by its belt only: its box is never lifted (docs/CONVEYOR.md). Its belt cells and its
+    // button (H2) are solid.
     this.sealed = new Uint8Array(this.slotCount);
     for (const c of columns) if (c.access === 'belt') this.sealed.fill(1, c.firstSlot, c.firstSlot + c.levels);
-    for (const belt of conveyorsOf(level)) for (const cell of belt.cells) if (this.inBounds(cell.x, cell.z)) this.blocked[this.index(cell.x, cell.z)] = 1;
+    for (const belt of conveyorsOf(level)) {
+      for (const cell of [...belt.cells, ...(belt.button ? [belt.button] : [])]) if (this.inBounds(cell.x, cell.z)) this.blocked[this.index(cell.x, cell.z)] = 1;
+    }
     this.columnStacks = columns.map(() => []);
     level.zones.forEach((zone, i) => (this.zones[this.index(zone.x, zone.z)] = i));
     // Boxes sharing a floor cell are listed bottom → top; a box stored in a column (a rack cell, a truck's bed cell

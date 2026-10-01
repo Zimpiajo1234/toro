@@ -414,10 +414,13 @@ export class CollisionWorld {
     // Conveyor belts (docs/CONVEYOR.md; none without them): every belt cell and every end exit's cell is a whole-cell
     // static obstacle (a table the forklift never drives into); a belt's input is a storage column of the `front`
     // access below, entered only by the load through its front, like a rack slot (at its level on the table top: below
-    // it, its cell stays shut, the table's face).
+    // it, its cell stays shut, the table's face). A belt's button (H2) is a whole-cell obstacle too, like the model's:
+    // the body stops at its cell's edge, the fork point over its post (the empty tines pass it, as any furniture).
     const cellRect = (x: number, z: number): Rect => ({ minX: x - hw, minZ: z - hd, maxX: x + 1 - hw, maxZ: z + 1 - hd });
     for (const belt of conveyorsOf(level)) for (const c of belt.cells) statics.push(cellRect(c.x, c.z));
     for (const unit of storageOf(level)) if (unit.access.kind === 'belt') statics.push(cellRect(unit.x, unit.z));
+    // After every other static, so a level without buttons collides exactly as before.
+    for (const belt of conveyorsOf(level)) if (belt.button) statics.push(cellRect(belt.button.x, belt.button.z));
     // A dock door spans its unit's run of door cells along its wall; each of its columns opens its own span of it.
     const doors: DoorSpan[] = [];
     for (const unit of storageOf(level)) {

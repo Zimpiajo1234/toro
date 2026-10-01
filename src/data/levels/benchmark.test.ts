@@ -199,6 +199,31 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(stacks[exit].length).toBe(1);
   });
 
+  it('its belt has a button (H2) beside A, west of it: pressed from the free floor around it; any box may now park at B and come back', () => {
+    const [belt] = level.conveyors!;
+    expect(belt.button).toEqual({ x: 7, z: 2 });
+    const exit = grid.positionOfSlot('s1:0:1');
+    const entry = grid.positionOfSlot('e1:0:1');
+    expect(grid.solid[cell(belt.button!)]).toBe(1);
+    // East of it is A itself: it is pressed from the south (7,3), the west (6,2) or the north (7,1).
+    expect(grid.pressFrom[exit].map((c) => [c % grid.width, Math.floor(c / grid.width)])).toEqual([
+      [7, 3],
+      [6, 2],
+      [7, 1],
+    ]);
+    // Once the yellow ● in front of A is out of the way, a wrong box ridden to B is lifted «from» B (the button).
+    let stacks = stacksOf(grid, level);
+    const yellow = cell({ x: 8, z: 3 });
+    const parked = lift(stacks, yellow);
+    parked[exit] += stacks[yellow];
+    stacks = parked;
+    expect(lockedAt(grid, stacks, exit)).toBe(false);
+    expect(canLift(grid, stacks, exit)).toBe(true);
+    const region = reachableFrom(grid, occupancyOf(grid, stacks), cell(level.forklift));
+    expect(pickupStarts(grid, region, exit)).toEqual(pickupStarts(grid, region, entry));
+    expect(pickupStarts(grid, region, exit)).toHaveLength(1);
+  });
+
   it('every column can be loaded: its front (door) cell and the cell behind it are floor, and no zone stands there', () => {
     // The conveyor belt's end exit is the one column the forklift never loads (docs/CONVEYOR.md): its belt brings its
     // box in, from the belt's last cell, right in front of it.
@@ -310,9 +335,13 @@ describe('Benchmark (especiales/benchmark.level)', () => {
 
   it('no zone, floor box or the forklift starts hidden from the default camera behind a shelf, rack, plant or stack', () => {
     // As levels.test.ts hiddenItems: the cells east, south and south-east of an item stand between it and the camera.
-    // (The front cells of the rack that turns its back to the camera are hidden on purpose: read it or turn Q / E.)
+    // (The front cells of the rack that turns its back to the camera are hidden on purpose: read it or turn Q / E.) The
+    // belt's button is a slim post with a small cap, lower than the table: it hides nothing (the azul ✚ at its
+    // north-west stays in view).
     const stacks = stacksOf(grid, level);
-    const blocks = (x: number, z: number) => x < grid.width && z < grid.depth && (grid.solid[grid.index(x, z)] === 1 || stacks[grid.index(x, z)].length >= 2);
+    const button = level.conveyors![0].button!;
+    const blocks = (x: number, z: number) =>
+      x < grid.width && z < grid.depth && !(x === button.x && z === button.z) && (grid.solid[grid.index(x, z)] === 1 || stacks[grid.index(x, z)].length >= 2);
     const hidden = [...level.zones, ...level.boxes.filter((b) => !isStored(b)), { id: 'forklift', ...level.forklift }].filter((item) =>
       [
         [1, 0],
@@ -380,12 +409,12 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(stacks.every((_, pos) => grid.steps[pos] === null || lockedAt(grid, stacks, pos))).toBe(true);
   });
 
-  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 4 (3 with a cue, 1 «libre»), cinta 1 (1 floor cell), traps; its «dificultad:» targets all hold', () => {
+  it('metrics: repartos 1, huecos 12 (6 with a cue, 6 «libre»), camion 4 (3 with a cue, 1 «libre»), cinta 1 (1 floor cell, its button), traps; its «dificultad:» targets all hold', () => {
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
     expect(m.slots).toEqual({ total: 12, cued: 6, free: 6 });
     expect(m.trucks).toEqual({ trucks: 1, columns: 2, levels: 4, cued: 3, free: 1, loaded: 1 });
-    expect(m.belts).toEqual({ belts: 1, cells: 1, floor: 1, exits: 1, cued: 1 });
+    expect(m.belts).toEqual({ belts: 1, cells: 1, floor: 1, exits: 1, cued: 1, buttons: 1 });
     expect(m.traps).toBeGreaterThan(0);
     expect(source.targets.map((t) => t.metric)).toEqual(expect.arrayContaining(['movimientos', 'repartos', 'huecos', 'camion', 'cinta', 'trampas', 'libre']));
     const failed = checkLevelTargets(level, source.targets).filter((c) => !c.ok);

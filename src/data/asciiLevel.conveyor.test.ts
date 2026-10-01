@@ -209,13 +209,13 @@ describe('belt grammar errors (Spanish, file:line:column)', () => {
     expectError(legend(loaded), LEGEND, columnOf(loaded, '+'), /^la cinta empieza vacía/);
   });
 
-  it('pieces and parts not built yet: side exits and the button come later; an unknown word suggests the closest', () => {
+  it('parts not built yet: side exits come later; an unknown word suggests the closest', () => {
     const side = 'A = cinta entrada   B = cinta final: azul   ~ = cinta   S = cinta salida';
     expectError(legend(side), LEGEND, columnOf(side, 'salida'), /^las salidas laterales de la cinta llegan en el siguiente hito/);
-    const button = 'A = cinta entrada   B = cinta final: azul   ~ = cinta   K = cinta botón';
-    expectError(legend(button), LEGEND, columnOf(button, 'botón'), /^el botón de la cinta llega más adelante/);
     const typo = 'A = cinta entrada   B = cinta final: azul   ~ = cinta rampaa';
     expectError(legend(typo), LEGEND, columnOf(typo, 'rampaa'), /^«rampaa» no es una pieza de cinta: .*rampa/);
+    const button = 'A = cinta entrada   B = cinta final: azul   ~ = cinta   K = cinta botom';
+    expectError(legend(button), LEGEND, columnOf(button, 'botom'), /^«botom» no es una pieza de cinta: .*¿quisiste decir «botón»\?$/);
   });
 
   it('a belt is one straight run with its input past one end and its end exit past the other, in line', () => {
@@ -241,6 +241,66 @@ describe('belt grammar errors (Spanish, file:line:column)', () => {
     expectError(shared, 12, columnOf(shared[11], '(c7)'), /^«A» lleva un id de cinta y está en 2 cintas/);
     const twice = [...TWO.slice(0, 11), 'A = cinta entrada (c7)   B = cinta final: azul   D = cinta entrada (c7)   E = cinta final: menta   ~ = cinta'];
     expectError(twice, 12, columnOf(twice[11], '(c7)', 30), /^id de cinta repetido «c7»/);
+  });
+});
+
+/**
+ * BASE with the belt's button (H2) at (1,2), east of A: «o = cinta botón» (canonical: after «~ = cinta», in its
+ * column).
+ */
+const WITH_BUTTON = [
+  ...replace(BASE, 8, '2 Ao.a.1.').slice(0, LEGEND - 1),
+  `A = cinta entrada        B = cinta final: azul    ~ = cinta${' '.repeat(16)}o = cinta botón`,
+];
+
+describe('a belt\'s button in the .level format (H2)', () => {
+  it('reads a button: «cinta botón» on a cell of its own, the belt\'s (the only one: no id needed)', () => {
+    const level = levelOf(WITH_BUTTON);
+    expect(conveyorsOf(level)).toStrictEqual([{ id: 'c1', input: 'e1', output: 's1', cells: [{ x: 0, z: 1, piece: 'suelo', height: 1 }], button: { x: 1, z: 2 } }]);
+    // It validates (an obstacle with a free side to be pressed from) and comes back as it is.
+    const valid = parseLevel(text(WITH_BUTTON), 'x.level').level;
+    expect(conveyorsOf(valid)[0].button).toEqual({ x: 1, z: 2 });
+    expect(parseLevel(renderLevel(valid), 'x.level').level).toStrictEqual(valid);
+    // «button», any letter, the id of its belt: the same level.
+    const other = [...WITH_BUTTON.slice(0, LEGEND - 1), 'A = cinta entrada   B = cinta final: azul   ~ = cinta   k = cinta button (c1)'].map((l, i) => (i === 7 ? '2 Ak.a.1.' : l));
+    expect(parseLevel(text(other), 'x.level').level).toStrictEqual(valid);
+  });
+
+  it('the canonical form writes it «o = cinta botón» after the belt\'s other pieces, its id only with several belts; formatLevel is idempotent', () => {
+    const canonical = formatLevel(text(WITH_BUTTON));
+    expect(canonical).toBe(text(WITH_BUTTON));
+    const other = [...WITH_BUTTON.slice(0, LEGEND - 1), 'A = cinta entrada   B = cinta final: azul   ~ = cinta   k = cinta botón (c1)'].map((l, i) => (i === 7 ? '2 Ak.a.1.' : l));
+    expect(formatLevel(text(other))).toBe(canonical);
+    // Two belts: each button names its belt.
+    const two = [...TWO.slice(0, 7), '2 A...oDc', ...TWO.slice(8, 11), 'A = cinta entrada   B = cinta final: azul   D = cinta entrada   E = cinta final: menta   ~ = cinta   o = cinta botón (c2)'];
+    const level = parseLevel(text(two), 'x.level').level;
+    expect(conveyorsOf(level).map((c) => [c.id, c.button])).toEqual([
+      ['c1', undefined],
+      ['c2', { x: 4, z: 2 }],
+    ]);
+    const written = formatLevel(text(two));
+    expect(written).toMatch(/o = cinta botón \(c2\)\n$/);
+    expect(formatLevel(written)).toBe(written);
+    expect(parseLevel(written).level).toStrictEqual(level);
+  });
+
+  it('errors: several belts and no id, an id no belt has, two buttons for one belt, a button with no belt, words after it', () => {
+    const twoBelts = [...TWO.slice(0, 7), '2 A...oDc', ...TWO.slice(8, 11), 'A = cinta entrada   B = cinta final: azul   D = cinta entrada   E = cinta final: menta   ~ = cinta   o = cinta botón'];
+    expectError(twoBelts, 12, columnOf(twoBelts[11], 'o = '), /^hay 2 cintas: el botón lleva el id de la suya, p\. ej\. «o = cinta botón \(c1\)»$/);
+    const unknown = [...WITH_BUTTON.slice(0, LEGEND - 1), 'A = cinta entrada   B = cinta final: azul   ~ = cinta   o = cinta botón (c9)'];
+    expectError(unknown, LEGEND, columnOf(unknown[LEGEND - 1], '(c9)'), /^ninguna cinta lleva el id «c9»: el botón lleva el id de su cinta \(aquí «c1»\)$/);
+    const twice = WITH_BUTTON.map((l, i) => (i === 8 ? '3 o..^.b.' : l));
+    expectError(twice, ...at(0, 3), /^la cinta «c1» ya lleva un botón \(en la 1,2\): una cinta lleva uno como mucho$/);
+    const alone = ['# 1 · Sin cinta', 'id: sin-cinta', 'limit: 1', '', '  012', '0 o..', '1 a1^', '2 ...', '', '1 = zona azul', 'a = caja azul', 'o = cinta botón'];
+    expectError(alone, 12, 1, /^el botón «o» no tiene cinta: un botón va con su cinta/);
+    const extra = [...WITH_BUTTON.slice(0, LEGEND - 1), 'A = cinta entrada   B = cinta final: azul   ~ = cinta   o = cinta botón azul'];
+    expectError(extra, LEGEND, columnOf(extra[LEGEND - 1], 'azul', columnOf(extra[LEGEND - 1], 'botón')), /^«azul» sobra: el botón de una cinta se escribe «cinta botón»/);
+  });
+
+  it('validateLevel, in Spanish at the button: it needs a free floor cell beside it to be pressed from', () => {
+    // Shut in: the wall north, A west, plants east and south.
+    const shut = [...BASE.slice(0, 5), '0 Bop....', '1 ~p.....', '2 A..a.1.', '3 ...^.b.', '', ...BASE.slice(10, 12), 'A = cinta entrada        B = cinta final: azul    ~ = cinta    o = cinta botón'];
+    expectInvalid(shut, ...at(1, 0), /^el botón de la cinta se pulsa de frente desde una casilla de suelo a su lado, y no le queda ninguna libre/);
   });
 });
 

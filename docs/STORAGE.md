@@ -342,7 +342,13 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   `conveyorOfUnit`, `FLOOR_BELT_LEVEL`, `beltEndLevels`…); `LevelData.conveyors` (asciiLevel y validateLevel, que da a
   sus puntas su nivel base); `logic/conveyor.ts` (`ConveyorSystem`, desde `GameState.update`; `snapshot.conveyors`;
   eventos `beltStarted` / `beltDelivered` / `beltBlocked`) y `LevelGrid.seal`; en el solver, `feeds` / `fedBy` y
-  `validDrop`; en el render, `animate` y `landDelay` (opcionales de `StorageUnitView`).
+  `validDrop`; en el render, `animate` y `landDelay` (opcionales de `StorageUnitView`). Su **botón** (H2): fuera del
+  modelo común (no es una unidad: una casilla de `LevelConveyor.button`, un obstáculo), en `core/conveyors.ts`
+  (`hasBeltButtons`, `buttonFrontsOf`), `GameState` (`hint.button`, eventos `beltButton` / `beltReturned`),
+  `ConveyorSystem` (`keep` / `takeLast` / `reverse`, `buttonRefusal`), el solver (`pressFrom`, `canLift` /
+  `pickupStarts` desde la salida), el piloto (`pressButton`), el render (`views/ConveyorView` `BeltButton`), el audio
+  (`buttonClick` / `buttonRefused`) y la UI (`UIState.beltButton`). El modelo común no cambia: la caja que vuelve deja
+  el hueco de la salida y entra en el de la entrada como cualquier caja guardada (sellado mientras viaja).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -393,7 +399,8 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   - `solver`: el resultado exacto y su plan, jugada a jugada;
   - `start`: el estado vivo al cargar (progreso, cada nivel, cada caja);
   - `autopilot60` / `autopilot20`: el piloto a 60 y 20 fps (movimientos, frames hasta terminar, pulsaciones de F / V
-    en total y por aspecto, frames marcha atrás y cada movimiento de caja).
+    en total y por aspecto, frames marcha atrás, en un nivel con botón de cinta sus pulsaciones, y cada movimiento de
+    caja).
 - **Regla**: el JSON solo cambia con un cambio de reglas deliberado. Si un test de la caracterización falla sin él,
   algo cambió sin querer y se arregla el código; una API renombrada se adapta en `storageCharacterization.ts`, nunca en
   el JSON. Se regenera revisando el diff (así lo hizo la fase 6):
@@ -436,6 +443,17 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   - el registro de movimientos, el mismo (los 15 y la entrega de la cinta, «b9 e1:0:1 → s1:0:1 ok 8/13 (cinta)»).
   Las púas vacías contra la cara de A no cambian ninguna otra trayectoria del piloto (nunca la toca de morro con la
   horquilla abajo) ni nada de estanterías y camiones (sin bases macizas, `resolve` es el de antes).
+- **Regenerada con el botón** (H2 de docs/CONVEYOR.md, 2026-10-01: el botón de la cinta del Benchmark en (7,2), junto a
+  A). Todas las diferencias son del Benchmark (el nivel de prueba de los camiones, byte a byte igual; `targets`,
+  `solver` y `start`, iguales: el plan de 15 no usa el botón):
+  - `storage.conveyors`: la línea de la cinta añade **` · botón 7,2`**.
+  - `metrics`: estrechas **8 → 9** ((7,1): sus cuadrados de 2×2 tienen ahora el botón) y libre **75 → 74 %** (una
+    casilla más ocupada); `belts` añade **`buttons: 1`**. Movimientos (15, exacto), bloqueos, trampas, ambiguas y
+    repartos, iguales.
+  - `autopilot60` / `autopilot20`: **15184 / 5543** frames (antes 15229 / 5560: −45 / −17). Es solo el botón, un
+    obstáculo nuevo, que cambia un poco los trayectos por allí (el mismo código de H2 sin el botón da los 15229 / 5560
+    de antes); pulsaciones de F / V (10: 7 + 1 + 2) y frames marcha atrás (2348 / 772), iguales; **`buttonPresses: 0`**
+    (clave nueva, solo en niveles con botón); el registro de movimientos, el mismo.
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
   una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
   repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización

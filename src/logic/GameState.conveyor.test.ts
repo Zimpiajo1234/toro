@@ -19,7 +19,7 @@ import { IDLE, press, run, types } from './testUtils';
  * drop on the input is the move; the ride counts none, and a box on its way still counts in «Quedan N». The forks never
  * go through the table (H1c: its closed base): below its top its face stops the empty tines and the load, and while
  * either reaches in over it F / V do nothing, the forks never sink and the heading holds, so the rig backs out first.
- * Deterministic at 60 and 20 fps.
+ * Deterministic at 60 and 20 fps. The belts here have no button: what it does (H2) is in GameState.conveyorButton.test.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -160,7 +160,9 @@ describe.each([
   it('a box set down on the input settles, then rides into the end exit, which it lights and locks: the drop is the move', () => {
     const state = new GameState(LINE());
     const snap = state.getSnapshot();
-    expect(snap.conveyors).toEqual([{ id: 'c1', phase: 'idle', boxId: null, progress: 0, running: false, travel: 0 }]);
+    expect(snap.conveyors).toEqual([{ id: 'c1', phase: 'idle', boxId: null, progress: 0, running: false, direction: 1, travel: 0, presses: 0, accepted: 0 }]);
+    // Without a button the hint says nothing of one (as in every level before H2).
+    expect(snap.hint).not.toHaveProperty('button');
     expect(objectivesLeft(snap)).toBe(2);
     const drop = dropped(loadInput(state, dt));
     expect(drop).toEqual({
@@ -351,7 +353,7 @@ describe.each([
     expect(press(state, dt)).toEqual([{ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' }]);
   });
 
-  it('a box that is not the end exit\'s destiny buzzes when it gets there and stays (only the button, later, brings it back)', () => {
+  it('a box that is not the end exit\'s destiny buzzes when it gets there and stays (a belt without a button never brings it back)', () => {
     // «menta» at the end of the belt: blue ● is the zone's.
     const state = new GameState(LINE('menta', 'azul'));
     const snap = state.getSnapshot();
@@ -535,7 +537,11 @@ describe('ConveyorSystem (logic/conveyor.ts)', () => {
   /** A fresh belt and boxes as the snapshot holds them; host calls recorded. */
   function belt() {
     const calls: string[] = [];
-    const host: ConveyorHost = { started: (b) => calls.push(`started ${b}`), arrived: (b, box) => calls.push(`arrived ${b} ${box}`) };
+    const host: ConveyorHost = {
+      started: (b) => calls.push(`started ${b}`),
+      arrived: (b, box) => calls.push(`arrived ${b} ${box}`),
+      returned: (b, box) => calls.push(`returned ${b} ${box}`),
+    };
     const system = new ConveyorSystem(lineLevel, new LevelGrid(lineLevel));
     const boxes = structuredClone(new GameState(lineLevel).getSnapshot().boxes);
     return { system, boxes, calls, host };
@@ -560,7 +566,7 @@ describe('ConveyorSystem (logic/conveyor.ts)', () => {
   it('one host call each: started once settled, arrived at the end exit; then idle', () => {
     const { calls, system } = ride(1 / 60);
     expect(calls).toEqual(['started 0', 'arrived 0 0']);
-    expect(system.states[0]).toEqual({ id: 'c1', phase: 'idle', boxId: null, progress: 0, running: false, travel: expect.closeTo(2, 9) });
+    expect(system.states[0]).toEqual({ id: 'c1', phase: 'idle', boxId: null, progress: 0, running: false, direction: 1, travel: expect.closeTo(2, 9), presses: 0, accepted: 0 });
     expect(system.boxOn(0)).toBe(-1);
   });
 

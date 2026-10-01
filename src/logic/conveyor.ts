@@ -1,10 +1,10 @@
 import { beltPathOf, conveyorsOf } from '../core/conveyors';
-import { cellToWorld, type BoxState, type ConveyorState, type LevelData } from '../core/types';
+import { cellToWorld, type BeltButtonRefusal, type BoxState, type ConveyorState, type LevelData } from '../core/types';
 import type { LevelGrid } from './grid';
 
 /**
  * The belt's feel (docs/CONVEYOR.md «Ajustes»), safe to tune: calm like the forklift, a soft start and a soft stop.
- * A run takes length / speed + rampSec seconds (a 3-cell path: ≈ 3.9 s).
+ * A run takes length / speed + rampSec seconds (a 3-cell path: ≈ 3.9 s), either way.
  */
 export const CONVEYOR = {
   /** Seconds a box set down on a belt's input rests there before the belt starts: its drop glide lands first. */
@@ -13,14 +13,48 @@ export const CONVEYOR = {
   speed: 0.9,
   /** Seconds the belt takes to reach its cruise speed, and to come to rest at the end exit (sine-eased both ways). */
   rampSec: 0.6,
+  /**
+   * Seconds between an accepted press of a belt's button (H2) and the belt starting back: the cap dips and comes up
+   * first, then it runs.
+   */
+  pressSec: 0.3,
 } as const;
 
-/** What GameState does when a belt starts or a box reaches an end exit (it owns the slots, the events, completion). */
+/**
+ * What GameState does when a belt starts or a box reaches either end of it (it owns the slots, the events,
+ * completion).
+ */
 export interface ConveyorHost {
-  /** Belt `belt` starts carrying its box (it has settled on the input). */
+  /** Belt `belt` starts carrying its box (it has settled on the input; or, running back, at its exit). */
   started(belt: number): void;
   /** Belt `belt`'s box (`box`, index in the snapshot's boxes) has reached the centre of its end exit: move it in there. */
   arrived(belt: number, box: number): void;
+  /**
+   * Belt `belt` ran back (H2, its button) and its box (`box`) has reached the centre of its input, whose slot already
+   * holds it: it rests there again.
+   */
+  returned(belt: number, box: number): void;
+}
+
+/**
+ * Whether a press of a belt's button (docs/CONVEYOR.md H2) runs it back, or why not (the first that applies, in
+ * BeltButtonRefusal order): null = accepted. Pure: what GameState knows about the belt at the press.
+ */
+export function buttonRefusal(belt: {
+  /** A box settles or rides on it (either way). */
+  busy: boolean;
+  /** A box rests on its input (its one slot). */
+  inputTaken: boolean;
+  /** The empty tines or the carried load reach into its input. */
+  forksInInput: boolean;
+  /** Boxes resting at its exits that may come back (not locked there). */
+  returnable: number;
+}): BeltButtonRefusal | null {
+  if (belt.busy) return 'busy';
+  if (belt.inputTaken) return 'input';
+  if (belt.forksInInput) return 'forks';
+  if (belt.returnable === 0) return 'nothing';
+  return null;
 }
 
 /** One belt as the logic keeps it; its public part is `state` (GameSnapshot.conveyors). */
@@ -38,7 +72,7 @@ interface Belt {
   /** Peak speed of a run (CONVEYOR.speed, lower only on a path too short to reach it) and the run's cruise time (s). */
   readonly peak: number;
   readonly cruise: number;
-  /** Seconds a whole run takes. */
+  /** Seconds a whole run takes (either way: the same path). */
   readonly runSec: number;
   /** The box settling or riding on it (index in the snapshot's boxes), -1 = none. */
   box: number;
@@ -46,6 +80,12 @@ interface Belt {
   elapsed: number;
   /** Distance covered in the current run (cells). */
   covered: number;
+  /**
+   * The boxes resting at its exits that its button may bring back (H2: they reached it without being locked there), in
+   * the order they arrived: the last one comes back first. One exit so far (its end exit), so at most one box; the list
+   * is there for the side exits of H3.
+   */
+  readonly returnable: number[];
 }
 
 /**
@@ -56,6 +96,9 @@ interface Belt {
  * while a box settles or rides, the input holds it in its slot, sealed (no other box goes in, and it is never picked
  * up; the end exit stays free for it, since only its belt ever fills it). GameState asks before loading: with the end
  * exit full the box simply stays on the input (pickable again) and the belt never starts.
+ * Its button (H2) runs it the other way: GameState moves the last returnable box (`takeLast`) into the input's slot,
+ * sealed, and `reverse` sends the belt back (`pressSec`, then the same ride mirrored, direction −1, its surface going
+ * back); at the input's centre the box rests again (ConveyorHost.returned).
  * Deterministic: a run's position is a closed-form function of the time since it started (sine-eased ramps, a cruise),
  * so 60 and 20 fps go through the same states, the arrival differing by less than a frame. Allocates nothing per frame.
  */
@@ -82,7 +125,7 @@ export class ConveyorSystem {
       // A run: sine-eased up to its peak speed over rampSec (covering peak · ramp / 2), a cruise, and the same ease down.
       const peak = ramp > 0 ? Math.min(CONVEYOR.speed, length / ramp) : CONVEYOR.speed;
       const cruise = Math.max(0, length / peak - ramp);
-      const state: ConveyorState = { id: conveyor.id, phase: 'idle', boxId: null, progress: 0, running: false, travel: 0 };
+      const state: ConveyorState = { id: conveyor.id, phase: 'idle', boxId: null, progress: 0, running: false, direction: 1, travel: 0, presses: 0, accepted: 0 };
       this.states.push(state);
       this.belts.push({
         state,
@@ -98,6 +141,7 @@ export class ConveyorSystem {
         box: -1,
         elapsed: 0,
         covered: 0,
+        returnable: [],
       });
     }
   }
@@ -135,7 +179,7 @@ export class ConveyorSystem {
     return this.belts[belt].box;
   }
 
-  /** Seconds a run of belt `belt` takes. */
+  /** Seconds a run of belt `belt` takes (either way). */
   runSecOf(belt: number): number {
     return this.belts[belt].runSec;
   }
@@ -145,20 +189,51 @@ export class ConveyorSystem {
    * it settles there, then rides (it is on its way from now on: the input holds it sealed).
    */
   load(belt: number, box: number, boxId: string): void {
-    const b = this.belts[belt];
-    b.box = box;
-    b.elapsed = 0;
-    b.covered = 0;
-    b.state.phase = 'settling';
-    b.state.boxId = boxId;
-    b.state.progress = 0;
-    b.state.running = false;
+    this.begin(belt, box, boxId, 1);
+  }
+
+  /**
+   * H2, its button: box `box` (id `boxId`), resting at an exit of belt `belt`, is on its way back (GameState has moved
+   * it into the input's slot, sealed): after CONVEYOR.pressSec the belt runs back and brings it to the input's centre.
+   */
+  reverse(belt: number, box: number, boxId: string): void {
+    this.begin(belt, box, boxId, -1);
+  }
+
+  /** A box that reached an exit of belt `belt` without being locked there (H2): its button may bring it back. */
+  keep(belt: number, box: number): void {
+    this.belts[belt].returnable.push(box);
+  }
+
+  /** Boxes resting at belt `belt`'s exits that its button may bring back. */
+  returnableCount(belt: number): number {
+    return this.belts[belt].returnable.length;
+  }
+
+  /**
+   * The last box that reached one of belt `belt`'s exits without being locked there (index in the boxes), taken off the
+   * list; -1 = none.
+   */
+  takeLast(belt: number): number {
+    return this.belts[belt].returnable.pop() ?? -1;
+  }
+
+  /** Belt `belt` is at rest: no box settling or riding on it, either way. */
+  isIdle(belt: number): boolean {
+    return this.belts[belt].box < 0;
+  }
+
+  /** Its button was pressed (`accepted`: the belt runs back): the counts the render follows (ConveyorState). */
+  pressed(belt: number, accepted: boolean): void {
+    const s = this.belts[belt].state;
+    s.presses++;
+    if (accepted) s.accepted++;
   }
 
   /**
    * Advance every belt by `dt` s: a settled box starts riding (host.started), a riding one moves along the path (its
-   * `pos` written into `boxes`), and one that reaches the end exit's centre is handed over (host.arrived), the belt then
-   * idle again.
+   * `pos` written into `boxes`), and one that reaches the far end is handed over (host.arrived at the end exit, or
+   * host.returned at the input running back), the belt then idle again.
    */
   update(dt: number, boxes: BoxState[], host: ConveyorHost): void {
     if (!(dt > 0)) return;
@@ -166,29 +241,48 @@ export class ConveyorSystem {
       const b = this.belts[i];
       if (b.box < 0) continue;
       const s = b.state;
+      const back = s.direction < 0;
       b.elapsed += dt;
       if (s.phase === 'settling') {
-        if (b.elapsed < CONVEYOR.settleSec) continue;
+        const wait = back ? CONVEYOR.pressSec : CONVEYOR.settleSec;
+        if (b.elapsed < wait) continue;
         // The run starts within this frame: carry the rest of it over, so every frame rate rides the same curve.
-        b.elapsed -= CONVEYOR.settleSec;
+        b.elapsed -= wait;
         s.phase = 'running';
         s.running = true;
         host.started(i);
       }
       const covered = b.elapsed >= b.runSec ? b.length : this.coveredAt(b, b.elapsed);
-      s.travel += covered - b.covered;
+      s.travel += s.direction * (covered - b.covered);
       b.covered = covered;
-      s.progress = b.length > 0 ? covered / b.length : 1;
-      this.place(b, covered, boxes[b.box]);
+      const along = back ? b.length - covered : covered;
+      s.progress = b.length > 0 ? along / b.length : back ? 0 : 1;
+      this.place(b, along, boxes[b.box]);
       if (b.elapsed < b.runSec) continue;
       const box = b.box;
       s.phase = 'idle';
       s.running = false;
       s.progress = 0;
       s.boxId = null;
+      s.direction = 1;
       b.box = -1;
-      host.arrived(i, box);
+      if (back) host.returned(i, box);
+      else host.arrived(i, box);
     }
+  }
+
+  /** A run of belt `belt` with box `box` (id `boxId`): settling first, then riding `direction` (1 forward, −1 back). */
+  private begin(belt: number, box: number, boxId: string, direction: 1 | -1): void {
+    const b = this.belts[belt];
+    b.box = box;
+    b.elapsed = 0;
+    b.covered = 0;
+    b.state.phase = 'settling';
+    b.state.boxId = boxId;
+    b.state.direction = direction;
+    // Where the box is along the path: at the input going forward, at the end exit going back.
+    b.state.progress = direction > 0 ? 0 : 1;
+    b.state.running = false;
   }
 
   /** Distance covered `t` s into a run of belt `b`: sine-eased up to its peak, a cruise, sine-eased down to rest. */
@@ -200,17 +294,17 @@ export class ConveyorSystem {
     return Math.min(b.length, b.length - rampDistance(b.peak, ramp, Math.max(0, b.runSec - t)));
   }
 
-  /** The point `covered` cells along belt `b`'s path, written into the riding box's position. */
-  private place(b: Belt, covered: number, box: BoxState): void {
+  /** The point `along` cells from the input along belt `b`'s path, written into the riding box's position. */
+  private place(b: Belt, along: number, box: BoxState): void {
     const p = b.path;
-    let left = covered;
+    let left = along;
     const last = p.length / 2 - 1;
     for (let i = 0; i < last; i++) {
       const dx = p[2 * i + 2] - p[2 * i];
       const dz = p[2 * i + 3] - p[2 * i + 1];
       const segment = Math.hypot(dx, dz);
       if (left <= segment || i === last - 1) {
-        const k = segment > 0 ? Math.min(1, left / segment) : 1;
+        const k = segment > 0 ? Math.min(1, Math.max(0, left / segment)) : 1;
         box.pos.x = p[2 * i] + dx * k;
         box.pos.z = p[2 * i + 1] + dz * k;
         return;

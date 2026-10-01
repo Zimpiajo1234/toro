@@ -23,6 +23,7 @@ import {
   BELT_HUM_HZ,
   BELT_HUM_LEVEL,
   BELT_HUM_LOWPASS_HZ,
+  BUTTON_CLICK,
   SfxPlayer,
   TRUCK_BED_CAVITY_HZ,
   TRUCK_BED_LOWPASS_HZ,
@@ -440,6 +441,47 @@ describe('SfxPlayer', () => {
     destined.sfx.beltLand(1, 79, false, 'symbol');
     expect(wood.mock.calls.map((c) => [c[0], c[1] > 1.03])).toEqual([[79, true]]);
     expect(bell).not.toHaveBeenCalled();
+  });
+
+  it('a belt\'s button (H2): a soft mechanical click, the cap down then back up; refused, a duller click and a short muted «no»', () => {
+    const accepted = setup();
+    accepted.sfx.buttonClick(1);
+    const bell = vi.spyOn(BellInstrument.prototype, 'strike');
+    const wood = vi.spyOn(WoodInstrument.prototype, 'strike');
+    // Two clicks (down, up a little later), a faint tick tone: no sub, nothing bright, much softer than a drop.
+    const clicks = accepted.ctx.ofKind(FakeBiquad).filter((b) => b.type === 'bandpass');
+    expect(clicks).toHaveLength(2);
+    for (const b of clicks) expect(b.frequency.value).toBeLessThan(2200);
+    for (const o of accepted.ctx.ofKind(FakeOscillator)) {
+      expect(o.type).toBe('sine');
+      expect(o.frequency.value).toBeGreaterThan(300);
+    }
+    const starts = accepted.ctx.ofKind(FakeGain).flatMap((g) => g.gain.events.filter((e) => e.kind === 'set').map((e) => e.time));
+    expect(Math.min(...starts)).toBe(1);
+    expect(Math.max(...starts)).toBeCloseTo(1 + BUTTON_CLICK.release, 9);
+    const floor = setup();
+    floor.sfx.drop(0, null);
+    expect(sum(peaksOf(accepted.ctx))).toBeLessThan(sum(peaksOf(floor.ctx)) * 0.5);
+    // Refused: a duller click, then the wrong-target «no», shorter and softer than a wrong drop's.
+    const refused = setup();
+    refused.sfx.buttonRefused(1);
+    const dull = refused.ctx.ofKind(FakeBiquad).find((b) => b.type === 'bandpass')!;
+    expect(dull.frequency.value).toBeLessThan(clicks[0].frequency.value);
+    const tones = refused.ctx.ofKind(FakeOscillator);
+    expect(tones.map((o) => o.type).sort()).toEqual(['sawtooth', 'triangle']);
+    for (const o of tones) {
+      expect(o.frequency.value).toBeGreaterThan(160);
+      expect(o.frequency.value).toBeLessThan(220);
+      expect((o.outputs[0] as FakeBiquad).frequency.value).toBe(WRONG_BUZZ_LOWPASS_HZ);
+    }
+    const wrong = setup();
+    wrong.sfx.wrongBuzz(1);
+    // Each tone's envelope (after its low-pass): its peak.
+    const tonePeaks = (ctx: FakeAudioContext) =>
+      ctx.ofKind(FakeOscillator).map((o) => ((o.outputs[0] as FakeBiquad).outputs[0] as FakeGain).gain.events.find((e) => e.kind === 'linear')!.value);
+    expect(Math.max(...tonePeaks(refused.ctx))).toBeLessThan(Math.max(...tonePeaks(wrong.ctx)));
+    expect(bell).not.toHaveBeenCalled();
+    expect(wood).not.toHaveBeenCalled();
   });
 
   it('a running belt hums softly for its whole run: easing in and out with it, climbing as it speeds up, one voice', () => {
@@ -1047,6 +1089,30 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
       engine.handleEvent({ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' });
       expect(pickup.mock.calls).toEqual([[ctx.currentTime, 1]]);
+      expect(warn).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it('a belt\'s button (H2): the click on an accepted press, the muted «no» on a refused one, the hum back, the tup on A', async () => {
+      const { engine, ctx, warn } = await live();
+      const click = vi.spyOn(SfxPlayer.prototype, 'buttonClick');
+      const refused = vi.spyOn(SfxPlayer.prototype, 'buttonRefused');
+      const hum = vi.spyOn(SfxPlayer.prototype, 'beltHum');
+      const tup = vi.spyOn(SfxPlayer.prototype, 'beltDrop');
+      const buzz = vi.spyOn(SfxPlayer.prototype, 'wrongBuzz');
+      engine.handleEvent({ type: 'beltButton', conveyorId: 'c1', accepted: false, reason: 'nothing' });
+      expect(refused.mock.calls).toEqual([[ctx.currentTime]]);
+      expect(click).not.toHaveBeenCalled();
+      engine.handleEvent({ type: 'beltButton', conveyorId: 'c1', accepted: true, boxId: 'b1', fromSlotId: 's1:0:1' });
+      expect(click.mock.calls).toEqual([[ctx.currentTime]]);
+      // The run back hums like the run out.
+      engine.handleEvent({ type: 'beltStarted', conveyorId: 'c1', boxId: 'b1', runSec: 2.8, rampSec: 0.6, reverse: true });
+      expect(hum.mock.calls).toEqual([[ctx.currentTime, 2.8, 0.6]]);
+      // Back on A: the rubber tup, at once (it slid in), never a chime or a «no».
+      engine.handleEvent({ type: 'beltReturned', conveyorId: 'c1', boxId: 'b1', slotId: 'e1:0:1', skin: 'beltIn', level: 1 });
+      expect(tup.mock.calls).toEqual([[ctx.currentTime]]);
+      expect(buzz).not.toHaveBeenCalled();
+      expect(refused).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
       engine.dispose();
     });

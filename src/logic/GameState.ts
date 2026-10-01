@@ -1,5 +1,6 @@
 import { angleDelta, approach, clamp, degToRad, wrapAngle } from '../core/math';
 import {
+  FACINGS,
   TINES,
   cellToWorld,
   type BoxState,
@@ -16,9 +17,10 @@ import {
 import { criteriaOf, cueOf, fitsLevel, levelDestinies, sameKind, symbolOf } from '../core/sorting';
 import { FACING_X, columnFrame, inwardHeading } from '../core/racks';
 import { hasStorage, storageSlotsOf } from '../core/storage';
+import { conveyorsOf, hasBeltButtons } from '../core/conveyors';
 import { GAME_CONFIG, type GameConfig } from '../config';
 import { CollisionWorld, SOLID_TOP_EPSILON, pointRectDistance } from './collision';
-import { CONVEYOR, ConveyorSystem, type ConveyorHost } from './conveyor';
+import { CONVEYOR, ConveyorSystem, buttonRefusal, type ConveyorHost } from './conveyor';
 import { forkRiseRate } from './forkRise';
 import { ForkliftController, MOVE_EPSILON } from './forklift';
 import { LevelGrid } from './grid';
@@ -129,7 +131,14 @@ export class GameState {
   private readonly beltHost: ConveyorHost = {
     started: (belt) => this.beltStarted(belt),
     arrived: (belt, box) => this.deliver(belt, box),
+    returned: (belt, box) => this.returned(belt, box),
   };
+  /**
+   * Per belt (level.conveyors order): the world centre of its button's cell (H2), or null for a belt without one;
+   * `hasButtons` = some belt has one (the hint names the button aimed at: InteractionHint.button).
+   */
+  private readonly buttonCentres: (Vec2 | null)[];
+  private readonly hasButtons: boolean;
 
   constructor(level: LevelData, config: GameConfig = GAME_CONFIG) {
     this.config = config;
@@ -228,6 +237,8 @@ export class GameState {
     this.motion.heading = forklift.heading;
     this.interaction = new Interaction(level, config, forklift, boxes, zones, this.grid, this.world, this.aim);
     this.belts = new ConveyorSystem(level, this.grid);
+    this.buttonCentres = conveyorsOf(level).map((c) => (c.button ? cellToWorld(c.button, size) : null));
+    this.hasButtons = hasBeltButtons(level);
     this.snapshot = {
       level,
       forklift,
@@ -235,7 +246,8 @@ export class GameState {
       zones,
       storageSlots,
       conveyors: this.belts.states,
-      hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, storage: null },
+      // A level with a belt button also says which one the action presses (none in every other level: as before).
+      hint: { targetBoxId: null, dropCell: null, dropZoneId: null, dropLevel: 0, storage: null, ...(this.hasButtons ? { button: null } : {}) },
       completed: false,
       progress: { satisfied: 0, total: zones.length + storageSlots.filter((slot) => slot.accepts !== null).length },
       moves: 0,
@@ -308,6 +320,12 @@ export class GameState {
   }
 
   private act(): void {
+    // Facing a belt's button (docs/CONVEYOR.md H2), the action presses it, the forks empty or carrying.
+    const button = this.aimedButton();
+    if (button >= 0) {
+      this.pressButton(button);
+      return;
+    }
     if (this.carriedIndex >= 0) {
       const box = this.snapshot.boxes[this.carriedIndex];
       if (this.interaction.findDrop(box, this.drop)) this.dropCarried(this.drop);
@@ -513,17 +531,140 @@ export class GameState {
     }
   }
 
-  /** Belt `belt` starts carrying its box (it has settled on the input): the run's length, for the audio's hum. */
+  /**
+   * Belt `belt` starts carrying its box (it has settled on the input; or its button sent it back, from its exit): the
+   * run's length, for the audio's hum.
+   */
   private beltStarted(belt: number): void {
     const state = this.snapshot.conveyors[belt];
-    this.emit({ type: 'beltStarted', conveyorId: state.id, boxId: state.boxId ?? '', runSec: this.belts.runSecOf(belt), rampSec: CONVEYOR.rampSec });
+    const started: Extract<GameEvent, { type: 'beltStarted' }> = {
+      type: 'beltStarted',
+      conveyorId: state.id,
+      boxId: state.boxId ?? '',
+      runSec: this.belts.runSecOf(belt),
+      rampSec: CONVEYOR.rampSec,
+    };
+    if (state.direction < 0) started.reverse = true;
+    this.emit(started);
+  }
+
+  /**
+   * The belt whose button (docs/CONVEYOR.md H2) the action presses now, or -1: the forklift faces the button's cell from
+   * one of its sides the way it faces a rack column it picks from (STORAGE_ACCESS.front: its heading within `faceAngle`
+   * of straight in, the fork point within `faceLateral` of the centre line, from `faceNear` in front of the cell's face to
+   * `faceFar` past it), with the forks empty or carrying. The button cell is an obstacle (the body stops at its edge,
+   * the fork point then over its post) and never a drop target, so nothing else is meant there.
+   */
+  private aimedButton(): number {
+    if (!this.hasButtons) return -1;
+    const f = this.snapshot.forklift;
+    const row = STORAGE_ACCESS.front;
+    const reach = this.config.forklift.forkReach;
+    const px = f.pos.x + Math.sin(f.heading) * reach;
+    const pz = f.pos.z + Math.cos(f.heading) * reach;
+    const frame = this.frame;
+    for (let b = 0; b < this.buttonCentres.length; b++) {
+      const centre = this.buttonCentres[b];
+      if (!centre) continue;
+      // Each side of its cell (the side the forklift stands on), as if it were a column loaded from there.
+      for (const side of FACINGS) {
+        if (Math.abs(angleDelta(f.heading, inwardHeading(side))) > row.faceAngle) continue;
+        columnFrame(centre, side, px, pz, frame);
+        if (Math.abs(frame.lateral) <= row.faceLateral && frame.depth >= -row.faceNear && frame.depth <= row.faceFar) return b;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * The button of belt `belt` is pressed (docs/CONVEYOR.md H2): no box move. With the belt at rest, its input's slot
+   * empty and nothing of the forklift in it, the last box that reached one of its exits without being locked there
+   * (LIFO) comes back: out of that exit's slot, into the input's, sealed while the belt runs back with it
+   * (ConveyorSystem.reverse); it was never satisfying anything there, so «Quedan N» and the progress stay as they are,
+   * and nothing completes. Otherwise nothing moves (`beltButton` with its reason: the soft «no»).
+   */
+  private pressButton(belt: number): void {
+    const snap = this.snapshot;
+    const belts = this.belts;
+    const conveyorId = snap.conveyors[belt].id;
+    const reason = buttonRefusal({
+      busy: !belts.isIdle(belt),
+      inputTaken: this.grid.slotBox(belts.inputSlotOf(belt)) >= 0,
+      forksInInput: this.forksInInput(belt),
+      returnable: belts.returnableCount(belt),
+    });
+    belts.pressed(belt, reason === null);
+    if (reason !== null) {
+      this.emit({ type: 'beltButton', conveyorId, accepted: false, reason });
+      return;
+    }
+    const index = belts.takeLast(belt);
+    const box = snap.boxes[index];
+    const cell = box.cell!;
+    const fromSlotId = box.slotId!;
+    const exit = this.grid.columnAt(cell.x, cell.z);
+    this.grid.takeBox(exit, box.level);
+    // Into the input's slot at once (sealed: never picked, nothing set down there while it rides back); it rides from
+    // where it rests (`pos`, the exit's centre).
+    const input = belts.inputOf(belt);
+    const slot = belts.inputSlotOf(belt);
+    const { cell: inputCell, baseLevel } = this.grid.columns[input];
+    box.level = this.grid.putBox(input, baseLevel, index);
+    this.grid.seal(slot, true);
+    box.cell = { x: inputCell.x, z: inputCell.z };
+    box.slotId = snap.storageSlots[slot].id;
+    this.refreshColumn(exit);
+    this.refreshColumn(input);
+    this.recountProgress();
+    belts.reverse(belt, index, box.id);
+    this.emit({ type: 'beltButton', conveyorId, accepted: true, boxId: box.id, fromSlotId });
+  }
+
+  /**
+   * Anything of the forklift reaches into belt `belt`'s input cell (deeper than touching): the carried load (its
+   * collider) or the empty tines (their circle), at any height. The box coming back needs that slot clear.
+   */
+  private forksInInput(belt: number): boolean {
+    const c = this.columnCenters[this.belts.inputOf(belt)];
+    const f = this.snapshot.forklift;
+    let x: number;
+    let z: number;
+    let r: number;
+    if (this.carriedIndex >= 0) {
+      const load = this.snapshot.boxes[this.carriedIndex].pos;
+      x = load.x;
+      z = load.z;
+      r = this.config.forklift.carriedBoxRadius;
+    } else {
+      x = f.pos.x + Math.sin(f.heading) * this.tineAhead;
+      z = f.pos.z + Math.cos(f.heading) * this.tineAhead;
+      r = this.tineRadius;
+    }
+    return pointRectDistance(x, z, c.x - 0.5, c.z - 0.5, c.x + 0.5, c.z + 0.5) < r - SOLID_TOP_EPSILON;
+  }
+
+  /**
+   * Belt `belt` ran back (H2) with its box (`index`): it rests on the input again, at its centre, unsealed, a box like
+   * any other there (pickable at the input's level). No box move, no target: nothing completes.
+   */
+  private returned(belt: number, index: number): void {
+    const snap = this.snapshot;
+    const box = snap.boxes[index];
+    const slot = this.belts.inputSlotOf(belt);
+    const state = snap.storageSlots[slot];
+    this.grid.seal(slot, false);
+    box.pos.x = state.pos.x;
+    box.pos.z = state.pos.z;
+    this.refreshColumn(this.belts.inputOf(belt));
+    this.emit({ type: 'beltReturned', conveyorId: snap.conveyors[belt].id, boxId: box.id, slotId: state.id, skin: state.skin, level: box.level });
   }
 
   /**
    * Belt `belt`'s box (`index`) reached its end exit (docs/CONVEYOR.md): out of the input's slot (unsealed, free for the
-   * next box) into the end exit's, where it rests for good (a belt's end exit is never picked). Its slot is satisfied
-   * only by its destined box, which locks there; any other box on a cued end exit is a wrong target (the soft buzz).
-   * No box move: the drop on the input was counted. The last target satisfied completes the level, as a drop would.
+   * next box) into the end exit's, where it rests (the forklift never picks there). Its slot is satisfied only by its
+   * destined box, which locks there for good; any other box on a cued end exit is a wrong target (the soft buzz) and,
+   * like any box on a «libre» one, waits there for the belt's button (H2), the last one first. No box move: the drop on
+   * the input was counted. The last target satisfied completes the level, as a drop would.
    */
   private deliver(belt: number, index: number): void {
     const snap = this.snapshot;
@@ -542,6 +683,8 @@ export class GameState {
     box.slotId = state.id;
     this.refreshColumn(input);
     this.refreshColumn(output);
+    // Not locked there (a wrong box on a cued end exit, any box on a «libre» one): its button may bring it back (H2).
+    if (!box.locked) this.belts.keep(belt, index);
     const progress = this.recountProgress();
     const delivered: Extract<GameEvent, { type: 'beltDelivered' }> = {
       type: 'beltDelivered',
@@ -917,12 +1060,22 @@ export class GameState {
     hint.targetBoxId = null;
     hint.dropLevel = 0;
     hint.storage = null;
+    if (this.hasButtons) hint.button = null;
     if (snap.completed) {
       hint.dropCell = null;
       hint.dropZoneId = null;
       return;
     }
     this.refreshStorageAim();
+    // Facing a belt's button (H2): the action presses it, so nothing would be picked or dropped now.
+    const button = this.aimedButton();
+    if (button >= 0) {
+      hint.button = snap.conveyors[button].id;
+      hint.dropCell = null;
+      hint.dropZoneId = null;
+      this.pickLevel = 0;
+      return;
+    }
     if (this.carriedIndex < 0) {
       const target = this.interaction.findPickTarget();
       hint.targetBoxId = target >= 0 ? snap.boxes[target].id : null;

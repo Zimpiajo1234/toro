@@ -99,6 +99,33 @@ describe('the Benchmark is playable with the real controls', () => {
   });
 });
 
+describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md)', () => {
+  it.each([
+    ['60 fps', 1 / 60],
+    ['20 fps (Game dt clamp)', 1 / 20],
+  ] as const)('%s: a wrong box sent to B first (the yellow ●) comes back with the button, and the autopilot still finishes, one move more', (_, dt) => {
+    const exit = grid.positionOfSlot('s1:0:1');
+    const out = autopilot(level, dt, [{ from: grid.index(8, 3), drop: exit }]);
+    expect(out.note).toBe('');
+    expect(out.solved).toBe(true);
+    // The wrong ride (the soft «no» at B), the press (accepted: no move), the ride back, the box lifted off A at level 1.
+    const delivered = deliveries(out.events);
+    expect(delivered[0]).toMatchObject({ slotId: 's1:0:1', correct: false, wrongTarget: true });
+    const pressedAt = out.events.findIndex((e) => e.type === 'beltButton');
+    expect(out.events[pressedAt]).toEqual({ type: 'beltButton', conveyorId: 'c1', accepted: true, boxId: delivered[0].boxId, fromSlotId: 's1:0:1' });
+    expect(out.events.filter((e) => e.type === 'beltButton')).toHaveLength(1);
+    const back = out.events.findIndex((e) => e.type === 'beltReturned');
+    expect(back).toBeGreaterThan(pressedAt);
+    expect(out.events.slice(pressedAt, back).some((e) => e.type === 'beltStarted' && e.reverse === true)).toBe(true);
+    expect(picks(out.events.slice(back)).find((p) => p.boxId === delivered[0].boxId)).toMatchObject({ fromSlotId: 'e1:0:1', level: 1, skin: 'beltIn' });
+    // The press and the ride back are no moves: the 15 of the level and the wrong send.
+    expect([out.moves, out.snapshot.moves]).toEqual([16, 16]);
+    // The coral ✚ still ends at B, and the level completes once.
+    expect(delivered.at(-1)).toMatchObject({ correct: true });
+    expect(out.events.filter((e) => e.type === 'levelComplete')).toHaveLength(1);
+  });
+});
+
 describe('the Benchmark in the live game state', () => {
   it('starts with its trap: mint ◆ fits the «menta» slot but is not its box (dark, not wrong); mint ▲ sits in a slot it does not fit', () => {
     const snap = new GameState(level).getSnapshot();

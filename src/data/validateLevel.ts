@@ -34,7 +34,7 @@ import {
   type Sortable,
 } from '../core/sorting';
 import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, baseLevelOf, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
-import { FLOOR_BELT_LEVEL, beltEndLevels } from '../core/conveyors';
+import { FLOOR_BELT_LEVEL, beltEndLevels, buttonFrontsOf } from '../core/conveyors';
 import { dockRailsOf } from '../core/docks';
 import { GAME_CONFIG } from '../config';
 
@@ -264,7 +264,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // end exit (one of skin beltOut), the input loaded from the side away from the belt, the end exit fed from the belt's
   // last cell. Every cell a floor piece for now (the ramp and the ceiling pieces come later: the data already carries
   // them), a table at FLOOR_BELT_LEVEL (its cells' height, by default), on cells of its own: nothing else stands on a
-  // belt (an obstacle for the body and the load).
+  // belt (an obstacle for the body and the load). Its button (H2), if any, is a cell of its own too, an obstacle,
+  // pressed from a free floor cell beside it (checked once every obstacle is known).
   const conveyors: LevelConveyor[] = arr(r.conveyors, 'conveyors').map((c, i) => {
     const name = `conveyors[${i}]`;
     const o = obj(c, name);
@@ -279,7 +280,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
             : fail(`${where}.piece must be ${CONVEYOR_PIECES.join(', ')}`);
       return { x: int(co.x, `${where}.x`), z: int(co.z, `${where}.z`), piece, height: co.height === undefined ? FLOOR_BELT_LEVEL : num(co.height, `${where}.height`) };
     });
-    return { id: o.id === undefined ? `c${i + 1}` : str(o.id, `${name}.id`), input: str(o.input, `${name}.input`), output: str(o.output, `${name}.output`), cells };
+    const button = o.button === undefined ? undefined : obj(o.button, `${name}.button`);
+    return {
+      id: o.id === undefined ? `c${i + 1}` : str(o.id, `${name}.id`),
+      input: str(o.input, `${name}.input`),
+      output: str(o.output, `${name}.output`),
+      cells,
+      ...(button ? { button: { x: int(button.x, `${name}.button.x`), z: int(button.z, `${name}.button.z`) } } : {}),
+    };
   });
   /** The conveyor of each belt unit (by unit index). */
   const beltOfUnit = new Map<number, number>();
@@ -324,6 +332,13 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       if (blocked.has(k) || doorCells.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
       blocked.add(k);
     }
+    // Its button (H2): an obstacle on a cell of its own.
+    if (belt.button) {
+      const k = cellKey(belt.button);
+      if (!inBounds(belt.button.x, belt.button.z)) fail(`${name}.button leaves the warehouse at ${k}`);
+      if (blocked.has(k) || doorCells.has(k)) fail(`${name}.button overlaps another obstacle at ${k}`);
+      blocked.add(k);
+    }
     // Its input and end exit stand on the belt (docs/CONVEYOR.md): their slots at its height next to each.
     const ends = beltEndLevels(belt);
     beltBases.set(input, ends.input);
@@ -357,6 +372,12 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       if (!inBounds(front.x, front.z) || blocked.has(cellKey(front)))
         fail(`${names[u]} column ${j} has no room in front: cell ${front.x},${front.z} is a wall, a shelf, a plant or another rack`);
     });
+  });
+  // A belt's button (docs/CONVEYOR.md H2) is pressed facing it from a floor cell beside it: one free side at least.
+  conveyors.forEach((belt, i) => {
+    const b = belt.button;
+    if (b && buttonFrontsOf(b, (x, z) => inBounds(x, z) && !blocked.has(cellKey({ x, z }))).length === 0)
+      fail(`conveyors[${i}].button at ${b.x},${b.z} has no free floor beside it to be pressed from`);
   });
   // Access `door`: every dock door has a guard rail at each end of its run (core/docks dockRailsOf, never written in a
   // .level), and the cell just past that end along the wall, behind the rail, holds a static obstacle (a plant, a shelf

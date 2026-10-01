@@ -14,18 +14,21 @@ const VEHICLE_KEYS = GAME_CONFIG.controls.keyboardMapping === 'vehicle';
 /**
  * Control hint, bottom center: on screen the whole time a level is played, in every level (it never fades out on its
  * own). The move row (drive, pick / drop, zoom) and, in levels with storage (`storage`: racks, trucks; the forks go by
- * the keys at every unit), the fork row under it, in one soft panel. It reserves the bottom band up to its top edge:
- * the camera frames the level above it.
+ * the keys at every unit), the fork row under it, in one soft panel. In a level with a belt button (`beltButton`,
+ * docs/CONVEYOR.md H2) the action also presses: «recoger / dejar / pulsar». It reserves the bottom band up to its top
+ * edge: the camera frames the level above it.
  */
 export function ControlHint({ store, show }: { store: Store<UIState>; show: boolean }) {
   const storage = useStore(store, (s) => s.storage);
-  // On its way out (to the title, whose level may differ) it keeps the rows it showed.
+  const beltButton = useStore(store, (s) => s.beltButton);
+  // On its way out (to the title, whose level may differ) it keeps the rows and the words it showed.
   const forkRow = useFrozen(storage, !show);
+  const press = useFrozen(beltButton, !show);
   const reserveBottom = useReservedArea<HTMLDivElement>('bottom');
   return (
     <Presence show={show} className="hint-layer" exitMs={HINT_EXIT_MS}>
       <div ref={reserveBottom} className={`hint ui-enter ui-enter--d4${forkRow ? ' hint--rows' : ''}`} role="note">
-        <MoveRow />
+        <MoveRow press={press} />
         {forkRow && <ForkRow />}
       </div>
     </Presence>
@@ -40,7 +43,8 @@ function Sep() {
   );
 }
 
-function MoveRow() {
+/** `press`: the level has a belt button, so the action also presses it (docs/CONVEYOR.md H2). */
+function MoveRow({ press }: { press: boolean }) {
   return (
     <p className="hint__row">
       {VEHICLE_KEYS ? (
@@ -75,7 +79,7 @@ function MoveRow() {
       <Sep />
       <span className="hint__group">
         <Keycap wide>Espacio</Keycap>
-        recoger / dejar
+        {press ? 'recoger / dejar / pulsar' : 'recoger / dejar'}
       </span>
       <Sep />
       <ZoomGroup />

@@ -23,7 +23,12 @@
  * level-1 slot), and the belt brings it there; then, as at any unit standing above the floor (docs/STORAGE.md «Nivel
  * base»: F / V do nothing while the tines reach over it), it backs straight out to the cell it came from and only there
  * lowers the forks with V. While the box is on its way the planner already sees it in the end exit (liveStacks), and
- * the next move at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
+ * the next move at that belt (or the end of the level) waits for the belt to deliver it, as a player would. A box lifted
+ * off such a unit (a belt's input: one waiting there, its end exit full, or one its button brought back) is reached the
+ * same way: one cell short, F there (the tines still outside), then in under it. A move the plan makes «from» a belt's
+ * end exit (H2) is its button first: the forklift drives to a cell beside the button (straight in from the cell behind
+ * it when it can, so it never turns its tines into the table), faces it, presses the action (no move), waits for the
+ * belt to bring the box back and then lifts it off the input as above.
  */
 import { angleDelta } from '../core/math';
 import { FACING_X, FACING_Z } from '../core/racks';
@@ -48,17 +53,19 @@ import {
 import { GameState } from '../logic/GameState';
 
 const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
+const NO_POSES: ReadonlySet<number> = new Set();
 
 /**
  * Live stacks from the snapshot (resting boxes by position — floor cell or storage position — ordered by level). A
  * stored box names its storage level (`slotId`, any skin): the position it rests on (a shelf; a stack column, whatever
  * the level). A box on its way down a conveyor belt (settling on its input, riding it: still in the input's slot) is
- * where the model puts it: in its belt's end exit (`feeds`).
+ * where the model puts it: in its belt's end exit (`feeds`). One its button sends back (H2) is already in the input's
+ * slot, where it ends.
  */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
   const onItsWay = new Set<string>();
-  for (const belt of snap.conveyors) if (belt.boxId !== null) onItsWay.add(belt.boxId);
+  for (const belt of snap.conveyors) if (belt.boxId !== null && belt.direction > 0) onItsWay.add(belt.boxId);
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
   for (const b of resting) {
     const pos = b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z);
@@ -79,7 +86,12 @@ function planMoves(level: LevelData, grid: LevelGrid, stacks0: Stacks, forklift:
   );
 }
 
-function emptyPath(grid: LevelGrid, occ: Int16Array, from: number, to: number): number[] | null {
+/**
+ * The shortest empty drive from cell `from` to `to`, never stepping onto the front cell of a unit standing above the
+ * floor while heading into it (`closed`, poses cell * 4 + dir: a belt's input on its table): with the forks down its
+ * tines meet the table's face there (docs/STORAGE.md «Nivel base»), so the forklift would stop short of the cell.
+ */
+function emptyPath(grid: LevelGrid, occ: Int16Array, from: number, to: number, closed: ReadonlySet<number> = NO_POSES): number[] | null {
   const parent = new Int32Array(grid.cellCount).fill(-2);
   parent[from] = -1;
   const queue = [from];
@@ -88,7 +100,7 @@ function emptyPath(grid: LevelGrid, occ: Int16Array, from: number, to: number): 
     if (c === to) break;
     for (let d = 0; d < 4; d++) {
       const n = grid.step(c, d);
-      if (n >= 0 && parent[n] === -2 && isFree(grid, occ, n)) {
+      if (n >= 0 && parent[n] === -2 && isFree(grid, occ, n) && !closed.has(n * 4 + d)) {
         parent[n] = c;
         queue.push(n);
       }
@@ -307,6 +319,18 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
    * column, the top box's or the one the box lands at), or null off storage.
    */
   const slotAt = (pos: number, height: number): StorageSlotRef | null => (grid.isStorage(pos) ? slots[grid.slotAt(pos, height)] : null);
+  /**
+   * The front cells of the units standing above the floor (a belt's input), entered heading into the unit (poses
+   * cell * 4 + dir): an empty drive never takes that step with the forks down (emptyPath); it stops one cell short.
+   */
+  const closed = new Set<number>();
+  const raisedFronts = new Set<number>();
+  for (const column of grid.columns) {
+    if (column.ref.baseLevel <= 0 || column.ref.unit.access.kind !== 'front') continue;
+    const front = grid.index(column.ref.front.x, column.ref.front.z);
+    closed.add(front * 4 + grid.inward[column.positions[0]]);
+    raisedFronts.add(front);
+  }
   let moves = 0;
   let queue: Move[] = opening.slice();
   /** Stacks the remaining plan expects; any mismatch with the live state triggers a replan. */
@@ -333,7 +357,8 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
       if (!chain) continue;
       const liftedOcc = occ[plan.from];
       if (floorFrom) occ[plan.from] = 0;
-      const path = emptyPath(grid, occ, fcell, s >> 2);
+      // Up to a unit standing above the floor the last step heads into it: the drive stops one cell short there.
+      const path = emptyPath(grid, occ, fcell, s >> 2, raisedFronts.has(s >> 2) ? NO_POSES : closed);
       if (floorFrom) occ[plan.from] = liftedOcc;
       if (!path) continue;
       const after = exact !== undefined;
@@ -342,8 +367,61 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     }
     return best;
   };
-  /** The move works at a conveyor belt: onto its input, into its end exit (through the input) or off its input. */
-  const atBelt = (move: Move) => grid.feeds[move.drop] >= 0 || grid.fedBy[move.drop] >= 0 || grid.feeds[move.from] >= 0;
+  /**
+   * The move works at a conveyor belt: onto its input, into its end exit (through the input), off its input or out of
+   * its end exit (its button).
+   */
+  const atBelt = (move: Move) => grid.feeds[move.drop] >= 0 || grid.fedBy[move.drop] >= 0 || grid.feeds[move.from] >= 0 || grid.fedBy[move.from] >= 0;
+  /** Each belt's end exit (its position) with a button (H2): the belt's id and the button's cell. */
+  const buttons = new Map<number, { id: string; cell: number }>();
+  for (const belt of level.conveyors ?? []) {
+    const exit = slots.find((s) => s.unit.id === belt.output);
+    if (belt.button && exit) buttons.set(grid.positionOfSlot(exit.id), { id: belt.id, cell: grid.index(belt.button.x, belt.button.z) });
+  }
+  /**
+   * H2: press the button of the belt whose end exit is `exit` and wait for the belt to bring its box back to its input.
+   * The forklift drives to a cell beside the button, the shortest way that ends straight in from the cell behind it (so
+   * it never turns there, its tines sweeping into a table: docs/CONVEYOR.md decision U), else any; faces the button and
+   * presses the action. Null when done, else why not.
+   */
+  const pressButton = (exit: number): string | null => {
+    const button = buttons.get(exit);
+    if (!button) return 'no button';
+    const snap = pilot.snap;
+    const occ = occupancyOf(grid, liveStacks(grid, snap));
+    const fc = worldToCell(snap.forklift.pos, level.size);
+    const fcell = grid.index(fc.x, fc.z);
+    let best: { path: number[]; dir: number; cost: number } | null = null;
+    for (const cell of grid.pressFrom[exit]) {
+      if (!isFree(grid, occ, cell)) continue;
+      const dir = [0, 1, 2, 3].find((d) => grid.step(cell, d) === button.cell)!;
+      const behind = grid.step(cell, (dir + 2) % 4);
+      const toBehind = behind >= 0 && isFree(grid, occ, behind) ? emptyPath(grid, occ, fcell, behind, closed) : null;
+      const straight = toBehind ? [...toBehind, cell] : null;
+      const path = straight ?? emptyPath(grid, occ, fcell, cell, closed);
+      if (!path) continue;
+      // A path that turns on the cell itself costs a little more than one that comes in straight.
+      const cost = path.length + (straight ? 0 : 2);
+      if (!best || cost < best.cost) best = { path, dir, cost };
+    }
+    if (!best) return 'no cell beside its button to press it from';
+    const pts = corners(grid, best.path);
+    const here = snap.forklift.pos;
+    if (pts.length > 1 && Math.hypot(pts[0].x - here.x, pts[0].z - here.z) < 0.6) pts.shift();
+    if (!pilot.follow(pts)) return 'stuck driving to its button';
+    if (!pilot.face(best.dir)) return 'cannot face its button';
+    // Facing it, the hint names it (as a box under the forks would be targeted): nudge on until it does.
+    let t = 0;
+    while (pilot.snap.hint.button !== button.id) {
+      pilot.tick(DIR_X[best.dir] * 0.25, DIR_Z[best.dir] * 0.25);
+      if ((t += pilot.dt) > 3) return `its button is never aimed at (hint ${pilot.snap.hint.button ?? 'none'})`;
+    }
+    const pressed = pilot.tick(0, 0, true).find((e) => e.type === 'beltButton');
+    if (!pressed || pressed.type !== 'beltButton') return 'the press did nothing';
+    if (!pressed.accepted) return `the press was refused (${pressed.reason})`;
+    log?.(`  button of ${button.id}: ${pressed.boxId} comes back from ${pressed.fromSlotId}`);
+    return pilot.waitForBelts() ? null : 'the belt never brought its box back';
+  };
   for (let iter = 0; iter < 80; iter++) {
     const snap = pilot.snap;
     if (snap.completed) return { solved: true, seconds: pilot.seconds, moves, note: '', events: pilot.events, controls: pilot.controls, snapshot: snap };
@@ -368,6 +446,19 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
     // The forklift may have ended in another region than the plan expected: plan again from here.
     if (!found && replan()) found = route(stacks, fcell, queue[0]);
     const plan = queue.shift()!;
+    const input = grid.fedBy[plan.from];
+    if (input >= 0) {
+      // Out of a belt's end exit (H2): its button brings the box back to the input first (no move), and the move goes on
+      // from there, the box lifted off the input.
+      if (!found) return fail(`no executable route for the box at ${plan.from}`);
+      log?.(`move ${moves + 1}: the button of the belt of ${slots[grid.slotAt(plan.from)].id}`);
+      const refused = pressButton(plan.from);
+      if (refused) return fail(refused);
+      queue.unshift({ ...plan, from: input });
+      expected = lift(stacks, plan.from);
+      expected[input] += stacks[plan.from].slice(-1);
+      continue;
+    }
     const from = plan.from;
     const lifted = lift(stacks, from);
     expected = lifted.slice();
@@ -397,8 +488,17 @@ export function autopilot(level: LevelData, dt: number, opening: readonly Move[]
       `move ${moves + 1}: ${box.id} ${cellText(from)} → ${cellText(plan.drop)}${plan.after === undefined ? '' : ` (then ${cellText(plan.after)}${found.after ? '' : ', elsewhere'})`}` +
         ` · chain ${bestChain.map((p) => `${cellText(p >> 2)}${'ESWN'[p & 3]}`).join(' ')}`,
     );
-    // 1) drive empty to the approach cell
-    const pts = corners(grid, bestEmpty);
+    // 1) drive empty to the approach cell; off a unit standing above the floor (a belt's input on its table,
+    // docs/STORAGE.md «Nivel base»), to the cell behind its front instead, one cell short: the forks go up there, the
+    // tines still outside (below its top they would meet its face), and then in.
+    let approach = bestEmpty;
+    if (pickSlot && baseLevelOf(pickSlot.unit) > 0) {
+      const behind = grid.index(pickSlot.front.x + FACING_X[pickSlot.facing], pickSlot.front.z + FACING_Z[pickSlot.facing]);
+      const occ = occupancyOf(grid, stacks);
+      const short = approach.at(-2) === behind ? approach.slice(0, -1) : isFree(grid, occ, behind) ? emptyPath(grid, occ, fcell, behind, closed) : null;
+      if (short) approach = short;
+    }
+    const pts = corners(grid, approach);
     const here = snap.forklift.pos;
     if (pts.length > 1 && Math.hypot(pts[0].x - here.x, pts[0].z - here.z) < 0.6) pts.shift();
     if (!pilot.follow(pts)) return fail(`stuck driving to ${box.id}`);

@@ -224,6 +224,22 @@ describe('Overlay', () => {
     }
   });
 
+  it('control hint: in a level with a belt button (H2) the action also presses: «recoger / dejar / pulsar», only there', () => {
+    const SPACE = '<kbd class="keycap keycap--wide">Espacio</kbd>';
+    const button = render({ screen: 'playing', storage: true, beltButton: true });
+    expect(button).toContain(`${SPACE}recoger / dejar / pulsar</span>`);
+    // Still one move row and the fork row under it: the same groups, one word more.
+    expect(button.match(/class="hint__row"/g)).toHaveLength(2);
+    expect(button.match(/pulsar/g)).toHaveLength(1);
+    // Every other level: as before.
+    for (const patch of [{ storage: true }, {}] as const) {
+      const html = render({ screen: 'playing', ...patch });
+      expect(html).toContain(`${SPACE}recoger / dejar</span>`);
+      expect(html).not.toContain('pulsar');
+    }
+    for (const screen of ['title', 'complete'] as const) expect(render({ screen, storage: true, beltButton: true })).not.toContain('pulsar');
+  });
+
   it('never advertises the gamepad: no pad buttons or "mando" in the hint, on the title or on the card', () => {
     const screens: Partial<UIState>[] = [
       { screen: 'title', levels },

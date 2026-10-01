@@ -165,8 +165,18 @@ export class AudioEngine {
           rt.sfx.tick(event.boxId === this.droppedBoxId ? now + DROP_LAND_SEC + RELEASE_AFTER_LAND_SEC : now, 'release');
           break;
         case 'beltStarted':
-          // Conveyor belts (docs/CONVEYOR.md): the belt's soft electric hum for its whole run, easing in and out with it.
+          // Conveyor belts (docs/CONVEYOR.md): the belt's soft electric hum for its whole run, easing in and out with it
+          // (the same either way: its button's run back too).
           rt.sfx.beltHum(now, event.runSec, event.rampSec);
+          break;
+        case 'beltButton':
+          // Its button (H2): the cap's soft click; with nothing it can do, a duller one and a short muted «no».
+          if (event.accepted) rt.sfx.buttonClick(now);
+          else rt.sfx.buttonRefused(now);
+          break;
+        case 'beltReturned':
+          // The box its button sent back comes to rest on the input: the rubber tup (now: it slid in, no glide).
+          rt.sfx.beltDrop(now);
           break;
         case 'beltDelivered': {
           // The box comes to rest in the end exit (sliding in: no drop glide to wait for): the soft knock now, the chime

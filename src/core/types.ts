@@ -256,7 +256,9 @@ export interface ConveyorCell {
  * A conveyor belt (docs/CONVEYOR.md): a straight run of belt cells from its input, a storage unit of skin `beltIn`
  * (a 1×1 «libre» unit loaded from its front, the side away from the belt, at the belt's height: a rack's level-1 slot
  * for a floor belt), to its end exit, a unit of skin `beltOut` (a 1×1 unit with a cue or «libre», access `belt`: only
- * the belt fills it), at the belt's height too. A box set down on the input rides the belt into the end exit.
+ * the belt fills it), at the belt's height too. A box set down on the input rides the belt into the end exit. Its
+ * button (H2), if it has one, runs it in reverse: the last box that reached its exit without being locked there comes
+ * back to its input.
  */
 export interface LevelConveyor {
   /** c1, c2… in the order of the inputs (generated), or the belt's own. */
@@ -266,6 +268,12 @@ export interface LevelConveyor {
   output: string;
   /** Its belt cells in order, from the one next to the input to the one next to the end exit (at least one). */
   cells: ConveyorCell[];
+  /**
+   * Its button (docs/CONVEYOR.md, H2): a map cell of its own, an obstacle (a mushroom cap on a post, in the belt's
+   * identity colour), pressed with the action from a free floor cell beside it, facing it. Omitted = no button (at most
+   * one per belt).
+   */
+  button?: CellPos;
 }
 
 export interface LevelData {
@@ -516,8 +524,9 @@ export interface StorageHint {
 }
 
 /**
- * What a conveyor belt is doing (docs/CONVEYOR.md): `idle` (nothing on it, or a box waiting on its input because its
- * end exit is full), `settling` (a box just set down on its input, about to ride) or `running` (carrying it).
+ * What a conveyor belt is doing (docs/CONVEYOR.md): `idle` (nothing on it, a box waiting on its input because its end
+ * exit is full, or one its button brought back), `settling` (a box just set down on its input about to ride, or its
+ * button just pressed: the box at its exit about to ride back) or `running` (carrying it, either way: `direction`).
  */
 export type ConveyorPhase = 'idle' | 'settling' | 'running';
 
@@ -526,15 +535,43 @@ export interface ConveyorState {
   /** Its LevelConveyor id. */
   id: string;
   phase: ConveyorPhase;
-  /** The box settling on its input or riding it, else null (a box merely waiting on the input is not on its way). */
+  /**
+   * The box settling on its input or riding it (either way), else null (a box merely resting on the input or at an
+   * exit is not on its way).
+   */
   boxId: string | null;
-  /** 0‥1 along its path while running (0 = the input's centre, 1 = the end exit's); 0 otherwise. */
+  /**
+   * 0‥1: where the box is along its path while running (0 = the input's centre, 1 = the end exit's), from 0 up going
+   * forward, from 1 down going back; 0 otherwise.
+   */
   progress: number;
   /** Its surface is moving (phase `running`): its stripes slide. */
   running: boolean;
-  /** Distance (cells) its surface has moved since the level started, never going back: the stripes slide by it. */
+  /**
+   * Which way it runs, or is about to (H2): 1 forward, from its input to its exit; −1 in reverse, its button bringing a
+   * box back to its input. 1 at rest.
+   */
+  direction: 1 | -1;
+  /**
+   * Distance (cells) its surface has moved since the level started, signed: forward adds, in reverse it goes back. The
+   * stripes slide by it, so they slide backwards while it returns a box.
+   */
   travel: number;
+  /**
+   * Its button (H2; always 0 without one): every press so far, and of those the accepted ones (the belt ran back). The
+   * render dips the cap on each press and glows on an accepted one.
+   */
+  presses: number;
+  accepted: number;
 }
+
+/**
+ * Why a press of a belt's button did nothing (docs/CONVEYOR.md H2; GameEvent `beltButton`), checked in this order:
+ * `busy` = a box settling or riding on it; `input` = a box resting on its input (the one coming back needs its slot);
+ * `forks` = the tines or the carried load reach into its input; `nothing` = no box to bring back (none rests at one of
+ * its exits without being locked there).
+ */
+export type BeltButtonRefusal = 'busy' | 'input' | 'forks' | 'nothing';
 
 /** Guidance the render layer uses to teach through design (no text). */
 export interface InteractionHint {
@@ -551,6 +588,12 @@ export interface InteractionHint {
   dropLevel: number;
   /** Levels with storage: the column worked at and the level chosen there (StorageHint), else null (always without). */
   storage: StorageHint | null;
+  /**
+   * Levels with a belt button (docs/CONVEYOR.md H2; absent in every other level, so their hint is as it always was): the
+   * id of the belt whose button the action presses now (the forklift faces it, within reach), else null. While it is
+   * set nothing is picked or dropped: the action is the press.
+   */
+  button?: string | null;
 }
 
 export interface GameSnapshot {
@@ -673,9 +716,10 @@ export type GameEvent =
     }
   /**
    * Conveyor belts (docs/CONVEYOR.md): belt `conveyorId` starts carrying `boxId` from its input (the box has settled
-   * there). The run lasts `runSec`, easing in and out over `rampSec` at each end: the audio's hum follows it.
+   * there), or with `reverse` (H2: its button) back from its exit to its input. The run lasts `runSec`, easing in and
+   * out over `rampSec` at each end: the audio's hum follows it. `reverse` is absent on a forward run.
    */
-  | { type: 'beltStarted'; conveyorId: string; boxId: string; runSec: number; rampSec: number }
+  | { type: 'beltStarted'; conveyorId: string; boxId: string; runSec: number; rampSec: number; reverse?: boolean }
   /**
    * The box reached the belt's end exit and rests in its slot (`slotId`, of a unit of skin `skin`): no box move (the
    * move counter counted the drop on the input). `correct` = that slot is now satisfied (its destined box, which locks
@@ -700,6 +744,20 @@ export type GameEvent =
    * the soft wrong-target buzz says so (after its boxDropped, in the same frame). Nothing visual.
    */
   | { type: 'beltBlocked'; conveyorId: string; boxId: string }
+  /**
+   * The action pressed the button of belt `conveyorId` (docs/CONVEYOR.md H2: facing it; empty forks or carrying). No box
+   * move. Accepted: the belt runs in reverse (after CONVEYOR.pressSec: beltStarted with `reverse`) and brings `boxId`,
+   * the last box that reached one of its exits without being locked there (from slot `fromSlotId`), back to its input
+   * (beltReturned). Refused (`reason`: BeltButtonRefusal): nothing moves, a soft «no».
+   */
+  | { type: 'beltButton'; conveyorId: string; accepted: true; boxId: string; fromSlotId: string }
+  | { type: 'beltButton'; conveyorId: string; accepted: false; reason: BeltButtonRefusal }
+  /**
+   * The box the button of belt `conveyorId` sent back rests on its input again (`slotId`, a unit of skin `skin`, at
+   * `level`), a box like any other there: pickable at that level. No box move, no target: «Quedan N» and the progress
+   * stay as they were.
+   */
+  | { type: 'beltReturned'; conveyorId: string; boxId: string; slotId: string; skin: StorageSkin; level: number }
   | { type: 'levelComplete' };
 
 export type GameEventType = GameEvent['type'];

@@ -1,12 +1,14 @@
-import { BufferAttribute, BufferGeometry, Mesh, Sphere, Vector3, type Material } from 'three';
+import { BufferAttribute, BufferGeometry, Mesh, Sphere, Vector3, type Material, type MeshStandardMaterial } from 'three';
+import { damp, easeInOutSine, easeOutCubic } from '../../core/math';
 import type { Placement } from '../paint';
-import { BELT } from '../builders/conveyor';
+import { BELT, BELT_BUTTON } from '../builders/conveyor';
 
 /**
  * The white stripes across a conveyor belt's band (docs/CONVEYOR.md): thin bands that slide along it with its surface,
  * only while it runs (so the box and the stripes move as one: the motion reads at a glance), clipped at both ends of
  * the band. One small geometry per belt whose vertices move in place: `sync(travel)` places them for the distance the
- * surface has moved (ConveyorState.travel, which never goes back); nothing is allocated per frame.
+ * surface has moved (ConveyorState.travel, signed: while the belt runs back, H2, they slide backwards); nothing is
+ * allocated per frame.
  */
 export class BeltStripes {
   readonly mesh: Mesh;
@@ -76,5 +78,61 @@ export class BeltStripes {
     p[o] = (this.placement.x ?? 0) + this.cos * x + this.sin * z;
     p[o + 1] = y;
     p[o + 2] = (this.placement.z ?? 0) - this.sin * x + this.cos * z;
+  }
+}
+
+/**
+ * How a belt's button answers (H2, docs/CONVEYOR.md «Ajustes»), safe to tune: every press dips its cap BELT_BUTTON.dip
+ * (down in `downSec`, back up in `upSec`); an accepted one also lights it in its own colour (its emissive, up to
+ * `glowPeak` within `glowRise` s, faded out by `glowSec`). While the action would press it (hint.button) it glows
+ * faintly (`aimGlow`, eased at `aimRate`), as a box under the forks does.
+ */
+export const BUTTON_FEEL = { downSec: 0.08, upSec: 0.24, glowRise: 0.06, glowSec: 0.75, glowPeak: 0.55, aimGlow: 0.14, aimRate: 10 } as const;
+
+/**
+ * A belt's button on screen (H2): its cap (a mesh of its own, standing on its post) dips on every press of the button
+ * and glows briefly on an accepted one, following the belt's press counts (ConveyorState.presses / accepted): a level
+ * loaded or restarted shows it at rest, nothing replays. Its material is its own (its emissive, the cap's colour).
+ */
+export class BeltButton {
+  private presses = Number.NaN;
+  private accepted = Number.NaN;
+  /** Seconds since the last press and since the last accepted one (Infinity: none playing). */
+  private sincePress = Infinity;
+  private sinceAccepted = Infinity;
+  private aim = 0;
+
+  constructor(
+    readonly cap: Mesh,
+    private readonly material: MeshStandardMaterial,
+    /** World y of the cap at rest: the top of its post. */
+    private readonly restY: number,
+  ) {}
+
+  /** Every frame: its belt's press counts, whether the action presses it now (the hint aims at it). */
+  sync(presses: number, accepted: number, aimed: boolean, dt: number): void {
+    if (Number.isNaN(this.presses)) {
+      this.presses = presses;
+      this.accepted = accepted;
+    }
+    if (presses !== this.presses) {
+      this.presses = presses;
+      this.sincePress = 0;
+    } else this.sincePress += dt;
+    if (accepted !== this.accepted) {
+      this.accepted = accepted;
+      this.sinceAccepted = 0;
+    } else this.sinceAccepted += dt;
+    const F = BUTTON_FEEL;
+    // The dip: down quickly, up gently.
+    const t = this.sincePress;
+    const dip = t < F.downSec ? easeOutCubic(t / F.downSec) : t < F.downSec + F.upSec ? 1 - easeInOutSine((t - F.downSec) / F.upSec) : 0;
+    this.cap.position.y = this.restY - BELT_BUTTON.dip * dip;
+    // The glow of an accepted press, over the faint one while aimed at.
+    const g = this.sinceAccepted;
+    const glow = g < F.glowRise ? g / F.glowRise : g < F.glowSec ? (1 - (g - F.glowRise) / (F.glowSec - F.glowRise)) ** 2 : 0;
+    this.aim = damp(this.aim, aimed ? 1 : 0, F.aimRate, dt);
+    if (this.aim < 1e-3) this.aim = 0;
+    this.material.emissiveIntensity = Math.max(F.glowPeak * glow, F.aimGlow * this.aim);
   }
 }

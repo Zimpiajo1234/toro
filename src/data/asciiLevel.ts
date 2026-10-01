@@ -201,6 +201,8 @@ const BELT_PIECE_WORDS: Readonly<Record<string, ConveyorPiece>> = {
 };
 /** The map character of a floor belt cell in the canonical form (a level without belts never takes it). */
 const BELT_CHAR = '~';
+/** The map characters of the belts' buttons in the canonical form (H2), in order (a level without buttons takes none). */
+const BUTTON_CHARS = 'oO';
 const RACK_EXAMPLE = '«a = estantería frente sur: azul / ▲ + caja coral / libre»';
 /** A loading dock's truck (docs/DOCKS.md): «camión muelle norte: …». */
 const TRUCK_EXAMPLE = '«T = camión muelle norte: azul / ▲ | coral ●»';
@@ -389,6 +391,8 @@ interface LegendDef {
   beltEnd?: BeltEndSpec;
   /** A conveyor belt's cell: its piece. */
   beltCell?: { piece: ConveyorPiece };
+  /** A conveyor belt's button (H2): the id of its belt, when it names one. */
+  beltButton?: { id?: string; idPos?: Pos };
 }
 
 interface Header {
@@ -545,6 +549,8 @@ class LevelParser {
     const unitCells = new Map<string, Set<number>>();
     /** The cells of each conveyor belt character (its inputs, end exits and belt cells: docs/CONVEYOR.md). */
     const beltCells = new Map<string, Set<number>>();
+    /** The cells of each belt button character (H2). */
+    const buttonCells = new Map<string, Set<number>>();
     const plants: { x: number; z: number; variant?: number }[] = [];
     const cellsOf = new Map<string, { x: number; z: number }[]>();
     for (let z = 0; z < depth; z++) {
@@ -574,6 +580,10 @@ class LevelParser {
           const set = beltCells.get(ch) ?? new Set<number>();
           set.add(z * width + x);
           beltCells.set(ch, set);
+        } else if (def.beltButton) {
+          const set = buttonCells.get(ch) ?? new Set<number>();
+          set.add(z * width + x);
+          buttonCells.set(ch, set);
         } else if (def.plant) {
           plants.push({ x, z, ...(def.plant.variant === undefined ? {} : { variant: def.plant.variant }) });
         } else {
@@ -591,9 +601,11 @@ class LevelParser {
             ? unitCells.has(def.char)
             : def.beltEnd || def.beltCell
               ? beltCells.has(def.char)
-              : def.plant
-                ? rowsContain(rows, def.char)
-                : cellsOf.has(def.char);
+              : def.beltButton
+                ? buttonCells.has(def.char)
+                : def.plant
+                  ? rowsContain(rows, def.char)
+                  : cellsOf.has(def.char);
       if (!used) this.fail(def.pos, `«${def.char}» está en la leyenda pero no en el mapa`);
     }
 
@@ -644,6 +656,8 @@ class LevelParser {
     // own skins (beltIn, beltOut), placed below in STORAGE_SKIN_ORDER like every other unit.
     const belts = this.readBelts(legendOrder, beltCells, width, depth, cellPos);
     const beltUnitIds: { input: string; output: string }[] = belts.map(() => ({ input: '', output: '' }));
+    // Their buttons (H2): each on the belt its id names (the only belt, without one).
+    const buttons = this.readButtons(legendOrder, buttonCells, belts, width, cellPos);
     for (const skin of STORAGE_SKIN_ORDER) {
       const words = STORAGE_WORDS[skin];
       if (skin === 'beltIn' || skin === 'beltOut') {
@@ -798,6 +812,7 @@ class LevelParser {
       input: beltUnitIds[i].input,
       output: beltUnitIds[i].output,
       cells: belt.cells.map((c) => ({ x: c.x, z: c.z, piece: c.def.beltCell!.piece, height: FLOOR_BELT_LEVEL })),
+      ...(buttons[i] ? { button: buttons[i] } : {}),
     }));
     const raw = {
       id: idHeader.value,
@@ -1241,8 +1256,9 @@ class LevelParser {
   /**
    * A conveyor belt's legend entry (docs/CONVEYOR.md): «cinta» or «cinta suelo | rampa | techo» (a belt cell: the floor
    * piece unless another is named; validateLevel builds only the floor one so far), «cinta entrada [(id)]» (its input,
-   * «libre») or «cinta final [(id)]: pista» (its end exit: «libre», a colour, a symbol or both, like a storage level).
-   * The id names the belt; belts start empty («+ caja» never goes there). Side exits and the button come later.
+   * «libre»), «cinta final [(id)]: pista» (its end exit: «libre», a colour, a symbol or both, like a storage level) or
+   * «cinta botón [(id)]» (its button, H2: the id of its belt, which a level with one belt may leave out). The id names
+   * the belt; belts start empty («+ caja» never goes there). Side exits come later.
    */
   private readBelt(def: Omit<LegendDef, 'char' | 'pos'>, toks: Tok[]): void {
     const [head, word] = toks;
@@ -1257,11 +1273,22 @@ class LevelParser {
       def.beltCell = { piece };
       return;
     }
+    if (word.key === 'boton' || word.key === 'button') {
+      const button: NonNullable<LegendDef['beltButton']> = {};
+      let k = 2;
+      if (toks[k]?.kind === 'id') {
+        button.id = toks[k].text;
+        button.idPos = toks[k].pos;
+        k++;
+      }
+      if (toks[k]) this.fail(toks[k].pos, `«${toks[k].text}» sobra: el botón de una cinta se escribe «cinta botón», con el id de su cinta si hace falta («cinta botón (c2)»)`);
+      def.beltButton = button;
+      return;
+    }
     if (word.key !== 'entrada' && word.key !== 'final') {
       if (word.key === 'salida' || word.key === 'desvio')
         this.fail(word.pos, 'las salidas laterales de la cinta llegan en el siguiente hito: por ahora una cinta va recta de su entrada a su salida final');
-      if (word.key === 'boton') this.fail(word.pos, 'el botón de la cinta llega más adelante: por ahora una cinta va recta de su entrada a su salida final');
-      const options = ['entrada', 'final', 'suelo', 'rampa', 'techo'];
+      const options = ['entrada', 'final', 'botón', 'suelo', 'rampa', 'techo'];
       this.fail(word.pos, `«${word.text}» no es una pieza de cinta: usa «cinta» para sus casillas y ${BELT_EXAMPLE} para sus extremos${suggest(word.text, options)}`);
     }
     const role = word.key === 'entrada' ? 'entrada' : 'final';
@@ -1399,6 +1426,52 @@ class LevelParser {
       this.fail(def.beltEnd!.idPos ?? def.pos, `id de cinta repetido «${belt.id}»: lo lleva otra cinta (los ids de cinta sin paréntesis son c1, c2… por orden de sus entradas)`);
     });
     return read;
+  }
+
+  /**
+   * The belts' buttons on the map (docs/CONVEYOR.md H2), per belt (its index in `belts`): the cell of its button, or
+   * undefined. A button names its belt by its id («cinta botón (c2)»), which a level with one belt may leave out; one
+   * button per belt at most. Buttons in legend order, a character on several cells in reading order.
+   */
+  private readButtons(
+    legendOrder: readonly LegendDef[],
+    buttonCells: ReadonlyMap<string, ReadonlySet<number>>,
+    belts: readonly BeltRead[],
+    width: number,
+    cellPos: (x: number, z: number) => Pos,
+  ): ({ x: number; z: number } | undefined)[] {
+    const out: ({ x: number; z: number } | undefined)[] = belts.map(() => undefined);
+    const ids = belts.map((b) => `«${b.id}»`).join(', ');
+    for (const def of legendOrder) {
+      const spec = def.beltButton;
+      const cells = spec ? buttonCells.get(def.char) : undefined;
+      if (!spec || !cells) continue;
+      let belt = -1;
+      if (spec.id !== undefined) {
+        belt = belts.findIndex((b) => b.id === spec.id);
+        if (belt < 0)
+          this.fail(
+            spec.idPos ?? def.pos,
+            belts.length === 0
+              ? `el botón «${def.char}» es de la cinta «${spec.id}», y el nivel no tiene ninguna: pon la cinta (${BELT_EXAMPLE}) y el botón junto a su entrada`
+              : `ninguna cinta lleva el id «${spec.id}»: el botón lleva el id de su cinta (aquí ${ids})`,
+          );
+      } else if (belts.length === 1) belt = 0;
+      else
+        this.fail(
+          def.pos,
+          belts.length === 0
+            ? `el botón «${def.char}» no tiene cinta: un botón va con su cinta (${BELT_EXAMPLE}), junto a su entrada`
+            : `hay ${belts.length} cintas: el botón lleva el id de la suya, p. ej. «${def.char} = cinta botón (${belts[0].id})»`,
+        );
+      for (const c of [...cells].sort((a, b) => a - b)) {
+        const cell = { x: c % width, z: Math.floor(c / width) };
+        const other = out[belt];
+        if (other) this.fail(cellPos(cell.x, cell.z), `la cinta «${belts[belt].id}» ya lleva un botón (en la ${other.x},${other.z}): una cinta lleva uno como mucho`);
+        out[belt] = cell;
+      }
+    }
+    return out;
   }
 
   /**
@@ -1580,6 +1653,7 @@ function structuredCloneDef(def: Omit<LegendDef, 'char' | 'pos'>): Omit<LegendDe
     ...(def.unit ? { unit: { ...def.unit, access: { ...def.unit.access }, columns: cloneColumns(def.unit.columns) } } : {}),
     ...(def.beltEnd ? { beltEnd: { ...def.beltEnd, ...(def.beltEnd.cue ? { cue: { ...def.beltEnd.cue } } : {}) } } : {}),
     ...(def.beltCell ? { beltCell: { ...def.beltCell } } : {}),
+    ...(def.beltButton ? { beltButton: { ...def.beltButton } } : {}),
   };
 }
 
@@ -1850,6 +1924,11 @@ function explainValidation(message: string, ctx: ValidationContext): { pos: Pos;
       reason: `la cinta ${m[3] === 'rampa' ? 'en rampa' : 'de techo'} llega más adelante: por ahora solo se construye la cinta de suelo («~ = cinta»)`,
     };
   }
+  if ((m = /^conveyors\[(\d+)\]\.button at (-?\d+),(-?\d+) has no free floor beside it/.exec(message)))
+    return {
+      pos: ctx.cell(Number(m[2]), Number(m[3])),
+      reason: 'el botón de la cinta se pulsa de frente desde una casilla de suelo a su lado, y no le queda ninguna libre (paredes, muebles, plantas o la propia cinta): déjale sitio por algún lado',
+    };
   if ((m = /^beltInputs\[(\d+)\] column \d+ has no room in front: cell (-?\d+),(-?\d+)/.exec(message))) {
     const input = ctx.units.beltIn[Number(m[1])];
     return {
@@ -2135,6 +2214,14 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
       grid[cell.z][cell.x] = ch;
     }
   }
+  // Their buttons (H2): one character each, «o» first; the id of its belt only when the level has several.
+  const buttonEntries: RenderEntry[] = [];
+  for (const belt of belts) {
+    if (!belt.button) continue;
+    const ch = take(BUTTON_CHARS, used);
+    grid[belt.button.z][belt.button.x] = ch;
+    buttonEntries.push({ char: ch, text: belts.length > 1 ? `cinta botón (${belt.id})` : 'cinta botón', group: 'cinta' });
+  }
   /** Boxes that start stored: in a rack slot or loaded on a truck (the rest are floor boxes and stacks). */
   const isStored = (b: LevelData['boxes'][number]) => b.level !== undefined && storageCells.has(`${b.x},${b.z}`);
 
@@ -2211,10 +2298,11 @@ export function drawLevel(level: LevelData): { grid: string[][]; legend: string[
     };
     entries.push({ char: unitChars[u], text: unitText(unit, unit.id === generated ? null : unit.id, boxAt), group: unit.skin });
   });
-  // The belt cells' characters, once each, after the belts' ends: «~ = cinta».
+  // The belt cells' characters, once each, after the belts' ends: «~ = cinta»; then their buttons.
   if (belts.length > 0) {
     if (belts.some((belt) => belt.cells.some((cell) => cell.piece === 'suelo'))) entries.push({ char: BELT_CHAR, text: 'cinta', group: 'cinta' });
     for (const [piece, ch] of pieceChars) entries.push({ char: ch, text: `cinta ${piece}`, group: 'cinta' });
+    entries.push(...buttonEntries);
   }
 
   return { grid, legend: layoutLegend([...entries, ...legendTail]) };

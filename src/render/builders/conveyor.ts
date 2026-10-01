@@ -1,4 +1,4 @@
-import { Path, Shape, ShapeGeometry, Vector2, type BufferGeometry } from 'three';
+import { CylinderGeometry, Path, Shape, ShapeGeometry, SphereGeometry, Vector2, type BufferGeometry } from 'three';
 import { FACING_X, FACING_Z } from '../../core/racks';
 import { BASE_GUARD } from '../../core/storage';
 import { cellToWorld, type Facing, type LevelConveyor, type LevelData, type LevelStorage } from '../../core/types';
@@ -20,7 +20,8 @@ import { buildCueFace, buildGlowFrameGeometry, rectRingShape, type CueDims, type
  * the drop icon painted on it and closed black guards on its two sides (it is loaded from its front only). Its end exit
  * is the table's last stretch: a deck with the cue sticker of its level (the rack's, builders/rack buildCueFace) painted
  * flat on it and a low solid skirting in the belt's identity colour along its three open edges, never on the side
- * joined to the belt.
+ * joined to the belt. Its button (H2), on a cell of its own next to the input, is a mushroom cap in that same identity
+ * colour on a slim near-black post («una seta en un poste»): A and its button read as one.
  */
 
 /**
@@ -101,6 +102,23 @@ export const BELT_GLOW: GlowFrameDims & { halfH: number; lift: number } = {
 
 /** Success burst of an end exit (render/storage conveyor `burstAt`): its ring hugs the box resting on its deck. */
 export const BELT_BURST = { halfW: 0.44 } as const;
+
+/**
+ * A belt's button (H2; buildBeltButtonPost, buildBeltButtonCap), on a cell of its own next to its input: «una seta en
+ * un poste». A slim post on a small round foot in the table's near-black (Theme.conveyor.side) and, on top, a low
+ * mushroom cap in the belt's identity colour (its input's pad's and its end exit's skirting's: with several belts each
+ * button pairs with its own). Heights from the floor: the cap a little over the table top and its input's guards (it
+ * reads as the belt's), well under a box resting on the input; `dip` = how far the cap goes down when pressed
+ * (views/ConveyorView BeltButton). Low-poly: `segments` round.
+ */
+export const BELT_BUTTON = {
+  foot: { radius: 0.11, height: 0.025 },
+  post: { radius: 0.042, top: 0.84 },
+  /** The cap: its round `radius`, its whole `height` over the post, the straight `rim` under its dome. */
+  cap: { radius: 0.15, height: 0.075, rim: 0.02 },
+  dip: 0.03,
+  segments: 10,
+} as const;
 
 /**
  * Chosen-level marker on a belt's input (views/SlotMarker; render/storage conveyor `markerAt`): a thin rounded frame
@@ -266,6 +284,32 @@ export function buildBeltGlowGeometry(top: number): BufferGeometry {
   geo.translate(0, top + G.lift, 0);
   geo.computeBoundingSphere();
   return geo;
+}
+
+/**
+ * The post of a belt's button (BELT_BUTTON), in its cell-local space (origin = its cell's centre on the floor): a small
+ * round foot and a slim post up to under its cap, in the table's near-black. Static; it casts and takes shadows.
+ */
+export function buildBeltButtonPost(theme: Theme): BufferGeometry {
+  const { foot, post, segments } = BELT_BUTTON;
+  const color = theme.conveyor.side;
+  return new PartList()
+    .add(new CylinderGeometry(foot.radius, foot.radius, foot.height, segments), color, { y: foot.height / 2 })
+    .add(new CylinderGeometry(post.radius, post.radius, post.top - foot.height, segments), color, { y: (post.top + foot.height) / 2 })
+    .build();
+}
+
+/**
+ * The cap of a belt's button (BELT_BUTTON), in its own space (origin = the top of its post: the mesh stands there and
+ * dips from there when pressed): a short straight rim and a low dome over it, in `identity` (its belt's colour).
+ */
+export function buildBeltButtonCap(identity: string): BufferGeometry {
+  const { cap, segments } = BELT_BUTTON;
+  const dome = new SphereGeometry(cap.radius, segments, 3, 0, Math.PI * 2, 0, Math.PI / 2);
+  return new PartList()
+    .add(new CylinderGeometry(cap.radius, cap.radius, cap.rim, segments), identity, { y: cap.rim / 2 })
+    .add(dome, identity, { y: cap.rim, sy: (cap.height - cap.rim) / cap.radius })
+    .build();
 }
 
 /**

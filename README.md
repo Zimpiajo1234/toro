@@ -32,7 +32,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | W / ↑ | Avanzar (hacia donde mira la carretilla) |
 | S / ↓ | Marcha atrás |
 | A / ← · D / → | Girar a la izquierda · a la derecha (también parado; W + A avanza girando) |
-| Espacio | Recoger / dejar caja |
+| Espacio | Recoger / dejar caja; de frente al botón de una cinta, pulsarlo |
 | F / V · rueda del ratón | Delante de una estantería almacenable o de un camión: subir / bajar la horquilla un hueco o un nivel (un paso de rueda = uno; fuera de ellos la horquilla es automática) |
 | Q / E | Girar cámara (la conducción W/S/A/D no cambia) |
 | + / − (teclado principal o numérico) · pellizcar | Acercar / alejar la cámara (mantener = zoom continuo, un toque = un paso pequeño; ver **Zoom** abajo) |
@@ -219,12 +219,22 @@ mesa; nada sube solo). Con las púas dentro de la entrada **F / V no hacen nada*
 atrás y entonces baja la horquilla (nunca atraviesa la mesa). Se asienta un momento, la cinta arranca suave con un
 zumbido eléctrico, sus rayas se deslizan (solo mientras corre) y la caja viaja nivelada hasta el final de la mesa.
 Si es **su** caja, la salida brilla y la caja queda fija, como en un hueco; si no, suena el zumbido suave y la caja se
-queda allí (el botón que la devuelve llega en el próximo hito: R reinicia). **Una caja a la vez**: mientras viaja, la
-entrada no admite otra; con la salida ya llena, una caja dejada en la entrada se queda en ella (zumbido suave) y se
-puede volver a coger, con la horquilla en el nivel 1. Dejarla en la entrada cuenta un movimiento; el viaje, ninguno; y
-la caja sigue contando en «Quedan N» hasta que llega. Sin teclas nuevas. Hoy solo el Benchmark lleva una (de (8,2) a
-(8,0), junto a la estantería de madera del fondo); los niveles 1–3 no cambian. Detalle, decisiones e hitos:
-[docs/CONVEYOR.md](docs/CONVEYOR.md).
+queda allí hasta que pulsas el **botón**. **Una caja a la vez**: mientras viaja, la entrada no admite otra; con la
+salida ya llena, una caja dejada en la entrada se queda en ella (zumbido suave) y se puede volver a coger, con la
+horquilla en el nivel 1. Dejarla en la entrada cuenta un movimiento; el viaje, ninguno; y la caja sigue contando en
+«Quedan N» hasta que llega.
+
+El **botón** de la cinta es una **seta en un poste** junto a la entrada: el poste, del negro de la mesa; la seta, del
+**mismo color que la almohadilla de la entrada** (así se sabe de qué cinta es cuando hay varias). Ponte **de frente**
+a él, como delante de una columna de estantería, con la horquilla vacía o con una caja, y pulsa **Espacio**: la seta
+se hunde y se ilumina, la cinta corre **al revés** (las rayas hacia atrás, con el mismo zumbido) y **devuelve a la
+entrada la última caja mal puesta**, que vuelves a coger con la horquilla en el nivel 1. Pulsarlo y la vuelta cuentan
+**0 movimientos** y «Quedan N» no cambia. Solo funciona con la cinta parada, la entrada vacía y nada de la carretilla
+dentro de ella, y si hay algo que devolver (una caja que ya está en su sitio nunca vuelve); si no, la seta se hunde
+con un «no» suave y nada se mueve. En los niveles con botón la pista de controles dice «Espacio recoger / dejar /
+pulsar». Sin teclas nuevas. Hoy solo el Benchmark lleva una cinta (de (8,2) a (8,0), junto a la estantería de madera
+del fondo, con el botón en (7,2), a la izquierda de la entrada); los niveles 1–3 no cambian. Detalle, decisiones e
+hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
 
 ## Sonidos de la carretilla
 
@@ -243,7 +253,9 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
   parar; se ve también con el pitido quitado o el sonido en silencio.
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 - **Cinta**: un «tup» de goma al dejar la caja en su entrada, un zumbido eléctrico suave mientras corre (sube y baja
-  con ella) y un golpe suave al llegar al final de la mesa, con la campana si es su caja.
+  con ella) y un golpe suave al llegar al final de la mesa, con la campana si es su caja. Su botón: un clic mecánico
+  suave de la seta; si no puede hacer nada, un clic más sordo y un «no» corto y suave (nunca una alarma). La caja que
+  vuelve suena con el mismo zumbido y el «tup» al llegar a la entrada.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y
 `src/audio/sfx.ts`, listos para ajustar a oído.
@@ -274,7 +286,7 @@ Todos los valores están en tablas con nombre al principio de `src/audio/motor.t
   (de abajo arriba), `zona azul` / `zona ▲` / `zona azul ■` / `zona pila azul,menta`, combinaciones como
   `zona azul + caja coral`, `estantería 3 alturas`, las estanterías almacenables (`estantería frente sur: …`,
   [docs/RACKS.md](docs/RACKS.md)), los camiones (`camión muelle norte: …`, [docs/DOCKS.md](docs/DOCKS.md)) y las cintas
-  (`cinta entrada`, `cinta`, `cinta final: …`, [docs/CONVEYOR.md](docs/CONVEYOR.md)). El `id`
+  (`cinta entrada`, `cinta`, `cinta final: …`, `cinta botón`, [docs/CONVEYOR.md](docs/CONVEYOR.md)). El `id`
   guarda los mejores tiempos: no lo cambies. Se valida al
   cargar y en `npm test`; `npm run levels -- 25` enseña sus métricas (movimientos mínimos, extra, bloqueos…) y un plan,
   y `dificultad: extra>=2` fija objetivos que los tests comprueban. Añadir o quitar niveles: actualiza la lista

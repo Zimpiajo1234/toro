@@ -23,8 +23,10 @@
  * A level with conveyor belts (docs/CONVEYOR.md: the Benchmark since H1) also writes them: `storage.conveyors` (each
  * belt: its units and cells), `targets.counts.beltExits`, `metrics.belts`, `start.belts` (their live state) and, in
  * the autopilot logs, every delivery (`box input → end exit`, flagged ` (cinta)`); since H1b, the base level of a
- * belt's units (`baseLevel`, on its table) and the F / V presses at a belt's input (`forkStepsAt.beltIn`). A level
- * without belts writes none of these keys, so its sections stay as they were.
+ * belt's units (`baseLevel`, on its table) and the F / V presses at a belt's input (`forkStepsAt.beltIn`); since H2, a
+ * belt's button (` · botón x,z` on its belt's line), the autopilot's presses of it (`buttonPresses`, levels with a
+ * button only) and every box it brought back (`box end exit → input`, flagged ` (botón)`). A level without belts writes
+ * none of these keys, so its sections stay as they were.
  *
  * Regenerate (only for a deliberate rule change, as phase 6 did; never by hand):
  *   TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u
@@ -34,7 +36,7 @@
  */
 import type { BoxState, LevelData, StorageAccess, StorageSkin, ZoneCriteria } from '../core/types';
 import { STORAGE_SKINS, hasStorage, storageOf, storageSlotsOf } from '../core/storage';
-import { conveyorsOf, hasConveyors } from '../core/conveyors';
+import { conveyorsOf, hasBeltButtons, hasConveyors } from '../core/conveyors';
 import { assignmentsOf, levelDestinies, sortableOf, targetsOf, usesSymbols, zoneMatchKinds, type Sortable } from '../core/sorting';
 import { parseLevel } from '../data/asciiLevel';
 import { BENCHMARK_ID, getSpecialLevel } from '../data/levels';
@@ -85,7 +87,12 @@ export interface AutopilotView {
    */
   forkStepsAt: { rack: number; truck: number; beltIn?: number };
   reverseFrames: number;
-  /** Every box move, in order: `box from → to`, then ` ok n/total` (its target lit) or ` wrong` (the soft buzz). */
+  /** Presses of a belt's button (H2), accepted or not: levels with a belt button only. */
+  buttonPresses?: number;
+  /**
+   * Every box move, in order: `box from → to`, then ` ok n/total` (its target lit) or ` wrong` (the soft buzz); a
+   * belt's delivery flagged ` (cinta)` and the box its button brought back to the input ` (botón)`.
+   */
   log: string[];
 }
 
@@ -181,14 +188,15 @@ export function storageSection(level: LevelData): LevelCharacterization['storage
   });
   const slots = storageSlots.map((s) => `${s.id} cell ${cellText(s.cell)} front ${cellText(s.front)} ${s.facing} · ${cueText(s.cue)}`);
   if (!hasConveyors(level)) return { units, boxes, slots };
-  // Each belt: its input, its cells in order, its end exit, and the piece and height of every cell.
+  // Each belt: its input, its cells in order, its end exit, and the piece and height of every cell; its button (H2).
   const unitCell = (id: string) => {
     const unit = storageOf(level).find((u) => u.id === id);
     return unit ? `(${cellText(unit)})` : '(?)';
   };
   const conveyors = conveyorsOf(level).map(
     (belt) =>
-      `${belt.id} ${belt.input} ${unitCell(belt.input)} → ${belt.cells.map(cellText).join(' ')} → ${belt.output} ${unitCell(belt.output)} · ${belt.cells.map((c) => `${c.piece}@${c.height}`).join(' ')}`,
+      `${belt.id} ${belt.input} ${unitCell(belt.input)} → ${belt.cells.map(cellText).join(' ')} → ${belt.output} ${unitCell(belt.output)} · ${belt.cells.map((c) => `${c.piece}@${c.height}`).join(' ')}` +
+      (belt.button ? ` · botón ${cellText(belt.button)}` : ''),
   );
   return { units, boxes, slots, conveyors };
 }
@@ -297,6 +305,12 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
       where.set(e.boxId, e.slotId);
       continue;
     }
+    // Its button (H2): no move either, the belt brings the box back to its input.
+    if (e.type === 'beltReturned') {
+      log.push(`${e.boxId} ${where.get(e.boxId) ?? '?'} → ${e.slotId} (botón)`);
+      where.set(e.boxId, e.slotId);
+      continue;
+    }
     if (e.type !== 'boxDropped') continue;
     const floor = `${cellText(e.cell)}@${e.level}${e.zoneId === null ? '' : `[${e.zoneId}]`}`;
     const to = e.slotId ?? floor;
@@ -316,6 +330,7 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
       ...(hasConveyors(level) ? { beltIn: out.controls.forkStepsAt.beltIn } : {}),
     },
     reverseFrames: out.controls.reverseFrames,
+    ...(hasBeltButtons(level) ? { buttonPresses: out.events.filter((e) => e.type === 'beltButton').length } : {}),
     log,
   };
 }

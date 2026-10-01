@@ -19,7 +19,9 @@ nota: Cinta (docs/CONVEYOR.md): una mesa sobre una base cerrada negra (sin patas
 nota: Con las púas (o la caja) dentro de A, F / V no hacen nada y la carretilla no gira: se sale marcha atrás y entonces se baja la horquilla (nunca atraviesa la mesa).
 nota: B es el último tramo de la mesa, a la misma altura: su pista (coral ✚) va pintada encima y un rodapié bajo del color de la cinta (el de la almohadilla de A) lo rodea por los tres lados que no dan a la cinta.
 nota: El amarillo ● empieza delante de la entrada de la cinta: hay que apartarlo antes de usarla. El coral ✚ encaja también en la zona coral (zumba y se puede sacar): su sitio es la salida de la cinta.
-nota: Una caja equivocada que llega a B se queda allí con el zumbido (el botón que la devuelve llega más adelante): R reinicia. Con B lleno, una caja dejada en A se queda en A (zumbido) y se puede volver a coger, con la horquilla en el nivel 1.
+nota: Botón de la cinta «o» (7,2), junto a A por su barandilla oeste: una seta en un poste, la seta del mismo color que la almohadilla de A y el rodapié de B (son la misma cinta), el poste del negro de la mesa. Se pulsa con Espacio de frente, desde (7,3), (6,2) o (7,1), con la horquilla vacía o cargada.
+nota: Una caja equivocada que llega a B se queda allí con el zumbido hasta que se pulsa el botón: la cinta va al revés (las rayas hacia atrás) y devuelve a A la última caja mal puesta, que se vuelve a coger con la horquilla en el nivel 1. Pulsar y la vuelta no cuentan movimientos (el «Quedan N» no cambia). Solo funciona con la cinta parada, A vacía y nada de la carretilla dentro de A; si no, un «no» suave y nada se mueve. El mínimo (15) no lo necesita.
+nota: Con B lleno, una caja dejada en A se queda en A (zumbido) y se puede volver a coger, con la horquilla en el nivel 1 (mientras esté ahí, el botón no hace nada).
 nota: R mira a la cámara; S le da la espalda: sus pistas se leen por detrás (o girando con Q/E) y se carga rodeándola.
 nota: El lavanda ✚ está al fondo de un pasillo de una casilla: sale marcha atrás. El coral ◆ espera aparcado arriba en S.
 nota: Pila de suelo que deshacer (azul ▲ sobre lavanda ●) y estanterías de madera a una casilla de las almacenables, para comparar (el hueco deja ver las pistas laterales).
@@ -29,7 +31,7 @@ nota: La zona ▲ queda fuera de las filas de carga del camión (la de la puerta
   01234567890
 0 pTTpRR.#B..
 1 ......f.~..
-2 ........A2.
+2 .......oA2.
 3 ..1a....b..
 4 ...........
 5 ..#.SS.#.#.
@@ -45,3 +47,4 @@ R = estantería frente sur: menta + caja menta ◆ / ◆ + caja menta ▲ / libr
 S = estantería frente norte: libre / amarillo / lavanda ✚ | lavanda / libre / libre + caja coral ◆
 T = camión muelle norte: azul + caja amarillo ■ / ■ | amarillo ✚
 A = cinta entrada            B = cinta final: coral ✚     ~ = cinta
+o = cinta botón

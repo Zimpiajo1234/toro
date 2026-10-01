@@ -78,11 +78,13 @@ function coarseProblems(level: LevelData): string[] {
 function hiddenItems(level: LevelData): string[] {
   const grid = new LevelGrid(level);
   const stacks = stacksOf(grid, level);
+  // A belt's button (docs/CONVEYOR.md H2) is a slim post with a small cap, lower than a box: solid, yet it hides nothing.
+  const buttons = new Set((level.conveyors ?? []).flatMap((c) => (c.button ? [grid.index(c.button.x, c.button.z)] : [])));
   const blocks = (x: number, z: number, far: boolean) => {
     if (x >= grid.width || z >= grid.depth) return false;
     const cell = grid.index(x, z);
     const tallest = Math.max(stacks[cell].length, grid.steps[cell]?.length ?? 0);
-    return far ? tallest >= 3 : grid.solid[cell] === 1 || tallest >= 2;
+    return far ? tallest >= 3 : (grid.solid[cell] === 1 && !buttons.has(cell)) || tallest >= 2;
   };
   // Offsets never include the item's own cell, so boxes of a stack never hide each other or their zone.
   const near = [

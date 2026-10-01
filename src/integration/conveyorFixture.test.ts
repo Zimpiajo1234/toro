@@ -104,7 +104,7 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     expect(assignmentsOf(level.boxes.map(sortableOf), targets.map((t) => t.criteria), 2).count).toBe(1);
     const m = levelMetrics(level, { skipMoves: true });
     expect(m.sortings).toBe(1);
-    expect(m.belts).toEqual({ belts: 1, cells: 2, floor: 2, exits: 1, cued: 1 });
+    expect(m.belts).toEqual({ belts: 1, cells: 2, floor: 2, exits: 1, cued: 1, buttons: 0 });
     expect(parsed.targets.map((t) => t.metric)).toEqual(['movimientos', 'repartos', 'cinta']);
     const failed = checkLevelTargets(level, parsed.targets).filter((c) => !c.ok);
     expect(failed.map((c) => `${formatTarget(c.target)}: medido ${formatRange(c.range)}`)).toEqual([]);
@@ -172,6 +172,28 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     // Every drop or delivery lit its target, except the drop on the input («libre»: never a target, never a buzz).
     expect(drops(out.events).every((d) => !('wrongTarget' in d) && (d.correct || d.skin === 'beltIn'))).toBe(true);
     expect(out.snapshot.boxes.find((b) => b.id === 'b1')).toMatchObject({ slotId: 's1:0:1', level: 1, correct: true, locked: true });
+  });
+
+  it.each([
+    ['60 fps', 1 / 60],
+    ['20 fps (Game dt clamp)', 1 / 20],
+  ] as const)('%s: with B full a box set down on A stays there; the autopilot lifts it back off A (F one cell short, outside it) and finishes', (_, dt) => {
+    const exit = grid.positionOfSlot('s1:0:1');
+    const input = grid.positionOfSlot('e1:0:1');
+    // Blue ● into B (its destiny: locked there), then blue ■ onto A: B is full, so it waits on A.
+    const out = autopilot(level, dt, [
+      { from: grid.index(1, 3), drop: exit },
+      { from: grid.index(7, 5), drop: input },
+    ]);
+    expect(out.note).toBe('');
+    expect(out.solved).toBe(true);
+    expect(out.events.filter((e) => e.type === 'beltBlocked')).toEqual([{ type: 'beltBlocked', conveyorId: 'c1', boxId: 'b2' }]);
+    expect(out.events.filter((e): e is Extract<GameEvent, { type: 'boxPicked' }> => e.type === 'boxPicked' && e.fromSlotId === 'e1:0:1')).toEqual([
+      { type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' },
+    ]);
+    // No button here: nothing ever comes back from B.
+    expect(out.events.some((e) => e.type === 'beltButton' || e.type === 'beltReturned')).toBe(false);
+    expect([out.moves, out.snapshot.moves]).toEqual([4, 4]);
   });
 
   it('the render builds the belt as a table at level 1 on a closed base: its band, A\'s pad with its icon between its guards, B\'s deck with its cue painted flat and its low skirting', () => {

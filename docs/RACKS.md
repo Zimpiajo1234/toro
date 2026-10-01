@@ -204,11 +204,12 @@ Su fila dice `sound: 'metal'`:
   estantería de madera a una casilla de cada una para comparar. La trampa (el menta ◆ en el hueco «menta», que es del
   «◆» de encima), el hueco equivocado (el menta ▲ en el «◆»: se cambian aparcando uno en el hueco libre de arriba) y un
   coral ◆ aparcado arriba en S.
-- Medido (`npm run levels -- benchmark`, 2026-10-01, ya con la cinta): movimientos 15 (exacto), extra 2, bloqueos 5,
-  trampas 13, repartos 1, huecos 12 (6 con pista, 6 libres), camión 4 (3 con pista, 1 libre), cinta 1, estrechas 8,
-  libre 75 %, ambiguas 12, callejones 0 en 60 estados; sus 9 objetivos `dificultad:` se cumplen. Mínimo del contador
-  de movimientos: 15 (`levelMinimums.json`). Antes de la cinta: 14 movimientos, bloqueos 4, trampas 12, libre 78 %. La
-  mesa de la cinta (H1b, a nivel 1: su entrada se carga con F como un hueco de nivel 1) no cambió ninguna cifra.
+- Medido (`npm run levels -- benchmark`, 2026-10-01, ya con la cinta y su botón): movimientos 15 (exacto), extra 2,
+  bloqueos 5, trampas 13, repartos 1, huecos 12 (6 con pista, 6 libres), camión 4 (3 con pista, 1 libre), cinta 1 (1
+  botón), estrechas 9, libre 74 %, ambiguas 12, callejones 0 en 60 estados; sus 9 objetivos `dificultad:` se cumplen.
+  Mínimo del contador de movimientos: 15 (`levelMinimums.json`). Antes de la cinta: 14 movimientos, bloqueos 4, trampas
+  12, libre 78 %. La mesa de la cinta (H1b, a nivel 1: su entrada se carga con F como un hueco de nivel 1) no cambió
+  ninguna cifra; su botón (H2, en (7,2), junto a A) es una casilla más ocupada: estrechas 8 → 9 y libre 75 % → 74 %.
 - **Entrada**: botón «Benchmark» del pie del título, junto al interruptor, solo con el Modo prueba encendido
   (`GameActions.startBenchmark()`; sin Modo prueba la acción no hace nada). Es un botón normal: Tab lo alcanza y
   Enter / Espacio lo pulsan. En el título el mando solo tiene A / Start = «Continuar» (igual que para los puntos de

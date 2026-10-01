@@ -1,8 +1,8 @@
 /**
  * Conveyor belts (docs/CONVEYOR.md), the shared geometry: a level's belts (`level.conveyors`), each a straight run of
  * belt cells from its input (a storage unit of skin `beltIn`) to its end exit (one of skin `beltOut`), both units of the
- * shared storage model (docs/STORAGE.md). Validation, logic, the level solver and the render all read a belt through
- * these. Pure.
+ * shared storage model (docs/STORAGE.md), and its button (H2: `LevelConveyor.button`, a cell of its own). Validation,
+ * logic, the level solver and the render all read a belt through these. Pure.
  */
 import type { CellPos, LevelConveyor, LevelData, LevelStorage } from './types';
 import { storageOf } from './storage';
@@ -58,3 +58,30 @@ export function beltPathOf(level: Pick<LevelData, 'storage'>, conveyor: LevelCon
 export function conveyorOfUnit(level: Pick<LevelData, 'conveyors'>, unitId: string): number {
   return conveyorsOf(level).findIndex((c) => c.input === unitId || c.output === unitId);
 }
+
+/**
+ * Some belt of the level has a button (docs/CONVEYOR.md H2): the action also presses (the control hint says so, and
+ * the snapshot's hint names the button aimed at).
+ */
+export function hasBeltButtons(level: Pick<LevelData, 'conveyors'>): boolean {
+  return conveyorsOf(level).some((c) => c.button !== undefined);
+}
+
+/**
+ * The cells a belt's button is pressed from: its four neighbours (east, south, west, north) for which `free` holds (a
+ * floor cell of the map with no static obstacle: validateLevel asks for one at least). The forklift stands there,
+ * facing the button.
+ */
+export function buttonFrontsOf(button: CellPos, free: (x: number, z: number) => boolean): CellPos[] {
+  const out: CellPos[] = [];
+  for (const [dx, dz] of BUTTON_SIDES) if (free(button.x + dx, button.z + dz)) out.push({ x: button.x + dx, z: button.z + dz });
+  return out;
+}
+
+/** A button's four sides, in grid direction order (east, south, west, north). */
+const BUTTON_SIDES = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+] as const;

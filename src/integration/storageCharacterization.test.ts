@@ -6,8 +6,9 @@
  * never the JSON. Phase 6 (the rule changes) regenerated it on purpose, with the command in storageCharacterization.ts,
  * which runs the last test below instead of the comparisons; so did the conveyor belt's H1 (docs/CONVEYOR.md: the
  * Benchmark gained a belt, its coral ✚ box and one target), H1b (the belt a table at level 1: its ends' slots and
- * base level, the F press at its input) and H1c (its closed base: the autopilot backs out of the input after the drop
- * and lowers the forks with V out there).
+ * base level, the F press at its input), H1c (its closed base: the autopilot backs out of the input after the drop
+ * and lowers the forks with V out there) and H2 (the belt's button beside its input: one more obstacle cell, the
+ * routes round it; the presses counted, none in the Benchmark's plan).
  */
 import { describe, expect, it } from 'vitest';
 import stored from './storageCharacterization.json';
@@ -52,8 +53,8 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
     // Its truck's second column: «amarillo ✚» and a «libre» level on top (phase 6, docs/STORAGE.md rule 7).
     expect(benchmark.storage.slots.filter((s) => s.startsWith('t1:1:'))).toEqual(['t1:1:0 cell 2,-1 front 2,0 south · yellow/cross', 't1:1:1 cell 2,-1 front 2,0 south · libre']);
     // Its conveyor belt (docs/CONVEYOR.md): one floor cell, a table at level 1 (H1b), from its «libre» input e1 to its
-    // end exit s1, both standing on it (their one slot at level 1).
-    expect(benchmark.storage.conveyors).toEqual(['c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1']);
+    // end exit s1, both standing on it (their one slot at level 1), and its button beside the input (H2).
+    expect(benchmark.storage.conveyors).toEqual(['c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1 · botón 7,2']);
     expect(benchmark.storage.units.filter((u) => u.baseLevel !== undefined).map((u) => [u.id, u.baseLevel])).toEqual([
       ['e1', 1],
       ['s1', 1],
@@ -65,6 +66,9 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
       expect(run.forkStepsAt.truck).toBeGreaterThan(0);
       expect(run.forkStepsAt.beltIn).toBe(2);
       expect(run.log.filter((line) => line.endsWith('(cinta)'))).toEqual(['b9 e1:0:1 → s1:0:1 ok 8/13 (cinta)']);
+      // Its shortest plan never needs the button (H2): the coral ✚ is the only box sent down the belt.
+      expect(run.buttonPresses).toBe(0);
+      expect(run.log.some((line) => line.endsWith('(botón)'))).toBe(false);
     }
   });
 });
