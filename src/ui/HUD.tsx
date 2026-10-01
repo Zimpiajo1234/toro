@@ -1,7 +1,7 @@
-import type { CSSProperties, MouseEvent } from 'react';
+import { useState, type CSSProperties, type MouseEvent } from 'react';
 import { useStore, type Store } from '../core/store';
-import { BENCHMARK_TIP, formatClock, formatMinimum, reachedMinimum, TEST_MODE_TIP } from './format';
-import { BoxIcon, ClockIcon, RestartIcon, SparkleIcon } from './icons';
+import { BENCHMARK_TIP, formatClock, formatMinimum, OBJECTIVES_DONE, objectivesVerb, reachedMinimum, TEST_MODE_TIP } from './format';
+import { BoxIcon, ClockIcon, FlagIcon, RestartIcon, SparkleIcon } from './icons';
 import { onScreen } from './interaction';
 import { Presence } from './Presence';
 import { useReservedArea } from './reservedAreas';
@@ -26,8 +26,9 @@ function keepFocus(e: MouseEvent<HTMLButtonElement>): void {
 }
 
 /**
- * In-game HUD — level and restart top-left; the optional move counter and time top-right. Its corners reserve the top
- * band (the camera frames the level below them); a pill added elsewhere at the top takes `useReservedArea('top')` too.
+ * In-game HUD — level and restart top-left; the optional objectives and move counters and the time top-right. Its
+ * corners reserve the top band (the camera frames the level below them); a pill added elsewhere at the top takes
+ * `useReservedArea('top')` too.
  */
 export function HUD({ store, actions, show, dimmed }: HUDProps) {
   const reserveTop = useReservedArea<HTMLDivElement>('top');
@@ -38,6 +39,7 @@ export function HUD({ store, actions, show, dimmed }: HUDProps) {
         <RestartButton store={store} actions={actions} />
       </div>
       <div className="hud__corner hud__corner--end" ref={reserveTop}>
+        <ObjectivesButton store={store} actions={actions} />
         <MovesButton store={store} actions={actions} />
         <TimerButton store={store} actions={actions} />
       </div>
@@ -130,6 +132,73 @@ function TimerButton({ store, actions }: Omit<HUDProps, 'show' | 'dimmed'>) {
       onClick={onClick}
     >
       <span className="hud-timer__value">{clock}</span>
+    </button>
+  );
+}
+
+/**
+ * Optional objectives counter, the move counter's sibling: «Quedan 9» (the boxes still to be put in their place,
+ * logic/objectives), «Queda 1», and «Todo en su sitio» once the level is complete. A box set in its place ticks the new
+ * count in like a new move; one lifted off again (or a fresh attempt) only eases it in. Click or O toggles it; hidden
+ * leaves a faint flag glyph.
+ */
+function ObjectivesButton({ store, actions }: Omit<HUDProps, 'show' | 'dimmed'>) {
+  const showObjectives = useStore(store, (s) => s.showObjectives);
+  const left = useStore(store, (s) => s.objectivesLeft);
+  // Which way the count last moved (adjusting state while rendering: the new count mounts with its animation at once).
+  const [counted, setCounted] = useState(left);
+  const [placed, setPlaced] = useState(false);
+  if (left !== counted) {
+    setCounted(left);
+    setPlaced(left < counted);
+  }
+
+  const onClick = (e: MouseEvent<HTMLButtonElement>) => {
+    releaseFocus(e);
+    actions.toggleObjectives();
+  };
+
+  if (!showObjectives) {
+    return (
+      <button
+        key="hidden"
+        type="button"
+        className="hud-pill hud-round hud-objectives is-hidden ui-enter"
+        aria-label="Mostrar objetivos"
+        title="Mostrar objetivos"
+        onMouseDown={keepFocus}
+        onClick={onClick}
+      >
+        <FlagIcon className="hud-objectives__icon" />
+      </button>
+    );
+  }
+  const done = left <= 0;
+  const spoken = done ? OBJECTIVES_DONE : `${objectivesVerb(left)} ${left} ${left === 1 ? 'objetivo' : 'objetivos'}`;
+  return (
+    // Distinct keys: toggling remounts the button so the new state eases in (see .ui-enter).
+    <button
+      key="shown"
+      type="button"
+      className="hud-pill hud-objectives ui-enter"
+      aria-label={`${spoken}. Ocultar objetivos`}
+      title="Ocultar objetivos"
+      onMouseDown={keepFocus}
+      onClick={onClick}
+    >
+      {done ? (
+        <span key="done" className="hud-objectives__done ui-swap">
+          {OBJECTIVES_DONE}
+        </span>
+      ) : (
+        <>
+          <span className="hud-objectives__label">{objectivesVerb(left)}</span>
+          {/* Keyed on the count: each new one remounts, with the tick when a box was just set in its place. */}
+          <span key={left} className={`hud-objectives__value ${placed ? 'ui-tick' : 'ui-swap'}`}>
+            {left}
+          </span>
+        </>
+      )}
     </button>
   );
 }

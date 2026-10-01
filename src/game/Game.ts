@@ -9,6 +9,7 @@ import { levelMinimum } from '../data/levels/minimums';
 import { GameState } from '../logic/GameState';
 import { MOVE_EPSILON } from '../logic/forklift';
 import { forkRiseRate } from '../logic/forkRise';
+import { objectivesLeft } from '../logic/objectives';
 import { Timer } from '../logic/Timer';
 import { GameRenderer } from '../render/GameRenderer';
 import { AudioEngine } from '../audio/AudioEngine';
@@ -132,6 +133,7 @@ export class Game implements GameActions {
     this.toggleHints = this.toggleHints.bind(this);
     this.toggleTimer = this.toggleTimer.bind(this);
     this.toggleMoves = this.toggleMoves.bind(this);
+    this.toggleObjectives = this.toggleObjectives.bind(this);
     this.toggleTestMode = this.toggleTestMode.bind(this);
     this.startBenchmark = this.startBenchmark.bind(this);
     this.setViewInsets = this.setViewInsets.bind(this);
@@ -182,6 +184,7 @@ export class Game implements GameActions {
       result: null,
       showTimer: settings.showTimer,
       showMoves: settings.showMoves,
+      showObjectives: settings.showObjectives,
       muted: settings.muted,
       reverseBeep: settings.reverseBeep,
       targetHints: settings.targetHints,
@@ -399,6 +402,16 @@ export class Game implements GameActions {
     this.store.set({ showMoves });
   }
 
+  /** The optional objectives counter (the HUD pill «Quedan N»), persisted like the timer. */
+  toggleObjectives(): void {
+    const rt = this.rt;
+    if (!rt) return;
+    rt.audio.uiClick();
+    const showObjectives = !this.store.get().showObjectives;
+    rt.progress.setSettings({ showObjectives });
+    this.store.set({ showObjectives });
+  }
+
   /** "Modo prueba": every level dot opens; turning it off shows the real (untouched) unlock state again. */
   toggleTestMode(): void {
     const rt = this.rt;
@@ -527,6 +540,12 @@ export class Game implements GameActions {
     }
     // The move counter follows the simulation (a count changes on a drop only: a store write a few times a level).
     if (snapshot.moves !== this.store.get().moves) this.store.set({ moves: snapshot.moves });
+    // So do the objectives left, which only a pick or a drop changes: recounted on a frame with events, written on a
+    // change.
+    if (events.length > 0) {
+      const left = objectivesLeft(snapshot);
+      if (left !== this.store.get().objectivesLeft) this.store.set({ objectivesLeft: left });
+    }
 
     if (this.levelStorage) {
       // One soft click per fork step that took effect at a storage column (none at the top / bottom, none off a unit).
@@ -565,6 +584,7 @@ export class Game implements GameActions {
     if (input.hintsPressed) this.toggleHints();
     if (input.timerPressed) this.toggleTimer();
     if (input.movesPressed) this.toggleMoves();
+    if (input.objectivesPressed) this.toggleObjectives();
     const testMode = this.store.get().testMode;
     if (input.rotateCamera !== 0) rt.renderer.rotateCamera(input.rotateCamera);
     switch (this.store.get().screen) {
@@ -759,8 +779,14 @@ export class Game implements GameActions {
     this.suspended = false;
     this.resumeTimerOnInput = false;
     // The control hint's fork row goes with the level on screen; the move counter starts over, against this level's
-    // minimum.
-    this.store.set({ storage: this.levelStorage, moves: 0, minMoves: shownMinimum(level.id), finished: false });
+    // minimum; the objectives counter starts at every box this level still needs put in its place.
+    this.store.set({
+      storage: this.levelStorage,
+      moves: 0,
+      minMoves: shownMinimum(level.id),
+      objectivesLeft: objectivesLeft(this.state.getSnapshot()),
+      finished: false,
+    });
     return level;
   }
 

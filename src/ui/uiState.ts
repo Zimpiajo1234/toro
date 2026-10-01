@@ -57,6 +57,13 @@ export interface UIState {
   showMoves: boolean;
   /** The level's move minimum as the HUD shows it (null: none known, or a lower bound the config hides). */
   minMoves: MoveMinimum | null;
+  /**
+   * Boxes the level on screen still needs put in their place (logic/objectives `objectivesLeft`): the HUD's «Quedan N»,
+   * «Todo en su sitio» at 0 (the level complete). Published by Game on load and when a pick or a drop changes it.
+   */
+  objectivesLeft: number;
+  /** The objectives counter is optional too: the player can hide it (persisted, O key or a click on its pill). */
+  showObjectives: boolean;
   /** The level on screen is finished (from its last drop through the card): the move pill may show its accent. */
   finished: boolean;
   result: LevelResult | null;
@@ -117,6 +124,8 @@ export interface GameActions {
   toggleTimer(): void;
   /** Show / hide the optional move counter (persisted, like the timer). */
   toggleMoves(): void;
+  /** Show / hide the optional objectives counter (persisted, like the timer). */
+  toggleObjectives(): void;
   /** Title: turn "Modo prueba" on / off (never changes the real unlock progress). */
   toggleTestMode(): void;
   /**
@@ -143,6 +152,8 @@ export const initialUIState: UIState = {
   moves: 0,
   showMoves: true,
   minMoves: null,
+  objectivesLeft: 0,
+  showObjectives: true,
   finished: false,
   result: null,
   muted: false,

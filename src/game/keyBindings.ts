@@ -8,6 +8,11 @@ export type CommandBinding =
   | 'timer'
   /** Show / hide the optional move counter (N: "número de movimientos"; far from the driving and fork keys). */
   | 'moves'
+  /**
+   * Show / hide the optional objectives counter (O: «objetivos», «Quedan N»; it was free, and like T / N it is a
+   * setting, not a control).
+   */
+  | 'objectives'
   /** Turn the reverse beeper on / off (B: «bip»; it was free, and like M / T / N it is a setting, not a control). */
   | 'beep'
   /** Turn the optional target hints on / off (P: «pistas»; it was free, and like B it is a setting, not a control). */
@@ -45,6 +50,7 @@ const BY_CODE = new Map<string, KeyBinding>([
   ['KeyM', 'mute'],
   ['KeyT', 'timer'],
   ['KeyN', 'moves'],
+  ['KeyO', 'objectives'],
   ['KeyB', 'beep'],
   ['KeyP', 'hints'],
   ['Enter', 'confirm'],
@@ -82,6 +88,7 @@ const BY_KEY = new Map<string, KeyBinding>([
   ['m', 'mute'],
   ['t', 'timer'],
   ['n', 'moves'],
+  ['o', 'objectives'],
   ['b', 'beep'],
   ['p', 'hints'],
   ['enter', 'confirm'],

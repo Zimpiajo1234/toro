@@ -124,6 +124,25 @@ describe('Input keyboard', () => {
     expect([t.movesPressed, t.timerPressed]).toEqual([false, true]);
   });
 
+  it('reports O (the objectives counter) as its own edge, once per press, never from a text field or with Ctrl', () => {
+    const { input, down, up } = setup();
+    down({ code: 'KeyO', key: 'o' });
+    const s = input.poll();
+    expect([s.objectivesPressed, s.movesPressed, s.timerPressed, s.hintsPressed, s.levelStep, s.any]).toEqual([true, false, false, false, 0, true]);
+    expect(input.poll().objectivesPressed).toBe(false);
+    down({ code: 'KeyO', key: 'o', repeat: true }); // held: never a second toggle
+    expect(input.poll().objectivesPressed).toBe(false);
+    up({ code: 'KeyO', key: 'o' });
+    down({ code: '', key: 'O' }); // no code (autofill-style events): the character still works
+    expect(input.poll().objectivesPressed).toBe(true);
+    const open = down({ code: 'KeyO', key: 'o', ctrlKey: true }); // Ctrl+O (open a file) is the browser's
+    expect(input.poll().objectivesPressed).toBe(false);
+    expect(open.defaultPrevented).toBe(false);
+    const typed = down({ code: 'KeyO', key: 'o', target: { tagName: 'INPUT', type: 'text', getAttribute: () => null } });
+    expect(input.poll().objectivesPressed).toBe(false); // typing an "o" is never a game key
+    expect(typed.defaultPrevented).toBe(false);
+  });
+
   it('reports B (the reverse beeper on / off) as its own edge, once per press', () => {
     const { input, down, up } = setup();
     down({ code: 'KeyB', key: 'b' });

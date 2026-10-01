@@ -3,7 +3,8 @@
 *Un pequeño almacén, a tu ritmo.*
 
 Juego web cozy: una carretilla elevadora low poly ordena cajas pastel en sus zonas de entrega.
-Sin derrota, sin presión. Solo un cronómetro y un contador de movimientos, los dos opcionales, y tus mejores marcas.
+Sin derrota, sin presión. Solo un cronómetro, un contador de movimientos y otro de objetivos, todos opcionales, y tus
+mejores marcas.
 
 **Niveles:** hoy el juego trae los niveles 1–3. Los niveles 4–24 se retiraron (2026-09-30) para rehacerlos; los
 sistemas que usaban (apilar con recetas, símbolos, estanterías almacenables) siguen en el juego y en sus tests. Un
@@ -41,6 +42,7 @@ Para un envoltorio de escritorio, servir `dist/` por http o protocolo propio, no
 | P | Pistas: sí / no (se guarda; apagadas por defecto): mientras llevas una caja se iluminan los destinos que la aceptarían (ver **Pistas** abajo) |
 | T | Mostrar / ocultar tiempo |
 | N | Mostrar / ocultar movimientos |
+| O | Mostrar / ocultar objetivos («Quedan 9») |
 | Esc | Volver al inicio ("Continuar" retoma el nivel) |
 | Enter | Continuar |
 | U (inicio) | Activar / desactivar el **Modo prueba**: todos los niveles abiertos (también el interruptor del pie de la pantalla de inicio) |
@@ -89,6 +91,15 @@ mínimo, o "✦ mínimo" en un tono suave si lo alcanzaste) y debajo, en pequeñ
 movimientos). Un récord nuevo se lee "✦ nuevo récord" en su propio recuadro, iluminado: siempre una sola fila, para
 que la tarjeta no tape el almacén. El Benchmark y los niveles abiertos solo por el Modo prueba enseñan sus movimientos
 pero no guardan récord. Un progreso guardado antes del contador carga igual (sin récords de movimientos todavía).
+
+**Contador de objetivos** (ajuste guardado, visible por defecto; O o un clic en su píldora lo ocultan, como T y N):
+arriba a la derecha, delante de los movimientos, «Quedan 9» = las cajas que faltan por dejar en su sitio («Queda 1» con
+una) y, al terminar el nivel, antes de la tarjeta, «Todo en su sitio». Cuenta lo mismo que decide el final del nivel:
+en cada zona, las cajas de su receta que aún no están bien puestas; en estanterías y camiones, cada hueco o nivel con
+pista que aún no tiene su caja de destino (los «libre» nunca cuentan, ni una caja equivocada). Baja de uno en uno al
+dejar cada caja en su sitio, con el mismo «tic» que un movimiento, y vuelve a subir si levantas una caja ya colocada
+(donde se puede: con estanterías o camiones una caja en su sitio queda fija). En pantallas estrechas (≤ 480 px) baja,
+junto a los movimientos, bajo el tiempo. Un progreso guardado antes de este contador carga con él visible.
 
 **Pistas** (ajuste guardado, **apagadas por defecto**; **P** las enciende y las apaga, en el título y en la partida):
 una ayuda para quien la quiera. Encendidas, mientras llevas una caja se iluminan los destinos que la aceptarían: las

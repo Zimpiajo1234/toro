@@ -22,6 +22,11 @@ const fakes = vi.hoisted(() => {
       inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[];
       /** Scripts GameSnapshot.moves (box moves so far; a fresh simulation starts at 0). */
       setMoves(moves: number): void;
+      /**
+       * Scripts the boxes still to place (logic/objectives reads `left` single-box zones, none done); a fresh simulation
+       * has one per zone of its level.
+       */
+      setObjectivesLeft(left: number): void;
     }[],
     /** Minimums a test overrides (by level id); every other id reads the real precomputed file. */
     minimums: new Map<string, { moves: number; exact: boolean } | null>(),
@@ -50,12 +55,24 @@ const fakes = vi.hoisted(() => {
     hintCalls: [] as boolean[],
   };
 
+  /** `left` single-box zones with nothing on them: the objectives counter reads `left`. */
+  const targets = (left: number) => Array.from({ length: left }, () => ({ recipe: [null] }));
+
   class FakeGameState {
     readonly level: { id: string };
     readonly inputs: { x: number; z: number; throttle: number; steer: number; action: boolean; forkStep: number }[] = [];
-    private readonly snapshot = { forklift: { speed: 0, forkLift: 0 }, completed: false, hint: { storage: sim.storage }, moves: 0 };
-    constructor(level: { id: string }) {
+    private readonly snapshot = {
+      forklift: { speed: 0, forkLift: 0 },
+      completed: false,
+      hint: { storage: sim.storage },
+      moves: 0,
+      zones: targets(0),
+      boxes: [] as { correct: boolean; zoneId: string | null }[],
+      storageSlots: [] as { accepts: unknown; satisfied: boolean }[],
+    };
+    constructor(level: { id: string; zones?: readonly unknown[] }) {
       this.level = level;
+      this.snapshot.zones = targets(level.zones?.length ?? 0);
       sim.states.push(this);
     }
     getSnapshot() {
@@ -64,6 +81,9 @@ const fakes = vi.hoisted(() => {
     }
     setMoves(moves: number) {
       this.snapshot.moves = moves;
+    }
+    setObjectivesLeft(left: number) {
+      this.snapshot.zones = targets(left);
     }
     update(
       _dt: number,
@@ -1486,5 +1506,101 @@ describe('Game: move counter', () => {
     expect(store.get().result).toMatchObject({ moves: 4, bestMoves: 4, isNewBestMoves: false });
     // The old time is still there, next to the new one.
     expect((saved(items).rankings as Record<string, number[]>)[LEVELS[0].id]).toContain(40_000);
+  });
+});
+
+describe('Game: objectives counter', () => {
+  const KEY = 'toro.progress.v1';
+  const withStorage = () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+      removeItem: (k: string) => void items.delete(k),
+    });
+    return items;
+  };
+  const savedSettings = (items: Map<string, string>) => (JSON.parse(items.get(KEY) ?? '{}').settings ?? {}) as Record<string, unknown>;
+  const drop: GameEvent = { type: 'boxDropped', boxId: 'b1', cell: { x: 1, z: 1 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0, total: 2 };
+
+  it('publishes the boxes still to place as a level loads, and again after a pick or a drop; a resumed level keeps them', () => {
+    const { game, store } = setup();
+    expect(store.get().objectivesLeft).toBe(LEVELS[0].zones.length); // the level behind the title
+    game.start(1);
+    expect(store.get().objectivesLeft).toBe(LEVELS[1].zones.length);
+    expect(LEVELS[1].zones.length).toBe(2);
+    // Only a pick or a drop changes the count: a quiet frame does not even read it.
+    current().setObjectivesLeft(1);
+    advance(0.5);
+    expect(store.get().objectivesLeft).toBe(2);
+    emit(drop);
+    expect(store.get().objectivesLeft).toBe(1);
+    current().setObjectivesLeft(2);
+    emit({ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 0 });
+    expect(store.get().objectivesLeft).toBe(2);
+    current().setObjectivesLeft(1);
+    emit(drop);
+
+    tap('Escape', 'Escape'); // suspended behind the title, as it was
+    expect(store.get().objectivesLeft).toBe(1);
+    game.start();
+    expect(store.get().objectivesLeft).toBe(1);
+    game.restart(); // a fresh attempt: every box to place again
+    expect(store.get().objectivesLeft).toBe(2);
+    game.toTitle();
+    game.start(2);
+    expect(store.get().objectivesLeft).toBe(LEVELS[2].zones.length);
+  });
+
+  it('reaches 0 with the final drop, through the celebration and the card', () => {
+    const { game, store } = setup();
+    game.start(0);
+    expect(store.get().objectivesLeft).toBe(1);
+    emit({ type: 'firstInput' });
+    current().setObjectivesLeft(0);
+    emit({ ...drop, correct: true, recipeLength: 1, satisfiedCount: 1, total: 1 }, { type: 'levelComplete' });
+    expect(store.get()).toMatchObject({ screen: 'playing', objectivesLeft: 0, finished: true });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(store.get()).toMatchObject({ screen: 'complete', objectivesLeft: 0 });
+  });
+
+  it('O shows / hides it (shown by default), on the title, while playing and on the card, persisted like the timer', () => {
+    const items = withStorage();
+    const first = setup();
+    expect(first.store.get().showObjectives).toBe(true);
+    tap('KeyO', 'o'); // on the title
+    expect(first.store.get().showObjectives).toBe(false);
+    expect(savedSettings(items).showObjectives).toBe(false);
+    first.game.start(0);
+    const loads = sim.states.length;
+    tap('KeyO', 'o'); // while playing: the level on screen is kept
+    expect(first.store.get()).toMatchObject({ screen: 'playing', showObjectives: true });
+    expect(sim.states).toHaveLength(loads);
+    expect(savedSettings(items).showObjectives).toBe(true);
+    // Its own setting: T and N leave it alone, and it leaves them alone.
+    tap('KeyT', 't');
+    tap('KeyN', 'n');
+    expect(first.store.get()).toMatchObject({ showObjectives: true, showTimer: false, showMoves: false });
+    tap('KeyO', 'o');
+    expect(first.store.get()).toMatchObject({ showObjectives: false, showTimer: false, showMoves: false });
+    // On the completion card too, like T / N.
+    emit({ type: 'firstInput' });
+    emit({ type: 'levelComplete' });
+    advance(GAME_CONFIG.flow.completeDelaySec + 0.1);
+    expect(first.store.get().screen).toBe('complete');
+    tap('KeyO', 'o');
+    expect(first.store.get()).toMatchObject({ screen: 'complete', showObjectives: true });
+    first.game.toggleObjectives(); // the HUD pill's click
+    expect(first.store.get().showObjectives).toBe(false);
+    first.game.dispose();
+
+    const second = setup();
+    expect(second.store.get()).toMatchObject({ showObjectives: false, showTimer: false, showMoves: false });
+  });
+
+  it('a save from before the objectives counter loads with it shown, everything else kept', () => {
+    savedGame({ rankings: {}, highestUnlocked: 0, lastLevel: 0, settings: { muted: true, showTimer: false, showMoves: false } });
+    const { store } = setup();
+    expect(store.get()).toMatchObject({ showObjectives: true, muted: true, showTimer: false, showMoves: false });
   });
 });

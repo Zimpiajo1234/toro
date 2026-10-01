@@ -326,10 +326,11 @@
   border-color: var(--ui-border-strong);
 }
 
-/* Hidden timer / move counter: a small quiet glyph (clock / box) on a faint disc — discreet, yet findable again
-   (≥ 3:1). */
+/* Hidden timer / move counter / objectives counter: a small quiet glyph (clock / box / flag) on a faint disc —
+   discreet, yet findable again (≥ 3:1). */
 .hud-timer.is-hidden,
-.hud-moves.is-hidden {
+.hud-moves.is-hidden,
+.hud-objectives.is-hidden {
   min-width: 0;
   padding: 0;
   color: var(--ui-text);
@@ -343,7 +344,9 @@
 .hud-timer.is-hidden:hover,
 .hud-timer.is-hidden:focus-visible,
 .hud-moves.is-hidden:hover,
-.hud-moves.is-hidden:focus-visible {
+.hud-moves.is-hidden:focus-visible,
+.hud-objectives.is-hidden:hover,
+.hud-objectives.is-hidden:focus-visible {
   opacity: 1;
   background: var(--ui-panel);
   border-color: var(--ui-panel-border);
@@ -413,6 +416,34 @@
   width: 13px;
   height: 13px;
   color: var(--ui-accent-strong);
+}
+
+/* Objectives counter: the counters' pill (tabular numbers, hidden glyph) reading «Quedan 9», the verb smaller and
+   softer like the move minimum, so the count leads; «Todo en su sitio» once nothing is left, in a calm text size. */
+.hud-objectives {
+  gap: 6px;
+  min-width: 80px;
+  padding: 0 18px;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.hud-objectives__label {
+  color: var(--ui-text-soft);
+  font-size: 14px;
+}
+.hud-objectives__done {
+  font-size: 15px;
+}
+.hud-objectives__icon {
+  width: 17px;
+  height: 17px;
+}
+.hud-objectives:not(.is-hidden):hover,
+.hud-objectives:not(.is-hidden):focus-visible {
+  border-color: var(--ui-border-strong);
 }
 
 /* Pills sit over the scene: a panel halo keeps the focus ring readable over any box or shelf. */
@@ -937,6 +968,14 @@
 
 /* ---------- Small windows ------------------------------------------------- */
 
+/* The three counters make the HUD's top row reach toward the centre: below this width the brief notice pill (M, B, P)
+   drops just under that row instead of over it (≤ 560 px and ≤ 480 px place it past their smaller or stacked pills). */
+@media (max-width: 1024px) {
+  .notice {
+    top: calc(max(var(--ui-gap), env(safe-area-inset-top, 0px)) + 56px);
+  }
+}
+
 @media (max-width: 560px) {
   .ui-overlay {
     --ui-radius: 16px;
@@ -964,6 +1003,18 @@
   .hud-moves__min {
     font-size: 13px;
   }
+  .hud-objectives {
+    gap: 5px;
+    min-width: 70px;
+    padding: 0 14px;
+    font-size: 16px;
+  }
+  .hud-objectives__label {
+    font-size: 13px;
+  }
+  .hud-objectives__done {
+    font-size: 14px;
+  }
   .hint {
     gap: 6px;
     padding: 8px 14px;
@@ -990,13 +1041,26 @@
   }
 }
 
-/* Phone-width windows: level + ↺ and moves + time no longer fit one row, so the move counter steps under the time,
-   still in its corner (the corner reserves the taller band itself); the mute pill moves down past it. */
+/* Phone-width windows: level + ↺ and the counters + time no longer fit one row, so the counters step under the time,
+   side by side (objectives, then moves, the move counter right under the time as before), still in their corner (it
+   reserves the taller band itself: two rows, as with the move counter alone); the mute pill moves down past them. */
 @media (max-width: 480px) {
   .hud__corner--end {
-    flex-direction: column-reverse;
-    align-items: flex-end;
+    display: grid;
+    grid-template-areas:
+      '. timer'
+      'objectives moves';
+    justify-items: end;
     gap: 8px;
+  }
+  .hud-objectives {
+    grid-area: objectives;
+  }
+  .hud-moves {
+    grid-area: moves;
+  }
+  .hud-timer {
+    grid-area: timer;
   }
   .notice {
     top: calc(max(var(--ui-gap), env(safe-area-inset-top, 0px)) + 100px);

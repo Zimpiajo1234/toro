@@ -25,7 +25,7 @@ The build uses `base: './'` (relative asset URLs) so `dist/` can be hosted under
 | `src/data/levels/*.level`, `src/data/levels/especiales/*.level` | **levels** | Level content (one text file per level, docs/LEVELS.md); `especiales/` = special levels outside the game's order (today the «Benchmark» of test mode) |
 | `src/data/levels/index.ts`, `solver.ts`, `metrics.ts`, `report.ts` | **levels** | Registry (`LEVELS`, plus `SPECIAL_LEVELS` / `getSpecialLevel`); grid model + searches (tests, autopilot, metrics); difficulty metrics; `npm run levels` report |
 | `src/data/levels/minimums.ts`, `minimumsBuild.ts`, `src/data/levelMinimums.json` | **levels** | The move counter's minimums: `levelMinimum(id)` → `{ moves, exact }` or null, read from the precomputed JSON (never solved at runtime); `minimumsBuild.ts` computes / formats / diffs it for `npm run levels -- --minimos` and `minimums.test.ts` (docs/LEVELS.md, «Mínimos del contador de movimientos») |
-| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), tests |
+| `src/logic/**` | **logic** | Simulation (`GameState`, `Timer`), collisions (`CollisionWorld`), grid (`LevelGrid`), pick / drop rules (`Interaction`), storage access (`storageAccess.ts`: `STORAGE_ACCESS`), the objectives counter (`objectives.ts`: `objectivesLeft`), tests |
 | `src/render/**` | **render** | three.js scene, meshes, camera, feedback animation; storage units through the skins registry `render/storage/` (`STORAGE_RENDER`, one entry per skin, one interface per unit, heights by support: docs/STORAGE.md) |
 | `src/audio/**` | **audio** | Procedural music + SFX |
 | `src/ui/**` (except `uiState.ts`), `src/storage/**` | **ui** | React overlay, CSS, persistence |
@@ -207,6 +207,12 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   somewhere else = 1). A drop exactly where the box was picked up (same cell and height, same storage slot) counts
   nothing. Counted on the drop, before its `boxDropped` (so a `levelComplete` snapshot already has the final count);
   0 on a fresh GameState (load, restart).
+- Objectives left (`logic/objectives` `objectivesLeft(snapshot)`, the HUD's «Quedan N»; pure, allocates nothing): the
+  boxes still to be put in their place, on the targets completion reads. A zone counts the steps of its recipe its
+  stack does not hold correctly yet (`BoxState.correct`: 1 for a classic zone until its box is on it); a storage slot
+  with a cue counts 1 until it is satisfied (in a stack, on satisfied levels). «Libre» slots and wrong boxes never
+  count; a box lifted off its place counts again. One box per place (validateLevel), so it is 0 exactly when the level
+  completes; with storage it is `progress.total − progress.satisfied` (a placed box locks there: it never goes back up).
 
 ## Level data (levels)
 
@@ -500,15 +506,20 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 
 - DOM overlay, Nunito (loaded in `index.html`), warm gray text (`--ui-text`), frosted cream panels
   (`--ui-panel`, `backdrop-filter: blur`), radius 16–20 px, soft shadows, no pure black/white contrast.
-- HUD while playing — only four things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
+- HUD while playing — only five things: level ("Nivel 3", top-left), time ("0:42", top-right, tabular numbers;
   clicking it or T toggles hide/show — hidden shows a small faint clock glyph), the optional move counter (left of
   the time, same pill family: a small box glyph, the count, then the level's minimum smaller and softer, "12 · mín.
   10", or "mín. ≥ 10" for a lower bound; clicking it or N toggles it — hidden shows a faint box glyph; each new count
   settles in with a gentle tick, `.ui-tick`; once the level is finished (`UIState.finished`) at or under the minimum
-  the pill takes a soft accent wash and edge and a sparkle replaces the box, never red), restart button (round, icon
-  ↺, `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing else. Fades in
-  gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners reserve the top
-  band (the camera frames the level below them); under 480 px wide the end corner stacks the counter under the time.
+  the pill takes a soft accent wash and edge and a sparkle replaces the box, never red), the optional objectives
+  counter (left of the move counter, same family: «Quedan 9», the verb smaller and softer, «Queda 1», and «Todo en su
+  sitio» at 0, i.e. from the completing drop through the card; `UIState.objectivesLeft`; a count that drops settles in
+  with the tick, one that rises only eases in; clicking it or O toggles it — hidden shows a faint flag glyph), restart
+  button (round, icon ↺, `aria-label="Reiniciar nivel"`; a soft disc fills it while R is held, see Game flow). Nothing
+  else. Fades in gently. HUD buttons never take focus from a mouse press (Space stays the game's key). Both corners
+  reserve the top band (the camera frames the level below them); under 480 px wide the end corner puts the time on
+  top and the two counters side by side under it (two rows, as before), and under 1024 px the brief notice pill drops
+  just below the top row.
 - Control hint, always on screen while playing, in every level (it never fades out on its own): tiny keycaps at the
   bottom center — "W S avanzar / atrás · A D girar · Espacio recoger / dejar · + − zoom" (zoom last, so the row stays
   one line at desktop widths; pinch and pad LT / RT are not listed) — and, in levels with storage (`UIState.storage`:
@@ -521,7 +532,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   800×450) (unlocked ones clickable, show best time on hover/focus; locked ones
   read "Nivel N · por descubrir"), small footer "Q / E girar cámara · + / − zoom · M silencio (M activar sonido when
   muted) · B pitido (B activar pitido when off) · P activar pistas (the default, with a crossed bulb like the other
-  "activar" wordings; P pistas when on) · T tiempo · N movimientos · Esc inicio · [Modo prueba]". Diorama visible behind (idle orbit).
+  "activar" wordings; P pistas when on) · T tiempo · N movimientos · O objetivos · Esc inicio · [Modo prueba]" (one
+  line at 1280 px by default and in test mode). Diorama visible behind (idle orbit).
 - **Modo prueba** (`Settings.testMode`, persisted, additive field, default off; `UIState.testMode`,
   `GameActions.toggleTestMode()`): the footer switch (`aria-pressed`) or U on the title opens every level dot. While
   playing, PageUp / PageDown (RePág / AvPág) or the two keys right of P (`BracketLeft` / `BracketRight`: `[` / `]`
@@ -565,8 +577,8 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   try/catch with in-memory fallback, best time + top-5 ranking per level id, fewest moves per level id (`bestMoves`,
   additive, same version: `getBestMoves` / `recordMoves`, replaced only by strictly fewer, never progress on its own),
   highest unlocked index, last level (index + `lastLevelId`, additive, same version), settings (`muted`, `showTimer`,
-  `showMoves` additive default true, `reverseBeep` additive default true, `targetHints` additive default false,
-  `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
+  `showMoves` additive default true, `showObjectives` additive default true, `reverseBeep` additive default true,
+  `targetHints` additive default false, `testMode`). Saves written before an additive field simply lack it (defaults). Unlocks and "Continuar" resolve by level id against
   the current play order (constructor arg `levelIds`, default `LEVELS`), so inserting a level never re-locks one.
   Indices past the last level (a save from a game with more levels) read as the last one, and rankings of ids no
   longer in `levelIds` are ignored (kept in the document, never counted as progress); reads never rewrite it.
@@ -583,6 +595,9 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
 - Move counter: every frame Game copies `snapshot.moves` to `UIState.moves` (a store write only when it changes); on
   load it publishes the level's minimum (`levelMinimum(id)`; a lower bound only if `moves.showLowerBound`, else null)
   as `UIState.minMoves` and clears `finished`. `toggleMoves()` (N, the pill) persists `showMoves` like the timer.
+- Objectives counter: on load, and after a frame with events (only a pick or a drop changes it), Game publishes
+  `objectivesLeft(snapshot)` as `UIState.objectivesLeft` (a store write only when it changes; a resumed level keeps
+  it). `toggleObjectives()` (O, the pill) persists `showObjectives` like the timer.
 - On `levelComplete`: stop timer, record time and moves (ProgressStore `record` / `recordMoves`, both skipped for
   the Benchmark and a level only test mode opened), set `UIState.finished`, unlock next, wait `flow.completeDelaySec` (1.6 s;
   R / Esc / HUD restart are ignored meanwhile), then screen `complete` with a random positive message from:
@@ -600,7 +615,7 @@ Input (keyboard/gamepad) ──► Game ──InputFrame──► GameState.upda
   "Continuar" knows. `restart()` reloads the Benchmark; `nextLevel()` / the card lead to the title, which shows the real
   "Continuar" level; level jumps are ignored there. Esc suspends it like any level ("Continuar" or the button resume
   it, a level dot loads that level fresh); turning test mode off drops a suspended Benchmark.
-- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one level up / down at a storage column, a rack's or a truck's (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
+- Keyboard: W/S drive forward / reverse and A/D turn (default `"vehicle"`; arrows too; see `controls.keyboardMapping`), Space pick / drop, F / V fork one level up / down at a storage column, a rack's or a truck's (also the mouse wheel while playing: one notch = one slot, trackpad deltas add up; `preventDefault` only while playing; pad X / B; `InputFrame.forkStep`), Q/E camera, + / − zoom in / out (the typed character first, so "+" / "-" zoom on any layout — Spanish "+" is `BracketRight`, "-" is `Slash` —, then `Equal` / `Minus` and `NumpadAdd` / `NumpadSubtract` by code; held = continuous, a tap = a small step; also a trackpad pinch, i.e. Ctrl + wheel, and a touch pinch; see Render direction), M mute, T timer, N move counter (title and playing; no pad button, like the timer), O objectives counter (title and playing; no pad button), B reverse beeper on / off (title and playing, persisted `Settings.reverseBeep`; no pad button), P target hints on / off (title and playing, persisted `Settings.targetHints`, default off; no pad button), U test mode (title), PageUp / PageDown · the two keys right of P (`[` / `]` on US; AltGr accepted for these two only, any other Ctrl / Alt / Meta combination is ignored; where `BracketRight` types "+" it zooms, and AltGr + it, typing "]", jumps) level jump (test mode, playing; same hold rule as R, `InputSample.levelStepHeld`),
   Esc title (resumable), Enter = primary button on the card. R restarts at once until a box has been picked in
   this level; after that it must be held `flow.restartHoldSec` (0.55 s; releasing cancels; progress published as
   `UIState.restartHold` 0‥1). R on the card repeats at once. Gamepad: left stick (`controls.stickMapping`, default screen-relative) moves,

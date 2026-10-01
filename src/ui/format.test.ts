@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatClock, formatMinimum, formatPrecise, reachedMinimum } from './format';
+import { formatClock, formatMinimum, formatPrecise, OBJECTIVES_DONE, objectivesVerb, reachedMinimum } from './format';
 
 describe('formatClock', () => {
   it.each([
@@ -66,5 +66,14 @@ describe('move minimum', () => {
     expect(reachedMinimum(11, { moves: 10, exact: true })).toBe(false);
     expect(reachedMinimum(10, { moves: 10, exact: false })).toBe(true);
     expect(reachedMinimum(0, null)).toBe(false);
+  });
+});
+
+describe('objectives counter wording', () => {
+  it('«Quedan N», the verb agreeing with the count («Queda 1»); «Todo en su sitio» once nothing is left', () => {
+    expect(objectivesVerb(9)).toBe('Quedan');
+    expect(objectivesVerb(2)).toBe('Quedan');
+    expect(objectivesVerb(1)).toBe('Queda');
+    expect(OBJECTIVES_DONE).toBe('Todo en su sitio');
   });
 });

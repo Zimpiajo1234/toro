@@ -16,6 +16,7 @@ const noopActions: GameActions = {
   toggleHints() {},
   toggleTimer() {},
   toggleMoves() {},
+  toggleObjectives() {},
   toggleTestMode() {},
   startBenchmark() {},
 };
@@ -359,8 +360,11 @@ describe('Overlay: move counter', () => {
     expect(moves).toContain('class="hud-pill hud-moves ui-enter"');
     expect(moves).toContain('aria-label="Movimientos 12, mínimo 10. Ocultar movimientos"');
     expect(moves).toContain('<span class="hud-moves__value ui-tick">12</span><span class="hud-moves__min">· mín. 10</span>');
-    // Same corner as the timer (the corner reserves the top band for the camera), counter first.
-    expect(html).toMatch(/<div class="hud__corner hud__corner--end"><button[^>]*hud-moves[^>]*>.*?<\/button><button[^>]*hud-timer/);
+    // Same corner as the timer (the corner reserves the top band for the camera), right before it, after the
+    // objectives counter.
+    expect(html).toMatch(
+      /<div class="hud__corner hud__corner--end"><button[^>]*hud-objectives[^>]*>.*?<\/button><button[^>]*hud-moves[^>]*>.*?<\/button><button[^>]*hud-timer/,
+    );
     expect(html.indexOf('hud-moves')).toBeLessThan(html.indexOf('>0:42</span>'));
   });
 
@@ -493,6 +497,65 @@ describe('Overlay: move counter', () => {
     expect(practice).toContain('>Modo prueba · estos movimientos no se guardan</p>');
     const both = render({ screen: 'complete', result: result({ practice: true, minMoves: min }) });
     expect(both).toContain('>Modo prueba · este resultado no se guarda</p>');
+  });
+});
+
+describe('Overlay: objectives counter', () => {
+  /** The objectives pill's markup (the only element with the hud-objectives class). */
+  const pill = (html: string) => html.match(/<button[^>]*class="hud-pill[^"]*hud-objectives[^"]*"[^>]*>.*?<\/button>/)?.[0] ?? '';
+
+  it('reads «Quedan N» in a pill like the other counters, first in the top-right corner, before the moves and the time', () => {
+    const html = render({ screen: 'playing', objectivesLeft: 9, moves: 3, elapsedMs: 42_900, timerStarted: true });
+    const objectives = pill(html);
+    expect(objectives).toContain('class="hud-pill hud-objectives ui-enter"');
+    expect(objectives).toContain('aria-label="Quedan 9 objetivos. Ocultar objetivos"');
+    expect(objectives).toContain('title="Ocultar objetivos"');
+    // The verb small and soft, the count in the counters' numbers (each new count remounts: keyed).
+    expect(objectives).toContain('<span class="hud-objectives__label">Quedan</span><span class="hud-objectives__value ui-swap">9</span>');
+    expect(html).toMatch(/<div class="hud__corner hud__corner--end"><button[^>]*hud-objectives/);
+    expect(html.indexOf('hud-objectives')).toBeLessThan(html.indexOf('hud-moves'));
+    expect(html.indexOf('hud-moves')).toBeLessThan(html.indexOf('>0:42</span>'));
+  });
+
+  it('agrees with the count: «Queda 1»', () => {
+    const one = pill(render({ screen: 'playing', objectivesLeft: 1 }));
+    expect(one).toContain('<span class="hud-objectives__label">Queda</span><span class="hud-objectives__value ui-swap">1</span>');
+    expect(one).toContain('aria-label="Queda 1 objetivo. Ocultar objetivos"');
+  });
+
+  it('«Todo en su sitio» once nothing is left, still there on the dimmed HUD under the card', () => {
+    const done = pill(render({ screen: 'playing', objectivesLeft: 0, finished: true }));
+    expect(done).toContain('<span class="hud-objectives__done ui-swap">Todo en su sitio</span>');
+    expect(done).toContain('aria-label="Todo en su sitio. Ocultar objetivos"');
+    expect(done).not.toContain('hud-objectives__value');
+    expect(done).not.toContain('Quedan');
+    const card = render({ screen: 'complete', objectivesLeft: 0, finished: true, result: result({}) });
+    expect(card).toMatch(/class="ui-layer hud is-dimmed"[^>]*inert=""/);
+    expect(pill(card)).toContain('>Todo en su sitio</span>');
+  });
+
+  it('hidden: a faint flag glyph that shows it again, no count', () => {
+    const hidden = pill(render({ screen: 'playing', objectivesLeft: 9, showObjectives: false }));
+    expect(hidden).toContain('class="hud-pill hud-round hud-objectives is-hidden ui-enter"');
+    expect(hidden).toContain('aria-label="Mostrar objetivos"');
+    expect(hidden).toContain('<svg class="hud-objectives__icon"');
+    expect(hidden).not.toContain('Quedan');
+    expect(hidden).not.toContain('hud-objectives__value');
+    // Its own setting: the other counters stay as they are.
+    expect(render({ screen: 'playing', objectivesLeft: 9, showObjectives: false, moves: 2 })).toContain('<span class="hud-moves__value ui-tick">2</span>');
+  });
+
+  it('only in a level: never on the title', () => {
+    expect(pill(render({ screen: 'title', levels, objectivesLeft: 3 }))).toBe('');
+  });
+
+  it('title footer names the O key right after N', () => {
+    const html = render({ screen: 'title' });
+    expect(html).toContain('<span><kbd class="keycap">O</kbd> objetivos</span>');
+    expect(html.indexOf('O</kbd> objetivos')).toBeGreaterThan(html.indexOf('N</kbd> movimientos'));
+    expect(html.indexOf('O</kbd> objetivos')).toBeLessThan(html.indexOf('Esc</kbd> inicio'));
+    // In a level nothing names O (the pill's tooltip and label say what it does).
+    expect(render({ screen: 'playing', objectivesLeft: 2 })).not.toContain('<kbd class="keycap">O</kbd>');
   });
 });
 

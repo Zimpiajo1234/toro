@@ -31,6 +31,8 @@ export interface InputSample {
   timerPressed: boolean;
   /** Edge-triggered: N (show / hide the optional move counter). */
   movesPressed: boolean;
+  /** Edge-triggered: O (show / hide the optional objectives counter). */
+  objectivesPressed: boolean;
   /** Edge-triggered: B (turn the reverse beeper on / off). */
   beepPressed: boolean;
   /** Edge-triggered: P (turn the optional target hints on / off). */
@@ -185,6 +187,7 @@ export class Input {
   private muteEdge = false;
   private timerEdge = false;
   private movesEdge = false;
+  private objectivesEdge = false;
   private beepEdge = false;
   private hintsEdge = false;
   private confirmEdge = false;
@@ -228,6 +231,7 @@ export class Input {
     mutePressed: false,
     timerPressed: false,
     movesPressed: false,
+    objectivesPressed: false,
     beepPressed: false,
     hintsPressed: false,
     confirmPressed: false,
@@ -270,7 +274,7 @@ export class Input {
     if (this.disposed) {
       s.keyX = s.keyY = s.stickX = s.stickY = s.zoom = s.zoomStep = 0;
       s.actionPressed = s.restartPressed = s.restartHeld = s.retryPressed = false;
-      s.mutePressed = s.timerPressed = s.movesPressed = s.confirmPressed = s.backPressed = s.any = false;
+      s.mutePressed = s.timerPressed = s.movesPressed = s.objectivesPressed = s.confirmPressed = s.backPressed = s.any = false;
       s.beepPressed = s.hintsPressed = s.testModePressed = false;
       s.rotateCamera = 0;
       s.levelStep = s.levelStepHeld = 0;
@@ -302,6 +306,7 @@ export class Input {
     s.mutePressed = this.muteEdge;
     s.timerPressed = this.timerEdge;
     s.movesPressed = this.movesEdge;
+    s.objectivesPressed = this.objectivesEdge;
     s.beepPressed = this.beepEdge;
     s.hintsPressed = this.hintsEdge;
     s.confirmPressed = this.confirmEdge || pad.confirmPressed;
@@ -335,6 +340,7 @@ export class Input {
       s.mutePressed ||
       s.timerPressed ||
       s.movesPressed ||
+      s.objectivesPressed ||
       s.beepPressed ||
       s.hintsPressed ||
       s.confirmPressed ||
@@ -429,6 +435,9 @@ export class Input {
         break;
       case 'moves':
         this.movesEdge = true;
+        break;
+      case 'objectives':
+        this.objectivesEdge = true;
         break;
       case 'beep':
         this.beepEdge = true;
@@ -666,6 +675,7 @@ export class Input {
     this.muteEdge = false;
     this.timerEdge = false;
     this.movesEdge = false;
+    this.objectivesEdge = false;
     this.beepEdge = false;
     this.hintsEdge = false;
     this.confirmEdge = false;

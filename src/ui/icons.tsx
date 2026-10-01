@@ -41,6 +41,16 @@ export function BoxIcon({ className }: IconProps) {
   );
 }
 
+/** Small pennant on its pole: the objectives counter's glyph while it is hidden. */
+export function FlagIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...LINE}>
+      <path d="M6.5 20V4.5" />
+      <path d="M6.5 5h10.5l-2.6 3.6L17 12.2H6.5" />
+    </svg>
+  );
+}
+
 /** Speaker with sound waves, or crossed out when `off` (muted). */
 export function SoundIcon({ className, off = false }: IconProps & { off?: boolean }) {
   return (
