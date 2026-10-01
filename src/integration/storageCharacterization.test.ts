@@ -8,8 +8,9 @@
  * Benchmark gained a belt, its coral ✚ box and one target), H1b (the belt a table at level 1: its ends' slots and
  * base level, the F press at its input), H1c (its closed base: the autopilot backs out of the input after the drop
  * and lowers the forks with V out there), H2 (the belt's button beside its input: one more obstacle cell, the
- * routes round it; the presses counted, none in the Benchmark's plan) and H2b (the button a pad on the floor, moved to
- * (7,3): floor again for the metrics, a cell the autopilot never picks or drops from).
+ * routes round it; the presses counted, none in the Benchmark's plan), H2b (the button a pad on the floor, moved to
+ * (7,3): floor again for the metrics, a cell the autopilot never picks or drops from) and H2c (the pad back at (7,2),
+ * right beside the input: off the autopilot's work cells, so its routes are H1c's again).
  */
 import { describe, expect, it } from 'vitest';
 import stored from './storageCharacterization.json';
@@ -55,8 +56,8 @@ describe.skipIf(WRITE)('storage characterization (src/integration/storageCharact
     expect(benchmark.storage.slots.filter((s) => s.startsWith('t1:1:'))).toEqual(['t1:1:0 cell 2,-1 front 2,0 south · yellow/cross', 't1:1:1 cell 2,-1 front 2,0 south · libre']);
     // Its conveyor belt (docs/CONVEYOR.md): one floor cell, a table at level 1 (H1b), from its «libre» input e1 to its
     // end exit s1, both standing on it (their one slot at level 1), and its button beside the input (H2; H2b: a pad on
-    // the floor, west of the input's front cell).
-    expect(benchmark.storage.conveyors).toEqual(['c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1 · botón 7,3']);
+    // the floor; H2c: right beside the input, west of it).
+    expect(benchmark.storage.conveyors).toEqual(['c1 e1 (8,2) → 8,1 → s1 (8,0) · suelo@1 · botón 7,2']);
     expect(benchmark.storage.units.filter((u) => u.baseLevel !== undefined).map((u) => [u.id, u.baseLevel])).toEqual([
       ['e1', 1],
       ['s1', 1],

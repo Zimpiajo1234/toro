@@ -148,7 +148,9 @@ export type StorageOpening = { access: 'front'; cell: Rect; facing: Facing } | {
  * guards): at or above its top the tines meet only those `walls`. From its sides, below its top, and at a belt's other
  * cells and its end exit (never worked at), empty tines pass as they pass a wall or a rack: meeting the whole table
  * would keep the forklift from standing nose to it in the cell beside it (its tines reach 1.2 past its centre), which
- * the routes of the solver and the autopilot, counted in cells, take for granted.
+ * the routes of the solver and the autopilot, counted in cells, take for granted. While GameState shuts it (shutBase: a
+ * belt's input while its button brings a box back to it, docs/CONVEYOR.md H2c) its face stops the tines at or above
+ * its top too, so they never reach in under that box.
  */
 export interface SolidBase {
   rect: Rect;
@@ -158,6 +160,8 @@ export interface SolidBase {
   face: Rect;
   /** At or above its top, what the tines still meet: its side guards. */
   walls: readonly Rect[];
+  /** Its storage column (the index of setOpen and shutBase). */
+  column: number;
 }
 
 /**
@@ -341,7 +345,8 @@ export function pointRectDistance(px: number, pz: number, minX: number, minZ: nu
  *   does.
  * Solid bases (SolidBase: the closed base of a front column standing above the floor, a belt's input on its table,
  * docs/STORAGE.md «Nivel base»; none in most levels): below its top the empty tines meet one (a TineCircle in resolve),
- * as the body and a load already do; nothing else ever meets empty tines.
+ * as the body and a load already do, and its face whatever their height while GameState shuts it (shutBase); nothing
+ * else ever meets empty tines.
  */
 export class CollisionWorld {
   readonly bounds: Rect;
@@ -361,6 +366,8 @@ export class CollisionWorld {
   private readonly shelfSlots: ReadonlySet<string>;
   /** The closed bases the forks work at (StorageColliders.solidBases): what the empty tines meet. */
   private readonly bases: readonly SolidBase[];
+  /** Per storage column: 1 while its solid base is shut for the tines at or above its top too (see shutBase). */
+  private readonly shut: Uint8Array;
   private readonly boxHalf: number;
   private boxes: readonly BoxState[] = [];
   /** Per box: how much its collider is currently shrunk on every side (settling after a drop), 0 = full size. */
@@ -392,6 +399,7 @@ export class CollisionWorld {
     this.openingInsets = new Float64Array(openings.length);
     this.shelfSlots = storage.shelfSlots ?? NO_SLOTS;
     this.bases = storage.solidBases ?? [];
+    this.shut = new Uint8Array(openings.length);
     this.boxHalf = boxSize / 2;
   }
 
@@ -439,17 +447,27 @@ export class CollisionWorld {
     // The closed bases the forks work at (none without belts): every front column standing above the floor, its cell up
     // to its base level, closed at its sides over it (BASE_GUARD: a belt input's guards).
     const solidBases: SolidBase[] = [];
-    for (const col of storageColumnsOf(level)) {
-      if (col.baseLevel <= 0 || col.unit.access.kind !== 'front') continue;
+    storageColumnsOf(level).forEach((col, column) => {
+      if (col.baseLevel <= 0 || col.unit.access.kind !== 'front') return;
       const rect = cellRect(col.cell.x, col.cell.z);
-      solidBases.push({ rect, top: col.baseLevel, face: endStrip(rect, col.facing, true, RACK_WALL), walls: sideWalls(rect, col.facing, BASE_GUARD.inset) });
-    }
+      solidBases.push({ rect, top: col.baseLevel, face: endStrip(rect, col.facing, true, RACK_WALL), walls: sideWalls(rect, col.facing, BASE_GUARD.inset), column });
+    });
     return new CollisionWorld({ minX: -hw, minZ: -hd, maxX: hw, maxZ: hd }, statics, boxSize, { openings, doors, shelfSlots, solidBases });
   }
 
   /** The level has solid bases (a belt's input on its table): the empty tines can meet something. */
   get hasSolidBases(): boolean {
     return this.bases.length > 0;
+  }
+
+  /**
+   * Shut (or reopen) storage column `index`'s solid base for the empty tines at or above its top too (docs/CONVEYOR.md
+   * H2c: a belt's input from an accepted press of its button until the box it brings back rests there): its face then
+   * stops them coming at it whatever their height, as below its top, so they never reach in under that box. Tines
+   * already in are let out as always (a touch only: TINE_CATCH). Nothing for a column without a solid base.
+   */
+  shutBase(index: number, shut: boolean): void {
+    if (index >= 0 && index < this.shut.length) this.shut[index] = shut ? 1 : 0;
   }
 
   /** Number of storage columns (each with its opening). */
@@ -660,10 +678,10 @@ export class CollisionWorld {
   /**
    * Deepest overlap of the empty tines' circle (TineCircle at (cx, cz), radius `r`) with the solid bases, the forks at
    * `height` levels: below a base's top its face, met from outside its cell (its closed base: the tines never slide under
-   * or into it from where it is worked); at or above it only its walls (a belt input's side guards). Only a touch counts
-   * (TINE_CATCH: tines coming at them never reach deeper in a substep): tines found deeper got there some other way (in
-   * from a side, below the top, as through a wall) and leave freely, never with a jolt. Same contract as deepestContact;
-   * 0 = free.
+   * or into it from where it is worked); at or above it only its walls (a belt input's side guards), and its face too
+   * while it is shut (shutBase). Only a touch counts (TINE_CATCH: tines coming at them never reach deeper in a substep):
+   * tines found deeper got there some other way (in from a side, below the top, as through a wall) and leave freely,
+   * never with a jolt. Same contract as deepestContact; 0 = free.
    */
   tineContact(cx: number, cz: number, r: number, height: number, out: Contact): number {
     out.depth = 0;
@@ -673,11 +691,12 @@ export class CollisionWorld {
     const bases = this.bases;
     for (let k = 0; k < bases.length; k++) {
       const base = bases[k];
-      if (height < base.top - SOLID_TOP_EPSILON) {
+      const below = height < base.top - SOLID_TOP_EPSILON;
+      if (below || this.shut[base.column] === 1) {
         const c = base.rect;
         if (pointRectDistance(cx, cz, c.minX, c.minZ, c.maxX, c.maxZ) >= 0) this.catchTines(cx, cz, r, base.face, out);
-        continue;
       }
+      if (below) continue;
       const walls = base.walls;
       for (let w = 0; w < walls.length; w++) this.catchTines(cx, cz, r, walls[w], out);
     }
@@ -706,6 +725,22 @@ export class CollisionWorld {
       if (pointRectDistance(cx, cz, s.minX, s.minZ, s.maxX, s.maxZ) < r - CONTACT_EPSILON) top = base.top;
     }
     return top;
+  }
+
+  /**
+   * A circle at (cx, cz), radius `r`, reaches into the cell of a solid base (deeper than touching) while standing below
+   * its top at `height` levels: the empty tines in from one of its sides, through its closed base (they pass its sides
+   * as a wall's). GameState: the forks never rise through its top from there (docs/CONVEYOR.md H2c).
+   */
+  inSolidBase(cx: number, cz: number, r: number, height: number): boolean {
+    const bases = this.bases;
+    for (let k = 0; k < bases.length; k++) {
+      const base = bases[k];
+      if (base.top <= height + SOLID_TOP_EPSILON) continue;
+      const s = base.rect;
+      if (pointRectDistance(cx, cz, s.minX, s.minZ, s.maxX, s.maxZ) < r - CONTACT_EPSILON) return true;
+    }
+    return false;
   }
 
   /**

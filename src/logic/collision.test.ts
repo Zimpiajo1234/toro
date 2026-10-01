@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DOCK_RAIL, dockRailsOf } from '../core/docks';
-import { BASE_GUARD } from '../core/storage';
+import { BASE_GUARD, storageColumnsOf } from '../core/storage';
 import { TINES, type BoxState, type LevelData, type LevelStorage, type WallSide } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
 import { LEVELS } from '../data/levels';
@@ -539,5 +539,34 @@ describe('CollisionWorld solid bases: what the empty tines meet (docs/STORAGE.md
     // A load's collider just over its front edge, then just off it.
     expect(world.solidTopUnder(0, -0.5 + 0.45, 0.46, 1)).toBe(1);
     expect(world.solidTopUnder(0, -0.5 + 0.47, 0.46, 1)).toBe(-1);
+  });
+
+  it('inSolidBase (H2c): the tines in its cell below its top (in from a side, through its closed base); never at or over its top, nor clear of it', () => {
+    expect(world.inSolidBase(-0.5 - R + 0.05, -1, R, 0)).toBe(true);
+    expect(world.inSolidBase(0, -1, R, 0)).toBe(true);
+    expect(world.inSolidBase(0, -1, R, 0.999)).toBe(true);
+    expect(world.inSolidBase(0, -1, R, 1)).toBe(false);
+    expect(world.inSolidBase(-0.5 - R - 0.01, -1, R, 0)).toBe(false);
+    for (const lvl of LEVELS) expect(CollisionWorld.fromLevel(lvl, 0.78).inSolidBase(0, 0, R, 0), lvl.id).toBe(false);
+  });
+
+  it('shut (shutBase, H2c: a box on its way back to it), its face stops the tines over its top too; reopened, as before', () => {
+    const shut = CollisionWorld.fromLevel(level, 0.78);
+    const input = storageColumnsOf(level).findIndex((c) => c.unit.id === 'e1');
+    const exit = storageColumnsOf(level).findIndex((c) => c.unit.id === 's1');
+    shut.shutBase(input, true);
+    // A touch from the front at its top, or over it: pushed straight back, as below it.
+    expect(shut.tineContact(0, -0.5 + R - 0.01, R, 1, hit)).toBeCloseTo(0.01, 9);
+    expect([hit.nx, hit.nz]).toEqual([0, 1]);
+    expect(shut.tineContact(0.2, -0.5 + R - 0.01, R, 1.5, hit)).toBeCloseTo(0.01, 9);
+    // Already in (deeper than a touch) they are let out as always, and its guards stay as they were.
+    expect(shut.tineContact(0, -1, R, 1, hit)).toBe(0);
+    const inner = 0.5 - BASE_GUARD.inset;
+    expect(shut.tineContact(inner - R + 0.01, -1, R, 1, hit)).toBeCloseTo(0.01, 9);
+    // Reopened: over its top only its guards again. Shutting a column without a solid base (B) changes nothing.
+    shut.shutBase(input, false);
+    shut.shutBase(exit, true);
+    expect(shut.tineContact(0, -0.5 + R - 0.01, R, 1, hit)).toBe(0);
+    expect(shut.tineContact(0, -0.5 + R - 0.01, R, 0, hit)).toBeCloseTo(0.01, 9);
   });
 });

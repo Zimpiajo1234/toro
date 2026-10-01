@@ -565,10 +565,11 @@ export class GameState {
 
   /**
    * The button of belt `belt` is pressed (docs/CONVEYOR.md H2): no box move. With the belt at rest, its input's slot
-   * empty and nothing of the forklift in it, the last box that reached one of its exits without being locked there
-   * (LIFO) comes back: out of that exit's slot, into the input's, sealed while the belt runs back with it
-   * (ConveyorSystem.reverse); it was never satisfying anything there, so «Quedan N» and the progress stay as they are,
-   * and nothing completes. Otherwise nothing moves (`beltButton` with its reason: the soft «no»).
+   * empty and nothing of the forklift in it (forksInInput), the last box that reached one of its exits without being
+   * locked there (LIFO) comes back: out of that exit's slot, into the input's, sealed while the belt runs back with it
+   * (ConveyorSystem.reverse), the input shut for the empty tines too (H2c: CollisionWorld.shutBase, so they never reach
+   * in under it); it was never satisfying anything there, so «Quedan N» and the progress stay as they are, and nothing
+   * completes. Otherwise nothing moves (`beltButton` with its reason: the soft «no»).
    */
   private pressButton(belt: number): void {
     const snap = this.snapshot;
@@ -604,16 +605,22 @@ export class GameState {
     this.refreshColumn(input);
     this.recountProgress();
     belts.reverse(belt, index, box.id);
+    this.world.shutBase(input, true);
     this.emit({ type: 'beltButton', conveyorId, accepted: true, boxId: box.id, fromSlotId });
   }
 
   /**
-   * Anything of the forklift reaches into belt `belt`'s input cell (deeper than touching): the carried load (its
-   * collider) or the empty tines (their circle), at any height. The box coming back needs that slot clear.
+   * Anything of the forklift occupies belt `belt`'s input slot, where the box its button brings back lands
+   * (docs/CONVEYOR.md H2c): the carried load (its collider) or the empty tines (their circle) reaching into the input's
+   * cell (deeper than touching) with the forks at its base level or higher, over its table top. Tines reaching into the
+   * cell below it, from a side (they pass a table's sides as a wall's, decision U), leave the slot clear: they are in
+   * the table's base, and the box rides back over them.
    */
   private forksInInput(belt: number): boolean {
-    const c = this.columnCenters[this.belts.inputOf(belt)];
+    const input = this.belts.inputOf(belt);
     const f = this.snapshot.forklift;
+    if (f.forkHeight < this.grid.columns[input].baseLevel - SOLID_TOP_EPSILON) return false;
+    const c = this.columnCenters[input];
     let x: number;
     let z: number;
     let r: number;
@@ -631,18 +638,21 @@ export class GameState {
   }
 
   /**
-   * Belt `belt` ran back (H2) with its box (`index`): it rests on the input again, at its centre, unsealed, a box like
-   * any other there (pickable at the input's level). No box move, no target: nothing completes.
+   * Belt `belt` ran back (H2) with its box (`index`): it rests on the input again, at its centre, unsealed (and open to
+   * the tines again, H2c), a box like any other there (pickable at the input's level). No box move, no target: nothing
+   * completes.
    */
   private returned(belt: number, index: number): void {
     const snap = this.snapshot;
     const box = snap.boxes[index];
+    const input = this.belts.inputOf(belt);
     const slot = this.belts.inputSlotOf(belt);
     const state = snap.storageSlots[slot];
     this.grid.seal(slot, false);
+    this.world.shutBase(input, false);
     box.pos.x = state.pos.x;
     box.pos.z = state.pos.z;
-    this.refreshColumn(this.belts.inputOf(belt));
+    this.refreshColumn(input);
     this.emit({ type: 'beltReturned', conveyorId: snap.conveyors[belt].id, boxId: box.id, slotId: state.id, skin: state.skin, level: box.level });
   }
 
@@ -929,14 +939,14 @@ export class GameState {
    * F / V, wheel, gamepad X / B: one level up or down at the storage column the rig works at, any unit (hint.storage:
    * not while it lifts a floor box there), from level 0 up to its top slot (below a unit's base level, its solid face:
    * a belt's table), never through a board (a load inside a rack slot keeps its level), never through a solid base (the
-   * empty tines or a load reaching over a belt's table: the rig backs out first) and never down into the boxes of a
-   * stack (a truck bed) the load is over.
+   * empty tines or a load reaching over a belt's table, or the empty tines in its base from a side, H2c: the rig backs
+   * out first) and never down into the boxes of a stack (a truck bed) the load is over.
    */
   private stepForkLevel(step: -1 | 1): void {
     const engaged = this.engaged;
     if (engaged < 0 || !this.atColumn()) return;
     if (this.grid.columns[engaged].support === 'shelves' && this.loadInOpening()) return;
-    if (this.forksOverSolid() >= 0) return;
+    if (this.forksOverSolid() >= 0 || this.tinesInSolid()) return;
     const level = clamp(this.forkLevel + step, 0, this.grid.topLevel(engaged));
     if (level === this.forkLevel || this.sinksIntoStack(engaged, level)) return;
     this.forkLevel = level;
@@ -967,6 +977,21 @@ export class GameState {
     const x = f.pos.x + Math.sin(f.heading) * this.tineAhead;
     const z = f.pos.z + Math.cos(f.heading) * this.tineAhead;
     return this.world.solidTopUnder(x, z, this.tineRadius, f.forkHeight);
+  }
+
+  /**
+   * The empty tines (their circle) reach into the cell of a solid base below its top: in from one of its sides, through
+   * its closed base (they pass a belt table's sides as a wall's, docs/CONVEYOR.md decision U). While they do, the forks
+   * never rise (stepForkHeight) and F / V do nothing (stepForkLevel), so they never come up through its top into its
+   * slot (H2c: a box a belt's button brings back never meets them there); the rig backs out first. False in a level
+   * without solid bases, and while carrying (the load meets a shut cell whole).
+   */
+  private tinesInSolid(): boolean {
+    if (!this.world.hasSolidBases || this.carriedIndex >= 0) return false;
+    const f = this.snapshot.forklift;
+    const x = f.pos.x + Math.sin(f.heading) * this.tineAhead;
+    const z = f.pos.z + Math.cos(f.heading) * this.tineAhead;
+    return this.world.inSolidBase(x, z, this.tineRadius, f.forkHeight);
   }
 
   /**
@@ -1169,8 +1194,9 @@ export class GameState {
   /**
    * Carriage height in stack levels: toward the drop height while carrying, the target box's level while empty.
    * Discrete targets, reached at a steady rate that is slower the higher the forks go (always 0 in classic levels).
-   * Never below what clearLevel asks for, so neither the load nor the empty forks sink into a stack, and never below a
-   * solid base the forks reach over (a belt's table: forksOverSolid), even once the level is complete.
+   * Never below what clearLevel asks for, so neither the load nor the empty forks sink into a stack, never below a
+   * solid base the forks reach over (a belt's table: forksOverSolid), even once the level is complete, and never up
+   * while the empty tines are in a solid base below its top (tinesInSolid, H2c).
    */
   private stepForkHeight(dt: number): void {
     const snap = this.snapshot;
@@ -1185,6 +1211,7 @@ export class GameState {
       else target = snap.hint.targetBoxId ? this.pickLevel : this.clearLevel(false);
     }
     target = Math.max(target, this.forksOverSolid());
+    if (target > f.forkHeight && this.tinesInSolid()) target = f.forkHeight;
     if (target === f.forkHeight || !(dt > 0)) return;
     f.forkHeight = approach(f.forkHeight, target, this.forkRate(Math.max(f.forkHeight, target)) * dt);
   }

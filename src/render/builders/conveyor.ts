@@ -1,4 +1,4 @@
-import { Path, Shape, ShapeGeometry, Vector2, type BufferGeometry } from 'three';
+import { BufferAttribute, BufferGeometry, Path, Shape, ShapeGeometry, Vector2 } from 'three';
 import { FACING_X, FACING_Z } from '../../core/racks';
 import { BASE_GUARD } from '../../core/storage';
 import { cellToWorld, type Facing, type LevelConveyor, type LevelData, type LevelStorage } from '../../core/types';
@@ -22,7 +22,7 @@ import { buildCueFace, buildGlowFrameGeometry, rectRingShape, type CueDims, type
  * flat on it and a low solid skirting in the belt's identity colour along its three open edges, never on the side
  * joined to the belt. Its button (H2b), on a floor cell of its own next to the input, is the input's pad again, on the
  * floor, with a cream back arrow on it («un slot en el suelo con un icono de flecha hacia atrás… del mismo color que la
- * base A»): A and its button read as one.
+ * base A»): A and its button read as one. Round it, a halo of its light on the floor (H2c), lit by views/ConveyorView.
  */
 
 /**
@@ -113,6 +113,26 @@ export const BELT_BURST = { halfW: 0.44 } as const;
  * (views/ConveyorView BeltButton).
  */
 export const BELT_BUTTON = { half: BELT.pad.half, radius: BELT.pad.radius, height: BELT.skin, dip: 0.01 } as const;
+
+/**
+ * The light a belt's button spills on the floor round its pad (H2c, «que cuando le des click se ilumine mucho más»;
+ * buildBeltButtonHaloGeometry, views/ConveyorView BeltButton): a feathered rounded square hugging the pad from just under
+ * its edge (`inset`) and fading out past it, ring by ring (`stops`: how far past the pad's edge, its alpha there), so it
+ * reads round a forklift standing on the pad, from the default camera too (the forklift hides the light behind it, the
+ * input's table the light on its side). `lift` over the floor, `segments` per corner. The zones' soft success glow,
+ * much stronger: over three times as wide as a zone's halo (its 0.2), most of it into the cells round the pad.
+ */
+export const BELT_BUTTON_HALO = {
+  inset: 0.02,
+  stops: [
+    { out: 0, alpha: 1 },
+    { out: 0.2, alpha: 0.8 },
+    { out: 0.45, alpha: 0.38 },
+    { out: 0.7, alpha: 0 },
+  ],
+  lift: 0.004,
+  segments: 6,
+} as const;
 
 /**
  * The back arrow painted flat on a belt's button (buildBeltButtonIcon, cell-local: +z along its belt, from the input
@@ -307,6 +327,47 @@ export function buildBeltButtonPad(identity: string): BufferGeometry {
   const B = BELT_BUTTON;
   const pad = extrudedShapeGeometry(roundedRectShape(B.half, B.half, B.radius, 4), B.height, 0, 4);
   return new PartList().add(pad, identity).build();
+}
+
+/**
+ * The light of a belt's button on the floor (BELT_BUTTON_HALO), in its cell-local space (origin = its cell's centre on
+ * the floor): rounded-square rings round its pad, from just under the pad's edge out past it, joined ring to ring; white
+ * RGBA vertices whose alpha follows the stops (0 at the outer one: feathered), so its material tints and fades it.
+ * Flat, `lift` over the floor; the pad covers its inner edge.
+ */
+export function buildBeltButtonHaloGeometry(): BufferGeometry {
+  const H = BELT_BUTTON_HALO;
+  const B = BELT_BUTTON;
+  const rings = H.stops.map((stop, i) => {
+    const half = B.half + stop.out - (i === 0 ? H.inset : 0);
+    return { points: roundedRectPoints(half, half, B.radius + stop.out, H.segments), alpha: stop.alpha };
+  });
+  const positions: number[] = [];
+  const colors: number[] = [];
+  // A shape point (x, y) lies flat at (x, lift, −y), like the zones' halo.
+  const push = (p: Vector2, alpha: number) => {
+    positions.push(p.x, H.lift, -p.y);
+    colors.push(1, 1, 1, alpha);
+  };
+  for (let k = 1; k < rings.length; k++) {
+    const inner = rings[k - 1];
+    const outer = rings[k];
+    const n = inner.points.length;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      push(inner.points[i], inner.alpha);
+      push(outer.points[i], outer.alpha);
+      push(outer.points[j], outer.alpha);
+      push(inner.points[i], inner.alpha);
+      push(outer.points[j], outer.alpha);
+      push(inner.points[j], inner.alpha);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+  geo.setAttribute('color', new BufferAttribute(new Float32Array(colors), 4));
+  geo.computeBoundingSphere();
+  return geo;
 }
 
 /**

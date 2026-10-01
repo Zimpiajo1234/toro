@@ -210,7 +210,8 @@ Su fila dice `sound: 'metal'`:
   Mínimo del contador de movimientos: 15 (`levelMinimums.json`). Antes de la cinta: 14 movimientos, bloqueos 4, trampas
   12, libre 78 %. La mesa de la cinta (H1b, a nivel 1: su entrada se carga con F como un hueco de nivel 1) no cambió
   ninguna cifra; su botón (H2, en (7,2), junto a A) era una casilla más ocupada (estrechas 8 → 9 y libre 75 % → 74 %),
-  y desde H2b es una almohadilla en el suelo en (7,3), suelo para las métricas: estrechas 8 y libre 75 % otra vez.
+  y desde H2b es una almohadilla en el suelo en (7,3), suelo para las métricas: estrechas 8 y libre 75 % otra vez; desde
+  H2c, la misma almohadilla otra vez en (7,2), justo al lado de A: las mismas cifras.
 - **Entrada**: botón «Benchmark» del pie del título, junto al interruptor, solo con el Modo prueba encendido
   (`GameActions.startBenchmark()`; sin Modo prueba la acción no hace nada). Es un botón normal: Tab lo alcanza y
   Enter / Espacio lo pulsan. En el título el mando solo tiene A / Start = «Continuar» (igual que para los puntos de

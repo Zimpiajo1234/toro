@@ -226,17 +226,20 @@ horquilla en el nivel 1. Dejarla en la entrada cuenta un movimiento; el viaje, n
 
 El **botón** de la cinta es una **almohadilla en el suelo** junto a la entrada, del **mismo color y estilo que la
 almohadilla de la entrada** (así se sabe de qué cinta es cuando hay varias), con una **flecha de vuelta** crema pintada
-encima. **Súbete a ella** con la carretilla (el centro de la carretilla dentro, con cualquier rumbo, con la horquilla
-vacía o con una caja; brilla un poco mientras estás encima) y pulsa **Espacio**: encima, Espacio siempre pulsa (nunca
-coge ni deja). La almohadilla se ilumina y se hunde un poco, la cinta corre **al revés** (las rayas hacia atrás, con el
-mismo zumbido) y **devuelve a la entrada la última caja mal puesta**, que vuelves a coger con la horquilla en el nivel
-1. Pulsarlo y la vuelta cuentan **0 movimientos** y «Quedan N» no cambia. Solo funciona con la cinta parada, la entrada
-vacía y nada de la carretilla dentro de ella, y si hay algo que devolver (una caja que ya está en su sitio nunca
-vuelve); si no, un destello apagado y un «no» suave, y nada se mueve. Se pasa por encima como por el suelo, pero nunca
-se deja una caja en ella. En los niveles con botón la pista de controles dice «Espacio recoger / dejar / pulsar». Sin
-teclas nuevas. Hoy solo el Benchmark lleva una cinta (de (8,2) a (8,0), junto a la estantería de madera del fondo, con
-el botón en (7,3), a la izquierda de la casilla de delante de la entrada); los niveles 1–3 no cambian. Detalle,
-decisiones e hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
+encima. **Súbete a ella** con la carretilla (el centro de la carretilla dentro, con cualquier rumbo, también de cara a la
+entrada, con la horquilla vacía o con una caja; brilla un poco mientras estás encima, con un halo suave alrededor) y
+pulsa **Espacio**: encima, Espacio siempre pulsa (nunca coge ni deja). La almohadilla se hunde un poco y **se ilumina
+con fuerza**, con un **halo de luz en el suelo** a su alrededor que se ve aunque la carretilla esté encima; la cinta
+corre **al revés** (las rayas hacia atrás, con el mismo zumbido) y **devuelve a la entrada la última caja mal puesta**.
+La luz sigue encendida mientras la caja vuelve y se apaga suave cuando llega; entonces la vuelves a coger con la
+horquilla en el nivel 1 (mientras vuelve, nada entra en la entrada). Pulsarlo y la vuelta cuentan **0 movimientos** y
+«Quedan N» no cambia. Solo funciona con la cinta parada, la entrada vacía y nada de la carretilla en su hueco (las púas
+o la caja sobre la mesa; de cara a la entrada desde la almohadilla de al lado, las púas pasan por debajo de la mesa y se
+pulsa igual), y si hay algo que devolver (una caja que ya está en su sitio nunca vuelve); si no, un destello apagado y un
+«no» suave, y nada se mueve. Se pasa por encima como por el suelo, pero nunca se deja una caja en ella. En los niveles
+con botón la pista de controles dice «Espacio recoger / dejar / pulsar». Sin teclas nuevas. Hoy solo el Benchmark lleva
+una cinta (de (8,2) a (8,0), junto a la estantería de madera del fondo, con el botón en (7,2), justo al lado de la
+entrada); los niveles 1–3 no cambian. Detalle, decisiones e hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
 
 ## Sonidos de la carretilla
 

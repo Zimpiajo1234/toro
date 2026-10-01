@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { GAME_CONFIG } from '../config';
 import { angleDelta } from '../core/math';
-import type { GameEvent, InputFrame } from '../core/types';
+import { TINES, type GameEvent, type GameSnapshot, type InputFrame } from '../core/types';
 import { parseLevel } from '../data/asciiLevel';
+import { pointRectDistance } from './collision';
 import { BUTTON_PAD, CONVEYOR, ConveyorSystem, buttonRefusal, onButtonPad, type ConveyorHost } from './conveyor';
 import { GameState } from './GameState';
 import { LevelGrid } from './grid';
@@ -12,12 +14,13 @@ import { IDLE, press, run, types } from './testUtils';
  * A conveyor belt's button (docs/CONVEYOR.md, H2; H2b: a pad on the floor): a cell of its own next to the belt's input,
  * floor the forklift drives onto, where no box ever rests. Standing on it (its body centre inside the pad, BUTTON_PAD's
  * margin in from the cell's edges, any heading), the action presses it, the forks empty or carrying, and nothing is
- * picked or dropped there. Accepted only with the belt at rest, its input's slot empty, nothing of the forklift in it and
- * a box to bring back (one that reached an exit without being locked there: the last one first): the belt runs in
- * reverse, the same eased ride mirrored, and the box rests on the input again, pickable at its level. Otherwise nothing
- * moves (a soft «no»). The press and the ride back count no move, «Quedan N» stays as it was and a return never
- * completes the level. A drop with the fork point over the pad is refused (the gentle actionIdle). Deterministic at 60
- * and 20 fps.
+ * picked or dropped there. Accepted only with the belt at rest, its input's slot empty, nothing of the forklift in that
+ * slot (H2c: the tines or the load in the input's cell over its table top; tines in its base from a side, below the top,
+ * leave it clear) and a box to bring back (one that reached an exit without being locked there: the last one first): the
+ * belt runs in reverse, the same eased ride mirrored, and the box rests on the input again, pickable at its level; on
+ * its way back nothing goes in under it. Otherwise nothing moves (a soft «no»). The press and the ride back count no
+ * move, «Quedan N» stays as it was and a return never completes the level. A drop with the fork point over the pad is
+ * refused (the gentle actionIdle). Deterministic at 60 and 20 fps.
  */
 
 const level = (text: string) => parseLevel(`${text.trim()}\n`, 'prueba.level').level;
@@ -54,9 +57,23 @@ const returned = (events: readonly GameEvent[]) => events.find((e): e is Returne
 
 /** World centre of map cell (x, z) of the BUTTON level (7 × 7). */
 const centre = (x: number, z: number) => ({ x: x + 0.5 - 3.5, z: z + 0.5 - 3.5 });
+/** World centre of map cell (x, z) of the level `snap` plays. */
+const cellCentre = (snap: GameSnapshot, x: number, z: number) => ({ x: x + 0.5 - snap.level.size.width / 2, z: z + 0.5 - snap.level.size.depth / 2 });
 /** The pad's centre, and how far from it (along each axis) the body centre stands on it. */
 const PAD = centre(2, 2);
 const INNER = 0.5 - BUTTON_PAD.margin;
+
+/** The empty tines' circle round their tips (as GameState builds it from core/types TINES): its radius and reach. */
+const TINE_RADIUS = TINES.spread + TINES.width / 2;
+const TINE_AHEAD = GAME_CONFIG.forklift.forkReach + TINES.tip * GAME_CONFIG.box.size - TINE_RADIUS;
+/** How deep the empty tines' circle reaches into map cell (x, z) (> 0: in; ≤ 0: clear of it by as much). */
+function reachInto(snap: GameSnapshot, x: number, z: number): number {
+  const f = snap.forklift;
+  const c = cellCentre(snap, x, z);
+  const tx = f.pos.x + Math.sin(f.heading) * TINE_AHEAD;
+  const tz = f.pos.z + Math.cos(f.heading) * TINE_AHEAD;
+  return TINE_RADIUS - pointRectDistance(tx, tz, c.x - 0.5, c.z - 0.5, c.x + 0.5, c.z + 0.5);
+}
 
 /**
  * One press of F (+1) or V (−1), then the forks left to reach the level chosen, and one frame more (as in
@@ -80,7 +97,7 @@ function face(state: GameState, dx: number, dz: number, dt: number): void {
 
 /** Drive (world-space moves, easing off near it) until the forklift's centre stands on cell (x, z)'s, then stop. */
 function goTo(state: GameState, x: number, z: number, dt: number): void {
-  const p = centre(x, z);
+  const p = cellCentre(state.getSnapshot(), x, z);
   for (let t = 0; t < 10; t += dt) {
     const f = state.getSnapshot().forklift.pos;
     const dx = p.x - f.x;
@@ -304,14 +321,18 @@ describe.each([
     expect(z()).toBeLessThan(PAD.z + INNER);
     expect(snap.hint.button).toBe('c1');
     expect(pressed(press(state, dt))).toMatchObject({ accepted: false, reason: 'nothing' });
-    // Facing east, into A: still standing on it, but the tines reach into A (they pass its side below its table):
-    // refused, «forks», whatever there is to bring back.
+    // Facing east, into A: still standing on it, its tines reaching into A's cell from its side, below its table top
+    // (they pass its closed base as a wall's, decision U). A's slot, where a box would come back to, stays clear: never
+    // «forks» (H2c); here there is just nothing to bring back.
     goTo(state, 2, 2, dt);
     face(state, 1, 0, dt);
     expect(onButtonPad(snap.forklift.pos.x, snap.forklift.pos.z, PAD)).toBe(true);
     expect(snap.hint.button).toBe('c1');
-    expect(pressed(press(state, dt))).toEqual({ type: 'beltButton', conveyorId: 'c1', accepted: false, reason: 'forks' });
-    // Any other heading on it, turned in place (never sweeping the tines across A's loading face): north, west, south.
+    expect(reachInto(snap, 3, 2)).toBeGreaterThan(0.2);
+    expect(snap.forklift.forkHeight).toBe(0);
+    expect(pressed(press(state, dt))).toEqual({ type: 'beltButton', conveyorId: 'c1', accepted: false, reason: 'nothing' });
+    // Any other heading on it, turned in place (never sweeping the tines across A's loading face): north, west, south;
+    // never «forks» either.
     for (const [dx, dz] of [
       [0, -1],
       [-1, 0],
@@ -320,13 +341,153 @@ describe.each([
       face(state, dx, dz, dt);
       expect(onButtonPad(snap.forklift.pos.x, snap.forklift.pos.z, PAD), `${dx},${dz}`).toBe(true);
       expect(snap.hint.button).toBe('c1');
+      expect(pressed(press(state, dt)), `${dx},${dz}`).toMatchObject({ accepted: false, reason: 'nothing' });
     }
     // Off it to the west, its centre past the pad's edge: the action is the forklift's own again.
     face(state, -1, 0, dt);
     creep(state, (p) => p.x <= PAD.x - INNER - 0.06, dt);
     expect(snap.hint.button).toBeNull();
     expect(types(press(state, dt))).toEqual(['actionIdle']);
-    expect(snap.conveyors[0]).toMatchObject({ presses: 2, accepted: 0 });
+    expect(snap.conveyors[0]).toMatchObject({ presses: 5, accepted: 0 });
+  });
+
+  it('facing A from the pad right beside it, the press is accepted (H2c): the tines stay in its base, under its table top, while the box rides back over them', () => {
+    const state = new GameState(BUTTON);
+    const snap = state.getSnapshot();
+    sendAzulToB(state, dt);
+    ontoThePad(state, dt);
+    face(state, 1, 0, dt);
+    expect(onButtonPad(snap.forklift.pos.x, snap.forklift.pos.z, PAD)).toBe(true);
+    expect(reachInto(snap, 3, 2)).toBeGreaterThan(0.2);
+    expect(press(state, dt)).toEqual([{ type: 'beltButton', conveyorId: 'c1', accepted: true, boxId: 'b1', fromSlotId: 's1:0:1' }]);
+    // All the way back the forks stay down and the tines where they are, in the table's base under the top the box
+    // rides on; it rests on A at its level (the table top), clear of them, a box like any other there.
+    const frames = framesUntil(
+      state,
+      dt,
+      (e) => e.some((x) => x.type === 'beltReturned'),
+      () => ({ height: snap.forklift.forkHeight, reach: reachInto(snap, 3, 2) }),
+    );
+    for (const f of frames) {
+      expect(f.value.height).toBe(0);
+      expect(f.value.reach).toBeGreaterThan(0.2);
+    }
+    expect(snap.boxes[0]).toMatchObject({ slotId: 'e1:0:1', cell: { x: 3, z: 2 }, level: 1 });
+    expect(snap.boxes[0].pos).toEqual(centre(3, 2));
+    expect([snap.moves, objectivesLeft(snap)]).toEqual([1, 2]);
+    // Turned back north on the pad (the tines out of A through its belt side), off it and round to A's front: lifted
+    // off A at level 1, as any box waiting there.
+    face(state, 0, -1, dt);
+    goTo(state, 2, 4, dt);
+    goTo(state, 3, 4, dt);
+    face(state, 0, -1, dt);
+    forkTo(state, 1, dt);
+    for (let t = 0; t < 3 && snap.hint.targetBoxId !== 'b1'; t += dt) state.update(dt, input(0.3));
+    expect(press(state, dt)).toEqual([{ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' }]);
+  });
+
+  it('still «forks» with the tines in A\'s slot, over its table top: the box coming back would land on them', () => {
+    const state = new GameState(BUTTON);
+    const snap = state.getSnapshot();
+    sendAzulToB(state, dt);
+    ontoThePad(state, dt);
+    face(state, 1, 0, dt);
+    // No route takes raised forks into A from a pad (F / V act only at a column the rig faces, off any pad, and A's side
+    // guards keep raised tines out of its sides), so they are set at its slot's level here: the tines in its cell over
+    // the table top, where the box would land. They stay there (forks never sink into a table they reach over).
+    snap.forklift.forkHeight = 1;
+    state.update(dt, IDLE);
+    expect(snap.forklift.forkHeight).toBe(1);
+    expect(reachInto(snap, 3, 2)).toBeGreaterThan(0.2);
+    expect(snap.hint.button).toBe('c1');
+    expect(pressed(press(state, dt))).toEqual({ type: 'beltButton', conveyorId: 'c1', accepted: false, reason: 'forks' });
+    expect(snap.boxes[0]).toMatchObject({ slotId: 's1:0:1' });
+    expect(snap.conveyors[0]).toMatchObject({ phase: 'idle', presses: 1, accepted: 0 });
+    // Just under the table top, in its base again: the slot is clear, the press goes.
+    snap.forklift.forkHeight = 0.9;
+    expect(pressed(press(state, dt))).toMatchObject({ accepted: true, boxId: 'b1' });
+  });
+
+  it('on its way back nothing goes in under the box: A\'s face stops the tines over its table top too until it lands', () => {
+    // A longer belt (A (3,4) → three cells → B (3,0)), its button «o» (2,6) beside the cell behind A's front: the ride
+    // back lasts long enough to come round to A with the forks up while the box is still on its way.
+    const state = new GameState(
+      level(`
+# 1 · Cinta larga con botón
+id: cinta-larga
+limit: 1
+
+  0123456
+0 ..pBp..
+1 ...~...
+2 ...~...
+3 ...~...
+4 ...A...
+5 ...a...
+6 ..o^...
+7 .......
+8 .b...1.
+
+1 = zona azul
+a = caja azul ●     b = caja menta ▲
+A = cinta entrada   B = cinta final: menta   ~ = cinta   o = cinta botón
+`),
+    );
+    const snap = state.getSnapshot();
+    sendAzulToB(state, dt);
+    run(state, 1, input(-1), dt);
+    forkTo(state, -1, dt);
+    goTo(state, 2, 7, dt);
+    goTo(state, 2, 6, dt);
+    expect(snap.hint.button).toBe('c1');
+    expect(pressed(press(state, dt))).toMatchObject({ accepted: true, boxId: 'b1' });
+    // Round to the cell behind A's front, facing it, the forks up to its slot's level (the tines still outside).
+    goTo(state, 3, 6, dt);
+    face(state, 0, -1, dt);
+    forkTo(state, 1, dt);
+    expect([snap.forklift.forkHeight, snap.conveyors[0].direction]).toEqual([1, -1]);
+    // Pushing on in while the box comes back: the face stops the tines over the table top too (a touch, never in).
+    const reach: number[] = [];
+    let back = false;
+    for (let t = 0; t < 10 && !back; t += dt) {
+      back = state.update(dt, input(0.3)).some((e) => e.type === 'beltReturned');
+      if (!back) reach.push(reachInto(snap, 3, 4));
+    }
+    expect(back).toBe(true);
+    expect(reach.length * dt).toBeGreaterThan(0.5);
+    expect(Math.max(...reach)).toBeLessThan(0.01);
+    expect(reach.at(-1)!).toBeGreaterThan(-0.02);
+    expect(snap.forklift.forkHeight).toBe(1);
+    // Landed, it is a box like any other on A: the tines go on in under it at level 1, and lift it.
+    for (let t = 0; t < 2 && reachInto(snap, 3, 4) < 0.2; t += dt) state.update(dt, input(0.3));
+    expect(reachInto(snap, 3, 4)).toBeGreaterThan(0.2);
+    expect(snap.hint.targetBoxId).toBe('b1');
+    expect(press(state, dt)).toEqual([{ type: 'boxPicked', boxId: 'b1', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' }]);
+  });
+
+  it('the forks never come up through the table: tines turned into A\'s base at its front cell, F does nothing until backed out', () => {
+    // Azul ● moved off A's front cell, out of the way.
+    const state = new GameState(level(BUTTON_TEXT.replace('3 ...a...', '3 a......')));
+    const snap = state.getSnapshot();
+    // Into A's front cell from the west, then turned to face A: the tines sweep into its cell through its east side,
+    // under its table top (its base, passed as a wall).
+    goTo(state, 2, 3, dt);
+    goTo(state, 3, 3, dt);
+    face(state, 0, -1, dt);
+    expect(reachInto(snap, 3, 2)).toBeGreaterThan(0.2);
+    expect(snap.hint.storage).toMatchObject({ unitId: 'e1', level: 0 });
+    // F (and V) do nothing there, and the forks stay down.
+    forkTo(state, 1, dt);
+    forkTo(state, -1, dt);
+    run(state, 0.5, IDLE, dt);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([0, 0]);
+    // Backed straight out until the tines are clear of A: F takes them up to its slot, and then in over the table top.
+    for (let t = 0; t < 3 && reachInto(snap, 3, 2) > -0.02; t += dt) state.update(dt, input(-0.3));
+    run(state, 0.4, IDLE, dt);
+    forkTo(state, 1, dt);
+    expect([snap.hint.storage?.level, snap.forklift.forkHeight]).toEqual([1, 1]);
+    for (let t = 0; t < 2 && reachInto(snap, 3, 2) < 0.3; t += dt) state.update(dt, input(0.3));
+    expect(reachInto(snap, 3, 2)).toBeGreaterThan(0.3);
   });
 
   it('carrying, Space on the pad presses (never drops); with the fork point over the pad a drop is refused, softly', () => {

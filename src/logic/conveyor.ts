@@ -59,7 +59,10 @@ export function buttonRefusal(belt: {
   busy: boolean;
   /** A box rests on its input (its one slot). */
   inputTaken: boolean;
-  /** The empty tines or the carried load reach into its input. */
+  /**
+   * The empty tines or the carried load occupy its input's slot, where the box would land (H2c: in its cell at its
+   * level or higher, over its table top; below it, in from a side, they leave the slot clear).
+   */
   forksInInput: boolean;
   /** Boxes resting at its exits that may come back (not locked there). */
   returnable: number;

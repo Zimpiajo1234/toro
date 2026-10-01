@@ -559,7 +559,8 @@ export interface ConveyorState {
   travel: number;
   /**
    * Its button (H2; always 0 without one): every press so far, and of those the accepted ones (the belt ran back). The
-   * render dips the cap on each press and glows on an accepted one.
+   * render dips its pad on an accepted press and flashes it, muted, on a refused one (H2b); it lights it while the belt
+   * runs back (H2c: `direction` −1).
    */
   presses: number;
   accepted: number;
@@ -568,8 +569,9 @@ export interface ConveyorState {
 /**
  * Why a press of a belt's button did nothing (docs/CONVEYOR.md H2; GameEvent `beltButton`), checked in this order:
  * `busy` = a box settling or riding on it; `input` = a box resting on its input (the one coming back needs its slot);
- * `forks` = the tines or the carried load reach into its input; `nothing` = no box to bring back (none rests at one of
- * its exits without being locked there).
+ * `forks` = the tines or the carried load occupy its input's slot (H2c: in its cell at its level or higher, over its
+ * table top, where the box would land); `nothing` = no box to bring back (none rests at one of its exits without being
+ * locked there).
  */
 export type BeltButtonRefusal = 'busy' | 'input' | 'forks' | 'nothing';
 

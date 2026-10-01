@@ -199,18 +199,26 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(stacks[exit].length).toBe(1);
   });
 
-  it('its belt has a button (H2b: a pad on the floor) beside A, west of its front: driven onto from the floor around it; any box may now park at B and come back', () => {
+  it('its belt has a button (H2b: a pad on the floor) right beside A (H2c), against its west side: driven onto from the floor around it; any box may now park at B and come back', () => {
     const [belt] = level.conveyors!;
-    expect(belt.button).toEqual({ x: 7, z: 3 });
+    expect(belt.button).toEqual({ x: 7, z: 2 });
     const exit = grid.positionOfSlot('s1:0:1');
     const entry = grid.positionOfSlot('e1:0:1');
     const pad = cell(belt.button!);
-    // Floor (never a drop, never a pick or drop pose), pressed standing on it; A's front cell, east of it, stays A's.
+    // Floor (never a drop, never a pick or drop pose), pressed standing on it; A's front cell, south-east of it, A's.
     expect([grid.solid[pad], grid.pads[pad]]).toEqual([0, 1]);
     expect(grid.pressFrom[exit]).toEqual([pad]);
     expect(grid.front[entry]).toBe(cell({ x: 8, z: 3 }));
-    // Every side of it is floor: (8,3) (A's front, the yellow ● on it at the start), (7,4), (6,3) and (7,2).
-    expect([0, 1, 2, 3].map((d) => grid.step(pad, d)).every((c) => c >= 0 && grid.solid[c] === 0)).toBe(true);
+    // East of it, A (its table); every other side is floor to drive onto it from: (7,3), (6,2) and (7,1).
+    const sides = [0, 1, 2, 3].map((d) => grid.step(pad, d));
+    expect(sides[0]).toBe(cell({ x: 8, z: 2 }));
+    expect(grid.solid[sides[0]]).toBe(1);
+    expect(sides.slice(1).map((c) => grid.cellOf(c))).toEqual([
+      { x: 7, z: 3 },
+      { x: 6, z: 2 },
+      { x: 7, z: 1 },
+    ]);
+    expect(sides.slice(1).every((c) => grid.solid[c] === 0)).toBe(true);
     // Once the yellow ● in front of A is out of the way, a wrong box ridden to B is lifted «from» B (the button).
     let stacks = stacksOf(grid, level);
     const yellow = cell({ x: 8, z: 3 });
@@ -333,23 +341,27 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     expect(drops(grid).length).toBeGreaterThan(10);
   });
 
-  it('no zone, floor box or the forklift starts hidden from the default camera behind a shelf, rack, plant or stack', () => {
+  it('no zone, floor box or the forklift starts hidden from the default camera behind a shelf, rack, plant or stack; the button pad only behind A\'s table', () => {
     // As levels.test.ts hiddenItems: the cells east, south and south-east of an item stand between it and the camera.
-    // (The front cells of the rack that turns its back to the camera are hidden on purpose: read it or turn Q / E.) The
-    // belt's button pad (H2b) is flat: it hides nothing, and nothing hides it (at (7,2), west of A, A's table would).
+    // (The front cells of the rack that turns its back to the camera are hidden on purpose: read it or turn Q / E.)
     const stacks = stacksOf(grid, level);
     const blocks = (x: number, z: number) => x < grid.width && z < grid.depth && (grid.solid[grid.index(x, z)] === 1 || stacks[grid.index(x, z)].length >= 2);
-    const button = { id: 'button', ...level.conveyors![0].button! };
-    const hidden = [...level.zones, ...level.boxes.filter((b) => !isStored(b)), { id: 'forklift', ...level.forklift }, button].filter((item) =>
-      [
-        [1, 0],
-        [0, 1],
-        [1, 1],
-      ].some(([dx, dz]) => blocks(item.x + dx, item.z + dz)),
+    const toCamera = [
+      [1, 0],
+      [0, 1],
+      [1, 1],
+    ] as const;
+    const hidden = [...level.zones, ...level.boxes.filter((b) => !isStored(b)), { id: 'forklift', ...level.forklift }].filter((item) =>
+      toCamera.some(([dx, dz]) => blocks(item.x + dx, item.z + dz)),
     );
     expect(hidden.map((i) => i.id)).toEqual([]);
-    // Where H2's post stood, (7,2), the pad would be hidden: A's table stands east of it, toward the camera.
-    expect(blocks(8, 2)).toBe(true);
+    // The belt's button pad (H2b: flat, it hides nothing) stands right beside A on purpose (H2c, «justo al lado de la
+    // máquina»): A's table, east of it, hides its north-east corner from the default camera, and nothing else stands
+    // between them (south and south-east, floor), so its south and west sides show, and lit, its light on the floor
+    // round it (views/ConveyorView BeltButton, BELT_BUTTON_HALO).
+    const pad = level.conveyors![0].button!;
+    expect(toCamera.map(([dx, dz]) => blocks(pad.x + dx, pad.z + dz))).toEqual([true, false, false]);
+    expect(cell({ x: pad.x + 1, z: pad.z })).toBe(cell(storageOf(level).find((u) => u.id === level.conveyors![0].input)!));
   });
 
   it('the solver finds a shortest plan (exact) that replays; the greedy search solves it too, but only with parking', () => {

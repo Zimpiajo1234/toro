@@ -1,6 +1,6 @@
 # Cinta transportadora (aspectos `beltIn` y `beltOut`)
 
-**Estado: H1, H1b, H1c, H2 y H2b hechos (2026-10-01); H3, pendiente.**
+**Estado: H1, H1b, H1c, H2, H2b y H2c hechos (2026-10-01); H3, pendiente.**
 
 Una cinta lleva sola una caja desde su **entrada A**, donde la deja la carretilla, hasta su **salida final B**, que la
 carretilla no alcanza. Encaja en el almacenaje común (docs/STORAGE.md): A y B son unidades de almacenaje de un hueco, y
@@ -11,9 +11,11 @@ probarla (la cinta es una **mesa a la altura del nivel 1** de una estantería, A
 negra (sin patas), A con **barandillas cerradas negras** a los lados, la línea de carga delante y un **icono** de dejar
 la caja, B con un **rodapié** del color de su cinta, y la horquilla que **nunca atraviesa la mesa** (con las púas dentro
 de A, F / V no hacen nada), **H2**, el **botón**, que **devuelve a A la última caja mal puesta** con la cinta al revés
-(0 movimientos), y **H2b**, el botón en el suelo: una **almohadilla** junto a A, del color y el estilo de la de A, con
-una **flecha de vuelta** pintada encima, a la que la carretilla **se sube** para pulsar Espacio. Solo el Benchmark (y
-dos niveles de prueba) lleva una cinta; los niveles 1–3 no cambian.
+(0 movimientos), **H2b**, el botón en el suelo: una **almohadilla** junto a A, del color y el estilo de la de A, con
+una **flecha de vuelta** pintada encima, a la que la carretilla **se sube** para pulsar Espacio, y **H2c**, la
+almohadilla **justo al lado de la máquina** (se pulsa con cualquier rumbo, también de cara a A) y una pulsación que la
+**ilumina mucho más**, con un halo de luz en el suelo alrededor, encendida mientras la caja vuelve. Solo el Benchmark
+(y dos niveles de prueba) lleva una cinta; los niveles 1–3 no cambian.
 
 ## Decisiones
 
@@ -175,7 +177,7 @@ Decisiones de H2 (2026-10-01, al construirlo; para revisar):
   dentro. Un trayecto en vacío ya nunca pisa la casilla de delante de A de frente a A con la horquilla abajo (la cara de
   la mesa lo pararía).
 - **AF. El Benchmark**: el botón en (7,2), a la izquierda de A, junto a su barandilla oeste. Desde H2b, en **(7,3)**
-  (decisión AQ).
+  (decisión AQ); desde H2c, otra vez en **(7,2)** (decisión AS).
 - **AG. La seta en un poste** (H2): fuera en H2b, con su geometría y sus constantes (decisión AI).
 - **AH. Una cinta sin botón** sigue el modelo de H1 (una caja equivocada en B nunca vuelve; el solver no la manda): los
   callejones no la cuentan. Toda cinta de un nivel debería llevar el suyo (hoy, la del Benchmark; el nivel de prueba de
@@ -208,13 +210,14 @@ Decisiones de H2b (2026-10-01, al construirlo; para revisar):
   borde que queda (los 0,15 de cada lado) y fuera, Espacio es lo de siempre.
 - **AL. Las reglas, las de H2** (decisión Z, en el mismo orden): la cinta parada, A vacía, nada de la carretilla dentro
   de A y algo que devolver. Encima de una almohadilla pegada a A y de cara a A, las púas entran en A (por su lado pasan,
-  decisión U): se rechaza («forks»); se pulsa de cara a otro lado.
+  decisión U): se rechaza («forks»); se pulsa de cara a otro lado. Desde H2c, eso ya no se rechaza: decisión AT.
 - **AM. Respuesta**: mientras la carretilla está encima, la almohadilla **brilla un poco** en su color
   (`BUTTON_FEEL.standGlow`, 0,24: sustituye al brillo tenue de encarar la seta); la pulsación aceptada la **ilumina**
   (0,55, se apaga en 0,75 s) y la **hunde** un poco en el suelo (`BELT_BUTTON.dip`, 1 cm: bajada rápida, subida suave);
   la rechazada, solo un **destello apagado** (`refusedFlash`, +0,1 durante 0,3 s), sin hundirla. La carretilla tapa casi
   toda la almohadilla mientras está encima: el brillo se ve en su borde. Los sonidos, los de H2. La pista de controles
-  sigue diciendo «Espacio recoger / dejar / pulsar» solo en los niveles con botón.
+  sigue diciendo «Espacio recoger / dejar / pulsar» solo en los niveles con botón. Desde H2c, la luz es otra: decisión
+  AV.
 - **AN. El solver**: la almohadilla es suelo que nunca es aparcamiento ni objetivo (`LevelGrid.pads`): `validDrop` nunca
   la da por destino, `pickupStarts` nunca coge desde ella y ninguna jugada termina con la carretilla encima
   (`carrySearch`, `chainTo`, `carryBackTo`): allí Espacio pulsaría. Se pulsa estando encima: `pressFrom` = la
@@ -229,7 +232,7 @@ Decisiones de H2b (2026-10-01, al construirlo; para revisar):
 - **AP. El piloto**: sube a la almohadilla recto desde una casilla libre a su lado, por el camino más corto que deja las
   púas fuera de A (si no queda otro lado, entra de cara a A y gira encima, con las púas vacías, antes de pulsar); pulsa,
   sale marcha atrás a esa casilla y espera la vuelta; luego coge de A como cualquier caja que espera allí. Nunca coge ni
-  deja estando encima (el plan nunca se lo pide).
+  deja estando encima (el plan nunca se lo pide). Desde H2c, pulsa con cualquier rumbo, sin girar: decisión AW.
 - **AQ. El Benchmark: el botón pasa de (7,2) a (7,3)** (para revisar). En (7,2), al oeste de A, la mesa y la barandilla
   oeste de A quedan entre la almohadilla y la cámara por defecto (que mira desde el sureste) y tapan su esquina noreste:
   cerca del 40 % de la almohadilla y la vuelta de su flecha. La regla de «nada escondido desde la cámara» (que mira ahora
@@ -239,9 +242,58 @@ Decisiones de H2b (2026-10-01, al construirlo; para revisar):
   callejones 0, el mismo plan). El precio: estando encima no se coge el amarillo ● de (8,3) (Espacio pulsa): se coge
   desde (8,4) o (9,3), o desde el oeste antes de pisarla (la horquilla ya la alcanza); el piloto lo coge desde (8,4) y
   tarda algo más (15449 / 5636 frames; con la almohadilla en (7,2), los 15229 / 5560 de H1c). Volver a (7,2) es mover la
-  «o» del mapa.
+  «o» del mapa. Desde H2c, de vuelta en (7,2), a petición del usuario (decisión AS).
 - **AR. Los niveles de prueba**: `cinta-boton.level` no cambia de mapa (su almohadilla (4,2) se sube desde (4,3), de cara
   al norte; su plan de 3 movimientos sigue usando el botón a 60 y 20 fps); `cinta.level`, sin botón, no cambia.
+
+Tras probar H2b (2026-10-01), el usuario: «bien, solo poner botón justo al lado de la máquina, que cuando le des click se
+ilumine mucho más».
+
+Decisiones de H2c (2026-10-01, al construirlo; para revisar):
+- **AS. El botón, justo al lado de la máquina** (para revisar): en el Benchmark vuelve a **(7,2)**, pegado al lado oeste
+  de A (a su barandilla oeste), como en H2. La petición manda sobre AQ: desde la cámara por defecto la mesa de A le tapa
+  la esquina noreste (cerca del 40 %), pero se ven sus lados sur y oeste, también con la carretilla encima, y encendida
+  su luz se derrama por el suelo de alrededor (AV), que se ve. La regla de «nada escondido desde la cámara»
+  (`benchmark.test.ts`) lo admite a propósito, y solo eso: hacia la cámara, la mesa de A al este; al sur y al sureste,
+  suelo. Se sube desde (7,3), (6,2) o (7,1). Las métricas no cambian (15 exacto, estrechas 8, libre 75 %, callejones 0,
+  el mismo plan) y el piloto vuelve a los frames de H1c (la almohadilla deja libre la casilla (7,3), desde la que coge
+  el amarillo ● de (8,3)).
+- **AT. «forks», solo con el hueco de A ocupado**: la pulsación se rechaza solo si las púas vacías o la carga **ocupan el
+  hueco de A, donde aterriza la caja que vuelve**: dentro de su celda con la horquilla en su nivel base o más arriba,
+  sobre su tablero (`GameState.forksInInput`). Las púas que entran en su celda por un lado **por debajo del tablero**
+  (pasan su base como una pared, decisión U) no lo ocupan: la caja vuelve por encima. Así, de cara a A desde una
+  almohadilla pegada a ella se pulsa (en el Benchmark, desde (7,2) mirando al este), con cualquier rumbo. Genérico:
+  cualquier cinta, cualquier almohadilla. El caso de verdad (las púas o la carga sobre el tablero de A) se sigue
+  rechazando, aunque desde una almohadilla ya casi no se da (F / V solo suben la horquilla en una columna encarada y
+  fuera de toda almohadilla, y las barandillas de A no dejan entrar por los lados unas púas subidas): el test pone la
+  horquilla en el nivel 1 a mano.
+- **AU. Nada entra en el hueco de A mientras vuelve una caja**: de la pulsación aceptada a que la caja descansa en A, la
+  cara de carga de A para también las púas vacías **por encima de su nivel base** (`CollisionWorld.shutBase`): no se
+  meten bajo la caja que viene; al llegar es una caja más en A (se entra bajo ella y se coge como siempre). La carga ya
+  no entraba (el hueco está ocupado). Y las púas vacías **dentro de la base** de A (por un lado, por debajo del tablero)
+  **no suben**: F / V no hacen nada y la horquilla no sube sola (`GameState.tinesInSolid`, `CollisionWorld.inSolidBase`);
+  se sale y entonces se sube. Cierra también un hueco de H1c: girando en la casilla de delante de A, las púas entraban
+  por un lado y F las subía a través del tablero. El bloqueo de H1c (las púas o la carga dentro de A sobre el tablero:
+  F / V / rueda quietas, la horquilla sin bajar, el rumbo fijo) sigue igual. Con AT, la caja que vuelve nunca encuentra
+  la horquilla.
+- **AV. La luz** («que se ilumine mucho más»): la pulsación aceptada enciende la almohadilla **con fuerza** (su brillo
+  hasta `BUTTON_FEEL.litGlow` 1,3, más que el 0,8 del destello de un objetivo cumplido) y, alrededor, un **halo de luz en
+  el suelo** (`BELT_BUTTON_HALO`: un cuadrado redondeado difuminado desde el borde de la almohadilla hasta 0,7 más allá,
+  más de tres veces el halo de una zona, casi opaco junto a ella: `litHalo` 0,95), en su color de identidad un poco más
+  claro (`haloLift`: +0,12 de luminosidad, el mismo tono y la misma saturación). Sube en `litRise` (0,2 s), **sigue
+  encendida mientras la cinta va al revés** y se apaga suave en `litFade` (0,9 s) cuando la caja llega a A, con curva
+  suave en las dos puntas (sin parpadeo); el hundido de 1 cm, igual. Se ve desde la cámara por defecto con la carretilla
+  encima: ella tapa la luz que le queda detrás y la mesa de A la de su lado; la del sur y el oeste, no (comprobado en el
+  navegador). Con la carretilla encima, el brillo suave de siempre (0,24) y un **halo tenue** (`standHalo` 0,3), que se
+  ve alrededor de la carretilla. La rechazada, igual de discreta: +0,1 en la almohadilla y +0,12 en el halo durante
+  0,3 s. Apagada, la almohadilla y su flecha, como en H2b. El halo es un objeto propio en el suelo (no se hunde con la
+  almohadilla) y no cuenta para el encuadre.
+- **AW. El piloto pulsa con cualquier rumbo**: sube a la almohadilla por el camino más corto desde cualquier lado libre,
+  pulsa tal cual llega (también de cara a A: ya no gira encima), sale marcha atrás a esa casilla y espera la vuelta. En
+  el Benchmark sube desde (7,3), de cara al norte; en un nivel del test cuya almohadilla, pegada a A, solo se sube desde
+  el lado contrario (`conveyorButtonFixture.test.ts`), pulsa de cara a A.
+- **AX. Los niveles de prueba** no cambian: `cinta-boton.level` (su almohadilla se sube solo desde (4,3), de cara al
+  norte; su plan de 3 movimientos sigue usando el botón a 60 y 20 fps) ni `cinta.level`, sin botón.
 
 ## Las tres piezas
 
@@ -276,13 +328,18 @@ Una cinta es una lista ordenada de casillas, cada una con su **pieza** y su **al
   rumbo) y Espacio pulsa (antes que coger o dejar); suelo para pasar, nunca para una caja; brilla un poco con la
   carretilla encima, se ilumina y se hunde al aceptar. El solver la trata como suelo que nunca es aparcamiento ni sitio
   de trabajo; el piloto sube, pulsa y sale marcha atrás; en el Benchmark, en (7,3).
+- **H2c · El botón junto a la máquina — hecho (2026-10-01).** Decisiones AS–AX, tras probar H2b: en el Benchmark, de
+  vuelta en (7,2), justo al lado de A; «forks» solo con las púas o la carga en el hueco de A, sobre su tablero (de cara a
+  A desde una almohadilla pegada a ella, se pulsa); mientras vuelve una caja nada entra en ese hueco y las púas metidas
+  en la base no suben; la pulsación aceptada ilumina la almohadilla con fuerza, con un halo de luz en el suelo, encendida
+  durante la vuelta y apagándose suave al llegar la caja; el piloto pulsa con cualquier rumbo.
 - **H3 · Desvíos** (pendiente, lo siguiente): salidas laterales con pista, la primera que encaje según avanza la caja,
   B como final; caja que se queda en A si no hay sitio; el botón devuelve la última que llegó a cualquiera de ellas (la
   lista LIFO de AA ya está; el solver tendrá que guardar el orden de llegada); en el Benchmark, 1 o 2 desvíos y una
   trampa de pista parcial. Con el OK del usuario, el PR de la cinta del suelo.
 - **Después**: el sistema de techo (rampa + cinta de techo).
 
-## Reglas (H1, H1b, H1c, H2, H2b)
+## Reglas (H1, H1b, H1c, H2, H2b, H2c)
 
 1. **Cinta** = una tirada recta (una fila o una columna): A, **al menos una** casilla de cinta y B, seguidas y en línea.
    A y B son unidades 1×1 (aspectos `beltIn` y `beltOut`) que **miran al lado contrario a la cinta**. Toda ella es una
@@ -293,7 +350,8 @@ Una cinta es una lista ordenada de casillas, cada una con su **pieza** y su **al
    previa y marcador igual. Con la horquilla por debajo del 1 (en el 0, o subiendo), la carga y las púas vacías chocan
    con la cara de la mesa y no se deja ni se coge nada. **Con las púas o la carga dentro de A** (sobre la mesa), F / V /
    rueda no hacen nada, la horquilla no baja y el rumbo se mantiene: se sale marcha atrás y entonces se cambia de nivel.
-   Sus lados están cerrados (barandillas); su frente es suelo.
+   Con las púas vacías metidas en su base por un lado, por debajo del tablero (H2c), F / V tampoco hacen nada y la
+   horquilla no sube: nunca atraviesa el tablero. Sus lados están cerrados (barandillas); su frente es suelo.
 3. **B, la salida final**: el último tramo de la mesa, a la misma altura; su pista (color, símbolo, los dos o «libre»)
    como un hueco; con pista es un objetivo del reparto único. La carretilla nunca trabaja en B (acceso `belt`, decisión
    H).
@@ -309,14 +367,17 @@ Una cinta es una lista ordenada de casillas, cada una con su **pieza** y su **al
    o viajando sigue contando en «Quedan N» hasta que cumple B; una vuelta no cambia «Quedan N» y nunca completa el nivel.
 8. **Obstáculos**: las casillas de cinta, A y B (la mesa entera), para el cuerpo y para la carga; para las púas vacías,
    la cara de carga de A por debajo de su nivel base y sus barandillas por encima (decisión U: por los lados, como una
-   pared, no las paran); nada empieza ni se deja encima de una casilla de cinta, y una cinta empieza vacía. El botón no es
-   un obstáculo (H2b): es suelo, pero nunca lleva una caja (ni empieza ni se deja ninguna en él).
-9. **El botón** (H2, H2b): una almohadilla en el suelo, en una casilla propia junto a A (como mucho uno por cinta), del
-   color y el estilo de la de A, con una flecha de vuelta. Con la carretilla **encima** (el centro de su cuerpo dentro,
-   cualquier rumbo, vacía o cargada), **Espacio** lo pulsa, y solo eso: con la cinta parada, A vacía, nada de la
-   carretilla dentro de A y alguna caja que devolver, la cinta corre **al revés** y la **última caja que llegó** a su
-   salida sin quedar fija vuelve al hueco de A (sellado mientras viaja; luego, una caja más en A). Si no, un «no» suave y
-   nada se mueve. Nunca va en la casilla desde la que se carga una unidad.
+   pared, no las paran), y su cara también por encima mientras el botón le devuelve una caja (H2c); nada empieza ni se
+   deja encima de una casilla de cinta, y una cinta empieza vacía. El botón no es un obstáculo (H2b): es suelo, pero
+   nunca lleva una caja (ni empieza ni se deja ninguna en él).
+9. **El botón** (H2, H2b, H2c): una almohadilla en el suelo, en una casilla propia junto a A (como mucho uno por cinta),
+   del color y el estilo de la de A, con una flecha de vuelta. Con la carretilla **encima** (el centro de su cuerpo
+   dentro, cualquier rumbo, vacía o cargada), **Espacio** lo pulsa, y solo eso: con la cinta parada, A vacía, nada de la
+   carretilla en el hueco de A (las púas o la carga en su celda sobre el tablero; metidas en su base por un lado, por
+   debajo, no cuentan) y alguna caja que devolver, la cinta corre **al revés** y la **última caja que llegó** a su salida
+   sin quedar fija vuelve al hueco de A (sellado mientras viaja, también para las púas; luego, una caja más en A). La
+   almohadilla se ilumina con fuerza, con su halo en el suelo, mientras la caja vuelve. Si no, un «no» suave y nada se
+   mueve. Nunca va en la casilla desde la que se carga una unidad.
 
 ## En el archivo `.level`
 
@@ -444,8 +505,8 @@ solo pueden venir de un nivel JSON (un `.level` no los escribe).
   (`ConveyorState`: `id`, `phase` = `idle` | `settling` | `running`, `boxId`, `progress` 0–1 de A a B, `running`,
   `direction` 1 | −1 (−1 mientras el botón la hace volver, H2), `travel` = casillas que ha avanzado su superficie, con
   signo: baja mientras corre al revés, y el dibujo mueve las franjas con ella; `presses` / `accepted`, las pulsaciones
-  de su botón y las aceptadas: el dibujo ilumina y hunde la almohadilla con ellas, sin repetir nada al cargar un
-  nivel).
+  de su botón y las aceptadas: el dibujo hunde la almohadilla o la hace destellar con ellas, sin repetir nada al cargar
+  un nivel, y la mantiene iluminada mientras `direction` es −1, H2c).
 - **Cargar A** (el hueco de nivel 1, como uno de estantería: `LevelGrid` cuenta los niveles desde el suelo, y debajo del
   nivel base no hay hueco): al llegar a A la horquilla está en el nivel 0 y `hint.storage` dice `{ level: 0, levels: 2,
   slotId: null, ready: false }`; su celda no se abre para la carga (no hay hueco en el 0: `refreshStoragePassage`), así
@@ -462,6 +523,10 @@ solo pueden venir de un nivel JSON (un `.level` no los escribe).
   `GameState.forksOverSolid` dice si las púas (o la carga, con su colisionador) están dentro de esa celda a la altura de
   su tablero o más: entonces `stepForkLevel` no cambia el nivel, `stepForkHeight` nunca baja de su tablero (tampoco al
   completar el nivel) y, con las púas vacías, el rumbo se mantiene (`setHeadingLock`, como con la carga en un hueco).
+  Desde H2c, `GameState.tinesInSolid` (`CollisionWorld.inSolidBase`) dice si las púas vacías están dentro de esa celda
+  **por debajo** de su tablero (metidas por un lado, en su base): entonces `stepForkLevel` tampoco cambia el nivel y
+  `stepForkHeight` nunca sube; el rumbo, libre (por los lados pasan). Y mientras el botón le devuelve una caja, su cara
+  para las púas también por encima del tablero (`CollisionWorld.shutBase`, `SolidBase.column`).
 - **Dejar en A** (`GameState.dropInStorage`): la caja entra en el hueco de A como en cualquier hueco (`boxDropped`, con
   `skin: 'beltIn'`, `level: 1`, nunca `wrongTarget`) y cuenta su movimiento. Si B está libre, el hueco de A se sella
   (`LevelGrid.seal`: `liftableAt` = −1) y la cinta la carga (`load`); si no, evento `beltBlocked` y la caja se queda (se
@@ -486,25 +551,30 @@ solo pueden venir de un nivel JSON (un `.level` no los escribe).
   horquilla sobre ella, `Interaction.findDrop` no deja nada (Espacio da el `actionIdle` suave, sin vista previa), y entre
   las casillas candidatas de alrededor nunca está.
 - **Pulsar** (`GameState.pressButton`): `buttonRefusal` (pura, en `logic/conveyor.ts`) mira en orden la cinta parada
-  (`busy`: nada asentándose ni viajando, en ningún sentido), A vacía (`input`), nada de la carretilla dentro de A
-  (`forks`: la carga con su colisionador o el círculo de las púas, `forksInInput`, a cualquier altura) y una caja que
-  devolver (`nothing`). Rechazada: `beltButton` con `accepted: false` y su `reason`, y nada se mueve. Aceptada: la última
-  de la lista (`takeLast`, LIFO) sale del hueco de B, entra en el de A en el acto, sellado (`LevelGrid.seal`), el
-  progreso se recuenta (no cambia: no cumplía nada), `ConveyorSystem.reverse` y `beltButton` con `accepted: true`,
-  `boxId`, `fromSlotId`. Toda pulsación suma `presses` (y la aceptada, `accepted`). 0 movimientos.
+  (`busy`: nada asentándose ni viajando, en ningún sentido), A vacía (`input`), nada de la carretilla en el hueco de A
+  (`forks`: la carga con su colisionador o el círculo de las púas dentro de su celda con la horquilla en su nivel base o
+  más, `forksInInput`; desde H2c, por debajo del tablero no cuenta) y una caja que devolver (`nothing`). Rechazada:
+  `beltButton` con `accepted: false` y su `reason`, y nada se mueve. Aceptada: la última de la lista (`takeLast`, LIFO)
+  sale del hueco de B, entra en el de A en el acto, sellado (`LevelGrid.seal`) y cerrado a las púas
+  (`CollisionWorld.shutBase`, H2c), el progreso se recuenta (no cambia: no cumplía nada), `ConveyorSystem.reverse` y
+  `beltButton` con `accepted: true`, `boxId`, `fromSlotId`. Toda pulsación suma `presses` (y la aceptada, `accepted`). 0
+  movimientos.
 - **La vuelta**: `settling` durante `pressSec` (la almohadilla se ilumina y se hunde), luego `beltStarted` con
   `reverse: true` y el mismo `runSec` (el audio pone el mismo zumbido) y el mismo viaje en espejo: la caja va de B a A
   por la misma curva cerrada (`progress` de 1 a 0). Al llegar al centro de A, `GameState.returned`: el hueco se abre (es
-  una caja más en A, que se coge con la horquilla en el nivel 1) y `beltReturned` (`conveyorId`, `boxId`, `slotId`,
-  `skin: 'beltIn'`, `level`). Ni movimiento, ni objetivo, ni `levelComplete`. No vuelve a salir sola: la cinta solo
-  arranca al dejar una caja en A.
+  una caja más en A, que se coge con la horquilla en el nivel 1; abierto otra vez a las púas) y `beltReturned`
+  (`conveyorId`, `boxId`, `slotId`, `skin: 'beltIn'`, `level`). Ni movimiento, ni objetivo, ni `levelComplete`. No
+  vuelve a salir sola: la cinta solo arranca al dejar una caja en A.
 - Determinista: la llegada difiere menos de un frame entre 60, 20 y 7 fps (`GameState.conveyor.test.ts`, que también
   prueba la cara de la mesa a nivel 0, F y V en A y coger de vuelta a nivel 1, a 60 y 20 fps; desde H1c, también las
   púas vacías contra la cara a nivel 0 y subiendo, F / V quietas con las púas o la carga dentro, el rumbo fijo, la carga
   que espera en la cara mientras sube la horquilla y la horquilla arriba al completar el nivel con las púas dentro;
   `collision.test.ts`, las `SolidBase`; desde H2, `GameState.conveyorButton.test.ts`, el botón y la vuelta a 60 y 20
   fps, y desde H2b también estar dentro o justo fuera de la almohadilla, cualquier rumbo, Espacio que pulsa antes que
-  coger o dejar y dejar sobre ella rechazado). Nada se reserva por frame.
+  coger o dejar y dejar sobre ella rechazado; desde H2c, pulsar de cara a A desde la almohadilla de al lado (aceptado, las
+  púas en su base durante toda la vuelta), con cualquier rumbo nunca «forks», el «forks» de verdad (las púas sobre el
+  tablero), las púas paradas en la cara de A mientras vuelve la caja (y dentro después) y F que no las sube metidas en
+  la base; `collision.test.ts`, `shutBase` e `inSolidBase`). Nada se reserva por frame.
 
 ## Solver, métricas, informe y piloto
 
@@ -543,11 +613,11 @@ solo pueden venir de un nivel JSON (un `.level` no los escribe).
   que venía, y solo allí baja la horquilla con V (otra pulsación: 2 en A); nunca pulsa F / V dentro de A. Mientras la caja
   va de camino, el plan ya la ve en B (`liveStacks`, por `feeds`, solo hacia B: una que vuelve ya está en A), y la
   siguiente jugada en esa cinta (o el final del nivel) espera a que llegue (`waitForBelts`), como haría un jugador.
-- **Piloto y botón** (H2, decisión AE; H2b, decisión AP): una jugada «desde B» es primero `pressButton`: sube a la
-  almohadilla recto desde una casilla libre a su lado, por el camino más corto con las púas fuera de A (si solo queda el
-  lado de cara a A, entra por él y gira encima, un poco más caro), comprueba que `hint.button` lo nombra, pulsa (0
-  movimientos; una pulsación rechazada es un fallo del piloto), sale marcha atrás a la casilla de la que venía y espera
-  la vuelta (`waitForBelts`); luego la misma jugada sigue «desde A». Coger de A (una caja que
+- **Piloto y botón** (H2, decisión AE; H2b, decisión AP; H2c, decisión AW): una jugada «desde B» es primero
+  `pressButton`: sube a la almohadilla recto desde una casilla libre a su lado, por el camino más corto (desde H2c,
+  también de cara a A, sin girar encima: las púas en la base de la mesa no ocupan su hueco), comprueba que `hint.button`
+  lo nombra, pulsa (0 movimientos; una pulsación rechazada es un fallo del piloto), sale marcha atrás a la casilla de la
+  que venía y espera la vuelta (`waitForBelts`); luego la misma jugada sigue «desde A». Coger de A (una caja que
   espera o que volvió): se para en la casilla de detrás de su frente, sube con F allí (las púas fuera) y entra. Ningún
   trayecto en vacío pisa el frente de A mirando a A con la horquilla abajo (`emptyPath` con `closed`: la cara de la mesa
   pararía las púas), salvo el que va a coger de la propia A (que se para antes, en la casilla de detrás).
@@ -590,12 +660,19 @@ soporte de baldas, así que la caja va nivelada de la horquilla (en el nivel 1) 
   vez, en el suelo (el mismo cuadrado redondeado, el mismo grosor, la misma goma), en el **color de identidad** de su
   cinta con su propio material (brilla en ese color), y encima, hija suya (se hunde con ella), la **flecha de vuelta**
   en el crema del icono de A, plana y girada con la cinta (su cola hacia B, su punta de vuelta hacia A). Nada se levanta
-  del suelo: la carretilla pasa por encima. `views/ConveyorView.ts` `BeltButton` sigue `presses` / `accepted` de su
-  `ConveyorState` y `hint.button`: con la carretilla encima **brilla un poco** (`BUTTON_FEEL.standGlow`, al ritmo
-  `standRate`); la pulsación aceptada la **ilumina** (sube en `glowRise`, se apaga hacia `glowSec`) y la **hunde** en el
-  suelo `BELT_BUTTON.dip` (bajada rápida, subida suave: `downSec` / `upSec`); la rechazada solo da un **destello
-  apagado** (`refusedFlash`, `refusedSec`), sin hundirla. Un nivel cargado con pulsaciones ya contadas la muestra en
-  reposo (no repite nada).
+  del suelo: la carretilla pasa por encima. Alrededor (H2c), el **halo de su luz** en el suelo
+  (`buildBeltButtonHaloGeometry`, `BELT_BUTTON_HALO`): anillos de un cuadrado redondeado desde justo debajo del borde de
+  la almohadilla hasta 0,7 más allá, con el alfa de sus paradas (1 → 0,8 → 0,38 → 0: difuminado), un objeto propio
+  (no hija de la almohadilla: no se hunde), con su propio material de capa del suelo (`createOverlayMaterial`, en el
+  tono de `buttonLightTone`: la identidad `haloLift` más clara) y fuera de los límites de la unidad (no mueve el
+  encuadre); apagado, oculto. `views/ConveyorView.ts` `BeltButton` sigue `presses` / `accepted` de su `ConveyorState`,
+  su sentido (`direction` −1 y no `idle`: vuelve una caja) y `hint.button`: con la carretilla encima **brilla un poco**
+  (`BUTTON_FEEL.standGlow`) con un **halo tenue** (`standHalo`), al ritmo `standRate`; la pulsación aceptada la **hunde**
+  en el suelo `BELT_BUTTON.dip` (bajada rápida, subida suave: `downSec` / `upSec`) y la **ilumina con fuerza**, la
+  almohadilla (`litGlow`) y el halo (`litHalo`): sube en `litRise`, **sigue encendida mientras la cinta va al revés** y
+  se apaga en `litFade` cuando la caja llega a A (un paso fijo por segundo, mostrado con curva suave: igual a 60 y a 20
+  fps, sin parpadeo); la rechazada solo da un **destello apagado** de las dos (`refusedFlash`, `refusedHalo`,
+  `refusedSec`), sin hundirla. Un nivel cargado con pulsaciones ya contadas la muestra en reposo (no repite nada).
 - **Colores** (`themes.test.ts`): el de **identidad** (`Theme.conveyor.identity`, por el orden de la cinta en el nivel),
   en la almohadilla de A, el rodapié de B y la almohadilla del botón (se emparejan): verde azulado, ciruela, musgo,
   añil; nunca un tono de caja ni de zona, ni el naranja de las barandillas del muelle, ni el ámbar de la luz de marcha
@@ -647,23 +724,37 @@ Su fila dice `sound: 'belt'` (`audio.test.ts`):
   con **todos** los estados explorados. El piloto lo termina a 60 y 20 fps con una pulsación aceptada, encima de la
   almohadilla; 3 pulsaciones de F / V en A (F para dejar, V tras salir, F para coger de vuelta), todas con las puntas de
   las púas fuera de A. El test mira también el dibujo: la almohadilla del color y el tamaño de la de A, en el suelo, con
-  la flecha crema encima (su punta hacia A), sin poste ni seta; que brilla un poco con la carretilla encima, se ilumina y
-  se hunde con la aceptada y solo destella con la rechazada, en reposo al cargar; y las rayas que van hacia A mientras
-  vuelve. `logic/GameState.conveyorButton.test.ts` prueba las reglas en el juego (a 60 y 20 fps): la vuelta a A (cogida
-  en el nivel 1, 0 movimientos, «Quedan N» igual), los rechazos (nada que devolver, cinta ocupada en los dos sentidos, A
-  ocupada, las púas dentro de A de cara a ella), la caja fija que nunca vuelve, estar dentro o justo fuera (solo dentro
-  pulsa), cualquier rumbo, vacía o cargada, Espacio que pulsa antes que coger o dejar, y dejar con el punto de horquilla
-  sobre la almohadilla rechazado.
+  la flecha crema encima (su punta hacia A), sin poste ni seta; que brilla un poco con la carretilla encima, se hunde con
+  la aceptada y solo destella con la rechazada, en reposo al cargar; y las rayas que van hacia A mientras vuelve. Desde
+  H2c, también el halo (oculto en reposo, plano en el suelo y centrado en la almohadilla, más de 0,6 más allá de su
+  borde, difuminado hasta 0, en un tono más claro de la identidad), el halo tenue con la carretilla encima, el destello
+  apagado de los dos con la rechazada, y la luz en el tiempo a 60 y 20 fps: con la aceptada, arriba en `litRise` sin
+  saltos, fija mientras la cinta va al revés y apagándose suave en `litFade` al llegar la caja; y lo mismo a través de la
+  partida del piloto (una vista del nivel sobre su propio juego, frame a frame). Y el piloto que, con el único lado
+  libre de la almohadilla enfrente de A, sube de cara a A y pulsa sin girar. `logic/GameState.conveyorButton.test.ts`
+  prueba las reglas en el juego (a 60 y 20 fps): la vuelta a A (cogida en el nivel 1, 0 movimientos, «Quedan N» igual),
+  los rechazos (nada que devolver, cinta ocupada en los dos sentidos, A ocupada), la caja fija que nunca vuelve, estar
+  dentro o justo fuera (solo dentro pulsa), cualquier rumbo, vacía o cargada, Espacio que pulsa antes que coger o dejar,
+  y dejar con el punto de horquilla sobre la almohadilla rechazado; desde H2c, de cara a A desde la almohadilla de al lado
+  (aceptado, las púas en la base de A durante toda la vuelta), con cualquier rumbo nunca «forks», el «forks» de verdad
+  (las púas sobre el tablero de A), nada entra en A mientras vuelve la caja (con una cinta más larga) y F que no sube las
+  púas metidas en la base.
 - **Benchmark** (`especiales/benchmark.level`, docs/RACKS.md): la cinta va de **A (8,2)** a **B (8,0)** por una casilla
   (8,1), pegada al muro norte junto a la estantería de madera; B pide **coral ✚** (exacto), y el coral ✚ (7,7) es su
   caja: también encaja en la zona coral (trampa). El amarillo ● empieza delante de A (8,3): hay que apartarlo antes de
   usarla. Se quitó la planta de (10,0): la esquina noreste queda libre para maniobrar (con ella, el informe hallaba
   callejones). Al este de B queda suelo (9,0): la carretilla puede ponerse al lado, pero nunca la engancha. Ni la mesa
-  (H1b) ni su base cerrada (H1c) pidieron cambiar el mapa: ocupan las mismas casillas. Su **botón** (H2b), una
-  almohadilla en **(7,3)**, a la izquierda de la casilla de delante de A (decisión AQ; en H2, la seta en (7,2)): se sube
-  desde (7,4), (6,3) o (7,2), y también desde (8,3), la casilla de delante de A. `benchmarkPlayable.test.ts`: con el
-  amarillo ● mandado a B primero (una caja equivocada: el «no»), el piloto se sube a la almohadilla, pulsa, sale marcha
-  atrás, la recoge de A y termina el nivel en **16** movimientos (los 15 y el envío equivocado), a 60 y 20 fps.
+  (H1b) ni su base cerrada (H1c) pidieron cambiar el mapa: ocupan las mismas casillas. Su **botón**, una almohadilla
+  (H2b) en **(7,2)**, justo al lado de A, pegada a su barandilla oeste (H2c, decisión AS; en H2b, en (7,3); en H2, la
+  seta en (7,2)): se sube desde (7,3), (6,2) o (7,1), y encima se pulsa con cualquier rumbo, también de cara a A.
+  `benchmarkPlayable.test.ts`: con el amarillo ● mandado a B primero (una caja equivocada: el «no»), el piloto se sube a
+  la almohadilla (desde (7,3), de cara al norte), pulsa, sale marcha atrás, la recoge de A y termina el nivel en **16**
+  movimientos (los 15 y el envío equivocado), a 60 y 20 fps.
+- **Medido** (2026-10-01, H2c): las métricas, las de H2b (movimientos 15 exacto, obligadas 13, extra 2, bloqueos 5,
+  trampas 13, ambiguas 12, estrechas 8, libre 75 %, repartos 1, callejones 0 (60), huecos 12, camion 4, cinta 1 con
+  1 botón; el mismo plan). El piloto vuelve a los números de H1c: **15229** frames a 60 fps y **5560** a 20 (en H2b,
+  15449 / 5636), **2348 / 772** frames marcha atrás (en H2b, 2246 / 738), 10 pulsaciones de F / V (7 + 1 + 2) y 0 del
+  botón: con la almohadilla en (7,2) vuelve a coger el amarillo ● de (8,3) desde (7,3), de cara al este.
 - **Medido** (2026-10-01, H2b): movimientos **15** (exacto; el plan no usa el botón), obligadas 13, extra 2, bloqueos 5
   (el amarillo ● cierra el paso a A), trampas 13, ambiguas 12, estrechas **8** (en H2, 9), libre **75 %** (en H2,
   74 %), repartos 1, callejones 0, huecos 12, camion 4, cinta 1 (1 botón); la búsqueda exacta, 19 ms, y el informe
@@ -690,7 +781,8 @@ Su fila dice `sound: 'belt'` (`audio.test.ts`):
 | A | `BELT.pad`, `BELT_GUARD`, `BELT_ICON`, `BELT_MARKER` | almohadilla 0,43; barandillas 0,12 de alto; icono; marcador 0,43 | almohadilla, barandillas, icono de dejar, marcador |
 | B | `BELT_SKIRTING`, `BELT_CUE`, `BELT_GLOW`, `BELT_BURST` | rodapié 0,06 × 0,03 | rodapié, pegatina, luz, acierto |
 | Botón | `builders/conveyor.ts` `BELT_BUTTON`, `BELT_BUTTON_ICON` | almohadilla 0,43 de medio lado, radio 0,08, 0,02 de grueso (la de A); `dip` 0,01; flecha: vuelta de 0,14 de radio y 0,075 de trazo, cola desde −0,2, punta 0,11 × 0,14 | la almohadilla, su flecha, cuánto se hunde |
-| Respuesta del botón | `views/ConveyorView.ts` `BUTTON_FEEL` | baja 0,1 s, sube 0,3 s; brillo 0,55 (0,06 → 0,75 s); encima 0,24; rechazo +0,1 en 0,3 s | el hundido y el brillo al aceptar, el brillo con la carretilla encima (`standGlow` 0 lo quita) y el destello al rechazar |
+| Halo del botón | `builders/conveyor.ts` `BELT_BUTTON_HALO` | desde 0,02 bajo el borde de la almohadilla; paradas (más allá del borde → alfa) 0 → 1, 0,2 → 0,8, 0,45 → 0,38, 0,7 → 0; a 0,004 del suelo; 6 tramos por esquina | cuánto se derrama la luz por el suelo y cómo se difumina |
+| Respuesta del botón | `views/ConveyorView.ts` `BUTTON_FEEL` | baja `downSec` 0,1 s, sube `upSec` 0,3 s; encendida: `litRise` 0,2 s, `litFade` 0,9 s, `litGlow` 1,3, `litHalo` 0,95, tono `haloLift` +0,12; encima: `standGlow` 0,24, `standHalo` 0,3, `standRate` 10; rechazo: `refusedFlash` +0,1, `refusedHalo` +0,12, `refusedSec` 0,3 s | el hundido; la luz al aceptar (la almohadilla y su halo, su tono, cuánto tarda en encenderse y en apagarse al llegar la caja; mientras vuelve, fija); el brillo y el halo tenue con la carretilla encima (`standGlow` / `standHalo` 0 los quitan); el destello al rechazar |
 | Lados cerrados de A | `core/storage.ts` `BASE_GUARD.inset` | 0,06 | la cara de dentro de las barandillas, para el dibujo y para las púas |
 | Púas | `core/types.ts` `TINES`; `logic/collision.ts` `TINE_CATCH` | puntas a 0,38 cajas del punto de horquilla, 0,15 ± 0,038; 0,05 | dónde llegan las púas (dibujo y colisión) y cuánto roce las para |
 | Colores | `Theme.conveyor` | `belt`, `stripe`, `edge`, `top`, `side`, `icon`, `identity` (4) | banda, rayas, cantos, tablero, base y barandillas, icono de A y flecha del botón, colores de identidad (A, B y el botón) |
@@ -704,7 +796,10 @@ cualquiera; sin él, solo la destinada: `solver.ts` `validDrop`), B llena = la c
 `STORAGE_ACCESS` (`engages: false`), la altura de la mesa (`FLOOR_BELT_LEVEL`; las puntas a la de su casilla:
 `beltEndLevels`, que validateLevel escribe como su `baseLevel`), qué para a las púas vacías (solo la cara de carga de A
 y sus barandillas: `CollisionWorld.fromLevel` `solidBases`, decisión U), la horquilla quieta dentro de A
-(`GameState.forksOverSolid`) y, del botón (H2), cuándo funciona y en qué orden se rechaza (`buttonRefusal`), qué caja
-vuelve (la última: `ConveyorSystem.takeLast`), cuándo se está encima (`logic/conveyor.ts` `onButtonPad`, con
-`BUTTON_PAD.margin`), que nunca lleva una caja (`LevelGrid.canTakeBox`, `Interaction.findDrop`, el `pads` del solver)
-y desde qué casillas se sube (`core/conveyors.ts` `buttonEntriesOf`).
+(`GameState.forksOverSolid`) y sin subir con las púas metidas en su base (`GameState.tinesInSolid`, H2c) y, del botón
+(H2), cuándo funciona y en qué orden se rechaza (`buttonRefusal`), qué cuenta como «forks» (el hueco de A sobre su
+tablero: `GameState.forksInInput`, H2c), que nada entra en A mientras vuelve una caja (`CollisionWorld.shutBase`, H2c),
+qué caja vuelve (la última: `ConveyorSystem.takeLast`), cuándo se está encima (`logic/conveyor.ts` `onButtonPad`, con
+`BUTTON_PAD.margin`), que nunca lleva una caja (`LevelGrid.canTakeBox`, `Interaction.findDrop`, el `pads` del solver),
+desde qué casillas se sube (`core/conveyors.ts` `buttonEntriesOf`) y cuándo está encendida (mientras su cinta va al
+revés: render/storage/conveyor `animate`).

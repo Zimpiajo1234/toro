@@ -7,6 +7,7 @@ import {
   beltPlacement,
   beltTopY,
   buildBeltBand,
+  buildBeltButtonHaloGeometry,
   buildBeltButtonIcon,
   buildBeltButtonPad,
   buildBeltCue,
@@ -21,7 +22,8 @@ import {
 } from '../builders/conveyor';
 import { addLoadingLines, outwardYaw } from '../builders/rack';
 import type { FitBox } from '../CameraRig';
-import { BeltButton, BeltStripes } from '../views/ConveyorView';
+import { createOverlayMaterial } from '../materials';
+import { BeltButton, BeltStripes, buttonLightTone } from '../views/ConveyorView';
 import { SlotLight, type SlotTone } from '../views/RackView';
 import { cueLookOf, levelLightOf, yawTowardCamera } from './common';
 import type { BurstPlace, MarkerPlace, StorageBuildContext, StorageSkinRender, StorageUnitView } from './types';
@@ -35,9 +37,10 @@ import type { BurstPlace, MarkerPlace, StorageBuildContext, StorageSkinRender, S
  * the floor in front of it, a rack's loading line; worked like a rack slot (F up to the table top), so it shows the
  * chosen-level marker, flat on the pad's rim, when the forks are set to its slot (none at the table's face, below it).
  * With a button (H2b), the input also draws it on its own cell: a pad on the floor like its own, in the belt's identity
- * colour, with a cream back arrow turned with the belt, which brightens while the forklift stands on it, glows and dips
- * on an accepted press and flashes, muted, on a refused one (views/ConveyorView BeltButton); while the belt runs back
- * its stripes slide backwards.
+ * colour, with a cream back arrow turned with the belt, and round it a halo of its light on the floor (H2c). It
+ * brightens, with a faint halo, while the forklift stands on it, dips on an accepted press and stays brightly lit, pad
+ * and halo, while the belt runs back (fading out once the box rests on the input), and flashes, muted, on a refused one
+ * (views/ConveyorView BeltButton); while the belt runs back its stripes slide backwards.
  * `beltOut`, the end exit: the table's last stretch, its deck with the cue sticker of its level painted flat on it and
  * its low skirting in the belt's identity colour; it lights like a rack slot (views/RackView SlotLight: only with its
  * destined box; it pulses while a box that fits its cue is carried, with the target hints) — at once as the box slides
@@ -146,15 +149,17 @@ class BeltInputUnit extends BeltUnit {
       ctx.bag.track(this.stripes.mesh.geometry);
       this.group.add(this.stripes.mesh);
     } else this.stripes = null;
+    let halo: Mesh | null = null;
     if (conveyor?.button) {
       // Its button: a pad on the floor in the belt's identity colour, in its input's pad's rubber but a material of its
       // own (it glows in that colour), and on it the back arrow in the icon's cream, turned with the belt (a child of
       // the pad: it dips with it).
       const at = cellToWorld(conveyor.button, level.size);
+      const identity = identityOf(ctx, belt);
       const material = ctx.bag.track(rubber.clone());
-      material.emissive.set(identityOf(ctx, belt));
+      material.emissive.set(identity);
       material.emissiveIntensity = 0;
-      const pad = this.add(ctx.bag.track(buildBeltButtonPad(identityOf(ctx, belt))), material, false);
+      const pad = this.add(ctx.bag.track(buildBeltButtonPad(identity)), material, false);
       pad.position.set(at.x, 0, at.z);
       pad.userData.beltButton = conveyor.id;
       const icon = new Mesh(ctx.bag.track(buildBeltButtonIcon(theme.conveyor.icon)), rubber);
@@ -162,7 +167,15 @@ class BeltInputUnit extends BeltUnit {
       icon.rotation.y = placement?.ry ?? 0;
       icon.userData.beltButtonIcon = conveyor.id;
       pad.add(icon);
-      this.button = new BeltButton(pad, material);
+      // Round it, its light on the floor (H2c): a floor overlay of its own in a lighter tone of the identity colour, off
+      // until it lights; outside the unit's bounds (added once they are taken: it never moves the frame).
+      const haloMaterial = createOverlayMaterial(ctx.bag, buttonLightTone(identity), 0, true);
+      halo = new Mesh(ctx.bag.track(buildBeltButtonHaloGeometry()), haloMaterial);
+      halo.position.set(at.x, 0, at.z);
+      halo.renderOrder = 1;
+      halo.visible = false;
+      halo.userData.beltButtonHalo = conveyor.id;
+      this.button = new BeltButton(pad, material, halo, haloMaterial);
     }
     const pad = this.add(ctx.bag.track(buildBeltPad(unit, level, top, identityOf(ctx, belt))), rubber, false);
     pad.userData.beltPad = unit.id;
@@ -181,17 +194,20 @@ class BeltInputUnit extends BeltUnit {
       icon.userData.beltIcon = unit.id;
     }
     this.seal();
+    if (halo) this.group.add(halo);
   }
 
   /**
    * The stripes follow the distance the belt's surface has moved (they stand still while it is stopped, and slide back
-   * while it runs back); its button follows its presses and whether the action presses it now.
+   * while it runs back); its button follows its presses, whether the belt runs back (it stays lit) and whether the
+   * action presses it now.
    */
   animate(snapshot: GameSnapshot, dt: number): void {
     const state = this.belt >= 0 ? snapshot.conveyors[this.belt] : undefined;
     if (!state) return;
     this.stripes?.sync(state.travel);
-    this.button?.sync(state.presses, state.accepted, snapshot.hint.button === this.beltId, dt);
+    const back = state.direction < 0 && state.phase !== 'idle';
+    this.button?.sync(state.presses, state.accepted, back, snapshot.hint.button === this.beltId, dt);
   }
 
   /** The marker lies flat on the table top round the pad, at the chosen slot's floor. */

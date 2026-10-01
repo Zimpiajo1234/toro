@@ -176,6 +176,13 @@ estantería, y ninguna capa distingue el aspecto:
     (`GameState.forksOverSolid`, `CollisionWorld.solidTopUnder`), F / V / rueda no hacen nada (`stepForkLevel`), la
     horquilla nunca baja de la base (`stepForkHeight`, también al completar el nivel) y las púas vacías mantienen el
     rumbo (como la carga en un hueco, `setHeadingLock`): se sale marcha atrás y entonces se cambia de nivel.
+  - **Dentro de la base, sin subir** (H2c de docs/CONVEYOR.md): mientras las púas vacías están dentro de su celda **por
+    debajo** de su base (metidas por un lado: la pasan como una pared), F / V no hacen nada y la horquilla no sube
+    (`GameState.tinesInSolid`, `CollisionWorld.inSolidBase`): nunca sube a través de su tablero; el rumbo, libre.
+  - **Cerrada a las púas** (H2c): mientras GameState la cierra (`CollisionWorld.shutBase`, por su columna:
+    `SolidBase.column`; la entrada de una cinta mientras su botón le devuelve una caja), su cara para también las púas
+    vacías por encima de su base, como por debajo: no entran bajo esa caja. Las que ya estaban dentro salen como
+    siempre.
 - **Solver**: una posición por hueco, como siempre; la altura no cambia sus jugadas (un hueco de baldas se carga con un
   paso adelante a cualquier nivel); `levelAt` da el nivel (con su base), `slotAt` el índice, `positionOfSlot` por id.
 - **Dibujo**: las alturas ya salían del nivel (`SUPPORT_LOOK.shelves.levelY` = `rackSlotY(level)`): la caja, la
@@ -299,9 +306,9 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   (`stepForkLevel`; con la carga dentro de un hueco no cambia, ni con las púas o la carga sobre una base maciza,
   `forksOverSolid`, y nunca hunde la carga en una pila: `sinksIntoStack`); fuera de una columna, automática
   (`clearLevel`, que en una pila de almacenaje no sube por adelantado). La base maciza («Nivel base»): `SolidBase` (una
-  por columna de frente con nivel base: su celda, su cara, sus lados), `TineCircle` (las púas vacías, un argumento
-  opcional de `resolve` que pasa `ForkliftController`), `tineContact`, `solidTopUnder`, `hasSolidBases`, `TINE_CATCH`;
-  sin bases, `resolve` es exactamente el de antes. El orden de la
+  por columna de frente con nivel base: su celda, su cara, sus lados, su columna), `TineCircle` (las púas vacías, un
+  argumento opcional de `resolve` que pasa `ForkliftController`), `tineContact`, `solidTopUnder`, `inSolidBase` y
+  `shutBase` (H2c), `hasSolidBases`, `TINE_CATCH`; sin bases, `resolve` es exactamente el de antes. El orden de la
   colisión se conserva a propósito: los tramos de puerta cerrados justo tras los muros de carga, las celdas de estantería
   tras los estáticos (en un empate de hondura gana el primero, así que cambiarlo podría cambiar un empuje); `soften` solo
   vale para una abertura `front` (una puerta nunca se cierra sobre la carga).
@@ -346,11 +353,13 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   modelo común (no es una unidad: una casilla de `LevelConveyor.button`; desde H2b, una almohadilla en el suelo, que no
   es un obstáculo y nunca lleva una caja), en `core/conveyors.ts` (`hasBeltButtons`, `buttonEntriesOf`),
   `logic/conveyor.ts` (`BUTTON_PAD`, `onButtonPad`, `buttonRefusal`), `LevelGrid` (`padAt`: `canTakeBox` nunca en ella),
-  `GameState` (`hint.button` con la carretilla encima, eventos `beltButton` / `beltReturned`), `ConveyorSystem` (`keep`
-  / `takeLast` / `reverse`), el solver (`pads`, `pressFrom` = la almohadilla, `canLift` / `pickupStarts` desde la
-  salida), el piloto (`pressButton`), el render (`views/ConveyorView` `BeltButton`), el audio (`buttonClick` /
-  `buttonRefused`) y la UI (`UIState.beltButton`). El modelo común no cambia: la caja que vuelve deja el hueco de la
-  salida y entra en el de la entrada como cualquier caja guardada (sellado mientras viaja).
+  `GameState` (`hint.button` con la carretilla encima, eventos `beltButton` / `beltReturned`; desde H2c, «forks» solo
+  con las púas o la carga en el hueco de la entrada, sobre su base: `forksInInput`, y la entrada cerrada a las púas
+  mientras vuelve la caja: `shutBase`), `ConveyorSystem` (`keep` / `takeLast` / `reverse`), el solver (`pads`,
+  `pressFrom` = la almohadilla, `canLift` / `pickupStarts` desde la salida), el piloto (`pressButton`), el render
+  (`views/ConveyorView` `BeltButton`, desde H2c con el halo de su luz en el suelo: `BELT_BUTTON_HALO`), el audio
+  (`buttonClick` / `buttonRefused`) y la UI (`UIState.beltButton`). El modelo común no cambia: la caja que vuelve deja el
+  hueco de la salida y entra en el de la entrada como cualquier caja guardada (sellado mientras viaja).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -470,6 +479,18 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
     deja desde ella), así que lo coge desde (8,4), de cara al norte, y rodea por (5,4). Con la almohadilla en (7,2) el
     piloto da los 15229 / 5560 de H1c, como sin botón: la almohadilla solo cambia un trayecto si ocupa una casilla de
     trabajo. Pulsaciones de F / V (10) y `buttonPresses: 0`, iguales; el registro de movimientos, el mismo.
+- **Regenerada con el botón junto a la máquina** (H2c de docs/CONVEYOR.md, 2026-10-01: la almohadilla del Benchmark
+  vuelve de (7,3) a (7,2), justo al lado de A; «forks» solo con las púas o la carga en el hueco de A, sobre su tablero;
+  la entrada cerrada a las púas mientras vuelve una caja; las púas metidas en su base, sin subir; el piloto pulsa con
+  cualquier rumbo). Todas las diferencias son del Benchmark (el nivel de prueba de los camiones, byte a byte igual;
+  `targets`, `metrics`, `solver` y `start`, iguales: el mismo plan de 15, que no usa el botón, y las mismas métricas):
+  - `storage.conveyors`: ` · botón 7,3` → **` · botón 7,2`**.
+  - `autopilot60` / `autopilot20`: **15229 / 5560** frames (antes 15449 / 5636: −220 / −76) y **2348 / 772** frames
+    marcha atrás (antes 2246 / 738: +102 / +34): los números de H1c, como anticipaba H2b. Es la jugada 6, el amarillo ●
+    de (8,3) al hueco 2 de S: con la almohadilla fuera de (7,3), el piloto vuelve a cogerlo desde (7,3), de cara al
+    este, y no desde (8,4). Las reglas nuevas de las púas no cambian ningún trayecto (el piloto nunca mete las púas en la
+    base de A ni se acerca a A mientras vuelve una caja; en el Benchmark, además, el plan no usa el botón). Pulsaciones
+    de F / V (10: 7 + 1 + 2) y `buttonPresses: 0`, iguales; el registro de movimientos, el mismo.
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
   una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
   repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización

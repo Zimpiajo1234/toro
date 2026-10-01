@@ -100,7 +100,7 @@ describe('the Benchmark is playable with the real controls', () => {
   });
 });
 
-describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md; H2b: a pad on the floor at (7,3))', () => {
+describe('the Benchmark\'s belt button (H2, docs/CONVEYOR.md; H2b: a pad on the floor; H2c: at (7,2), right beside A)', () => {
   it.each([
     ['60 fps', 1 / 60],
     ['20 fps (Game dt clamp)', 1 / 20],
