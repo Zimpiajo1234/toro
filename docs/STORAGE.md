@@ -410,7 +410,8 @@ huecos y plataformas aparte en el solver, `buildRacks` / `buildTrucks`, constant
    de debajo. El piloto no lo hace (solo coge del camión en el nivel 0). Arreglarlo como V con la carga (que F / V no
    muevan las púas a través de una caja de la pila) cambia cómo se coge la caja de arriba: hoy se entra a nivel 0 y F
    sube por dentro (`GameState.docks.test.ts`, «picks only the top box…»); con la regla habría que elegir el nivel
-   antes de meter las púas (y el piloto, lo mismo). Decisión de diseño; la fase 7 no lo cambió.
+   antes de meter las púas (y el piloto, lo mismo). **Decidido (2026-10-01, el usuario lo probó: «está perfecto
+   así»): se queda como está**, sin regla nueva.
 2. **`loadable` de un «libre» en una pila**: sale `true` cuando es el siguiente con todo lo de debajo cumplido y `false`
    tras otro «libre» (un «libre» nunca se cumple). Solo decide la luz (regla 8) y un «libre» no tiene: da igual hoy; un
    soporte nuevo con varios «libre» seguidos podría querer otra regla.
