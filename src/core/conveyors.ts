@@ -7,6 +7,13 @@
 import type { CellPos, LevelConveyor, LevelData, LevelStorage } from './types';
 import { storageOf } from './storage';
 
+/**
+ * The level a floor belt («suelo») runs at (docs/CONVEYOR.md, H1b): a table whose top is the floor of a rack's
+ * level-1 slot, so a box set down on its input with the forks at level 1 (F, as at a rack) rides level into its end
+ * exit. Its cells carry it as their `height`; its input and end exit stand there (their units' `baseLevel`).
+ */
+export const FLOOR_BELT_LEVEL = 1;
+
 /** A level's belts (none → an empty list), in the order of their inputs. */
 export function conveyorsOf(level: Pick<LevelData, 'conveyors'>): readonly LevelConveyor[] {
   return level.conveyors ?? [];
@@ -26,6 +33,15 @@ export function beltUnitsOf(
   const input = units.find((unit) => unit.id === conveyor.input);
   const output = units.find((unit) => unit.id === conveyor.output);
   return input && output ? { input, output } : null;
+}
+
+/**
+ * The levels a belt's input and end exit stand at: the height of the belt cell next to each (validateLevel gives their
+ * units that `baseLevel`). A floor belt: both on its table, FLOOR_BELT_LEVEL.
+ */
+export function beltEndLevels(conveyor: Pick<LevelConveyor, 'cells'>): { input: number; output: number } {
+  const cells = conveyor.cells;
+  return { input: cells[0]?.height ?? FLOOR_BELT_LEVEL, output: cells[cells.length - 1]?.height ?? FLOOR_BELT_LEVEL };
 }
 
 /**

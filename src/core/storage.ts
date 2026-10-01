@@ -51,7 +51,8 @@ export interface StorageSkinRow {
  * order is the order of a level's units (rule 12: racks, then trucks, then the belts' inputs and end exits). `chars` are
  * the canonical letters of before the shared model (three trucks are written T, C, U), so the canonical form of every
  * level stays the same. A conveyor belt (docs/CONVEYOR.md) is two skins, one row per access: its input (`front`, loaded
- * like a rack slot at the floor) and its end exit (`belt`, never engaged: the belt fills it); one drawing serves both.
+ * like a rack slot, at its belt's height: its unit's base level) and its end exit (`belt`, never engaged: the belt
+ * fills it); one drawing serves both.
  */
 export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   rack: {
@@ -78,7 +79,8 @@ export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   },
   beltIn: {
     support: 'shelves',
-    // A belt's input (docs/CONVEYOR.md): one level, at the floor, «libre»; the box rides on from there.
+    // A belt's input (docs/CONVEYOR.md): one level, «libre», on its belt's table (its base level: 1 for a floor belt,
+    // a rack's level-1 slot); the box rides on from there.
     maxLevels: 1,
     maxColumns: 1,
     access: 'front',
@@ -89,7 +91,7 @@ export const STORAGE_SKINS: { readonly [S in StorageSkin]: StorageSkinRow } = {
   },
   beltOut: {
     support: 'shelves',
-    // A belt's end exit: one level with its cue (or «libre»), filled by the belt only.
+    // A belt's end exit: one level with its cue (or «libre»), at its belt's height too, filled by the belt only.
     maxLevels: 1,
     maxColumns: 1,
     access: 'belt',
@@ -198,9 +200,20 @@ export function hasStorage(level: Pick<LevelData, 'storage'>): boolean {
   return (level.storage?.length ?? 0) > 0;
 }
 
-/** Id of a storage slot, in every skin: `${unitId}:${column}:${level}` (column and level from 0; level 0 = bottom). */
+/**
+ * Id of a storage slot, in every skin: `${unitId}:${column}:${level}` (column from 0; `level` its level, from its
+ * unit's base level up: 0 = at the floor).
+ */
 export function slotIdOf(unitId: string, column: number, level: number): string {
   return `${unitId}:${column}:${level}`;
+}
+
+/**
+ * The level of a unit's bottom slot (LevelStorage.baseLevel, docs/STORAGE.md «Nivel base»): 0 at the floor (every rack
+ * and truck); a conveyor belt's input and end exit, their belt's height. Below it the unit is solid.
+ */
+export function baseLevelOf(unit: Pick<LevelStorage, 'baseLevel'>): number {
+  return unit.baseLevel ?? 0;
 }
 
 /**
@@ -243,7 +256,9 @@ export interface StorageColumnRef {
   facing: Facing;
   /** Its levels' cues, bottom → top (null = «libre»). */
   cues: readonly (ZoneCriteria | null)[];
-  /** Index of its bottom level in storageSlotsOf (level n is firstSlot + n). */
+  /** The level of its bottom slot (its unit's baseLevelOf): its levels are baseLevel ‥ baseLevel + cues.length − 1. */
+  baseLevel: number;
+  /** Index of its bottom level in storageSlotsOf (level baseLevel + n is firstSlot + n). */
   firstSlot: number;
 }
 
@@ -253,8 +268,9 @@ export function storageColumnsOf(level: Pick<LevelData, 'storage'>): StorageColu
   let firstSlot = 0;
   storageOf(level).forEach((unit, unitIndex) => {
     const facing = facingOf(unit);
+    const baseLevel = baseLevelOf(unit);
     unit.columns.forEach((cues, column) => {
-      out.push({ unit, unitIndex, column, cell: cellOf(unit, column), front: frontOf(unit, column), facing, cues, firstSlot });
+      out.push({ unit, unitIndex, column, cell: cellOf(unit, column), front: frontOf(unit, column), facing, cues, baseLevel, firstSlot });
       firstSlot += cues.length;
     });
   });
@@ -271,7 +287,10 @@ export interface StorageSlotRef {
   unit: LevelStorage;
   unitIndex: number;
   column: number;
-  /** 0 = the bottom level (a rack's bottom slot, a truck's bed). */
+  /**
+   * Its level: its unit's base level + its place in the column (0 = the floor: a rack's bottom slot, a truck's bed; a
+   * floor belt's input and end exit, 1).
+   */
   level: number;
   /** Its column's cell, front and facing (StorageColumnRef). */
   cell: CellPos;
@@ -282,15 +301,17 @@ export interface StorageSlotRef {
 }
 
 /**
- * Every storage slot of a level: unit by unit (racks, then trucks), column by column, bottom → top — the order of the
- * targets after the zones (core/sorting `targetsOf`), of the stored boxes' ids and of the snapshot's slots.
+ * Every storage slot of a level: unit by unit (racks, then trucks, then the belts' ends), column by column, bottom →
+ * top — the order of the targets after the zones (core/sorting `targetsOf`), of the stored boxes' ids and of the
+ * snapshot's slots.
  */
 export function storageSlotsOf(level: Pick<LevelData, 'storage'>): StorageSlotRef[] {
   const out: StorageSlotRef[] = [];
   for (const col of storageColumnsOf(level)) {
-    col.cues.forEach((cue, lvl) =>
-      out.push({ id: slotIdOf(col.unit.id, col.column, lvl), unit: col.unit, unitIndex: col.unitIndex, column: col.column, level: lvl, cell: col.cell, front: col.front, facing: col.facing, cue }),
-    );
+    col.cues.forEach((cue, k) => {
+      const lvl = col.baseLevel + k;
+      out.push({ id: slotIdOf(col.unit.id, col.column, lvl), unit: col.unit, unitIndex: col.unitIndex, column: col.column, level: lvl, cell: col.cell, front: col.front, facing: col.facing, cue });
+    });
   }
   return out;
 }

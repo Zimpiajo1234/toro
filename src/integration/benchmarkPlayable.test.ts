@@ -3,7 +3,8 @@
  * (src/data/levels/especiales/benchmark.level) with the real GameState and the real controls — slot levels with
  * InputFrame.forkStep (one press per slot, like F / V), loads backed out of slots, off the truck and out of the 1-cell
  * corridor with the reverse gear (S), the truck loaded through its door with its levels chosen by F / V too
- * (docs/STORAGE.md rule 9), the conveyor belt fed from its input (docs/CONVEYOR.md) — at 60 fps and at Game's worst dt
+ * (docs/STORAGE.md rule 9), the conveyor belt fed from its input on its table, the forks raised there with F as at a
+ * rack's level-1 slot (docs/CONVEYOR.md) — at 60 fps and at Game's worst dt
  * (1/20). It also checks the level's gentle traps in the live state: a box that fits a cue but is not
  * the destined one leaves its slot or truck level dark (a soft `wrongTarget`, never anything negative), and a box put
  * on its destiny locks there for good (on the truck, the next level still loads on top of it).
@@ -62,7 +63,10 @@ describe('the Benchmark is playable with the real controls', () => {
     const truckTargets = storageSlotsOf(level).filter((s) => s.unit.skin === 'truck' && s.cue !== null);
     expect(onTruck.filter((d) => d.correct).map((d) => d.slotId).sort()).toEqual(truckTargets.map((s) => s.id).sort());
     expect(out.controls.forkStepsAt.truck).toBeGreaterThan(0);
-    expect(out.controls.forkStepsAt.rack + out.controls.forkStepsAt.truck).toBe(out.controls.forkSteps);
+    // At the belt's input, one press of F up to its slot on the table (docs/CONVEYOR.md, H1b), as at a rack's level 1.
+    expect(out.controls.forkStepsAt.beltIn).toBe(1);
+    expect(out.controls.forkStepsAt.beltOut).toBe(0);
+    expect(out.controls.forkStepsAt.rack + out.controls.forkStepsAt.truck + out.controls.forkStepsAt.beltIn).toBe(out.controls.forkSteps);
     expect(onTruck.every((d) => d.zoneId === null && d.recipeLength === 1)).toBe(true);
     expect(onTruck.some((d) => d.level === 1 && d.correct)).toBe(true);
     // Everything lit at the end: the last box placed (set down, or brought in by the belt) completes the last target.
@@ -73,10 +77,10 @@ describe('the Benchmark is playable with the real controls', () => {
     const [belt] = level.conveyors!;
     const ride = deliveries(out.events);
     expect(ride).toHaveLength(1);
-    expect(ride[0]).toMatchObject({ conveyorId: belt.id, slotId: `${belt.output}:0:0`, skin: 'beltOut', correct: true });
+    expect(ride[0]).toMatchObject({ conveyorId: belt.id, slotId: `${belt.output}:0:1`, skin: 'beltOut', correct: true });
     expect(ride[0]).not.toHaveProperty('wrongTarget');
     const ontoBelt = drops(out.events).filter((d) => d.skin === 'beltIn');
-    expect(ontoBelt).toEqual([expect.objectContaining({ boxId: ride[0].boxId, slotId: `${belt.input}:0:0`, correct: false, recipeLength: 0 })]);
+    expect(ontoBelt).toEqual([expect.objectContaining({ boxId: ride[0].boxId, slotId: `${belt.input}:0:1`, level: 1, correct: false, recipeLength: 0 })]);
     expect(ontoBelt[0]).not.toHaveProperty('wrongTarget'); // a belt's input is «libre»
     const started = out.events.findIndex((e) => e.type === 'beltStarted');
     expect(started).toBeGreaterThan(out.events.indexOf(ontoBelt[0]));

@@ -92,7 +92,8 @@ export interface StorageUnitView {
   burstAt(slot: StorageSlotState, cameraYaw: number, out: BurstPlace): BurstPlace;
   /**
    * Where the chosen-level marker frames level `slot` (written into `out`): a rack's shelf, a truck level's cell on its
-   * dock sign (every unit: the forks go by the keys), or null (no marker there).
+   * dock sign, a belt input's slot on its table top (every unit: the forks go by the keys), or null (no marker there: a
+   * belt's end exit).
    */
   markerAt(slot: StorageSlotState, out: MarkerPlace): MarkerPlace | null;
   /**

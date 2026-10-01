@@ -22,8 +22,9 @@
  *
  * A level with conveyor belts (docs/CONVEYOR.md: the Benchmark since H1) also writes them: `storage.conveyors` (each
  * belt: its units and cells), `targets.counts.beltExits`, `metrics.belts`, `start.belts` (their live state) and, in
- * the autopilot logs, every delivery (`box input → end exit`, flagged ` (cinta)`). A level without belts writes none of
- * these keys, so its sections stay as they were.
+ * the autopilot logs, every delivery (`box input → end exit`, flagged ` (cinta)`); since H1b, the base level of a
+ * belt's units (`baseLevel`, on its table) and the F / V presses at a belt's input (`forkStepsAt.beltIn`). A level
+ * without belts writes none of these keys, so its sections stay as they were.
  *
  * Regenerate (only for a deliberate rule change, as phase 6 did; never by hand):
  *   TORO_CARACTERIZAR=1 npx vitest run src/integration/storageCharacterization.test.ts -u
@@ -66,6 +67,8 @@ export interface StorageUnitView {
   access: StorageAccess;
   /** Per column, its cues bottom → top; null = «libre». */
   columns: (ZoneCriteria | null)[][];
+  /** The level of its bottom slot, when not the floor's (a belt's ends: on its table). */
+  baseLevel?: number;
 }
 
 export interface AutopilotView {
@@ -76,8 +79,11 @@ export interface AutopilotView {
   /** Frames until the level completed (the autopilot stops there). */
   frames: number;
   forkSteps: number;
-  /** Of those, the presses at each skin's units (docs/STORAGE.md rule 9: at a truck too, since phase 6). */
-  forkStepsAt: { rack: number; truck: number };
+  /**
+   * Of those, the presses at each skin's units (docs/STORAGE.md rule 9: at a truck too, since phase 6; at a belt's
+   * input, on its table, since H1b: levels with belts only).
+   */
+  forkStepsAt: { rack: number; truck: number; beltIn?: number };
   reverseFrames: number;
   /** Every box move, in order: `box from → to`, then ` ok n/total` (its target lit) or ` wrong` (the soft buzz). */
   log: string[];
@@ -155,6 +161,7 @@ export function storageSection(level: LevelData): LevelCharacterization['storage
       w: unit.w,
       access: { ...unit.access },
       columns: unit.columns.map((levels) => levels.map((cue) => (cue === null ? null : { ...cue }))),
+      ...(unit.baseLevel === undefined ? {} : { baseLevel: unit.baseLevel }),
     }),
   );
   const storageSlots = storageSlotsOf(level);
@@ -303,7 +310,11 @@ export function autopilotSection(level: LevelData, dt: number): AutopilotView {
     counter: out.snapshot.moves,
     frames: Math.round(out.seconds / dt),
     forkSteps: out.controls.forkSteps,
-    forkStepsAt: { rack: out.controls.forkStepsAt.rack, truck: out.controls.forkStepsAt.truck },
+    forkStepsAt: {
+      rack: out.controls.forkStepsAt.rack,
+      truck: out.controls.forkStepsAt.truck,
+      ...(hasConveyors(level) ? { beltIn: out.controls.forkStepsAt.beltIn } : {}),
+    },
     reverseFrames: out.controls.reverseFrames,
     log,
   };

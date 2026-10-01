@@ -56,8 +56,8 @@ export interface StorageAccessRow {
  */
 export const STORAGE_ACCESS: { readonly [K in StorageAccess['kind']]: StorageAccessRow } = {
   /**
-   * A storage rack (and a belt's input: one slot at the floor, docs/CONVEYOR.md): loaded from the floor cell in front of
-   * each column; the column's cell is solid.
+   * A storage rack (and a belt's input: one slot on its table, at a rack's level 1 for a floor belt, docs/CONVEYOR.md):
+   * loaded from the floor cell in front of each column; the column's cell is solid.
    */
   front: {
     engages: true,

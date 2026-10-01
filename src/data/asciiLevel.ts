@@ -27,7 +27,7 @@ import {
   type ZoneCriteria,
 } from '../core/types';
 import { FACING_X, FACING_Z, runsAlongX } from '../core/racks';
-import { conveyorOfUnit, conveyorsOf } from '../core/conveyors';
+import { FLOOR_BELT_LEVEL, conveyorOfUnit, conveyorsOf } from '../core/conveyors';
 import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, cellOf, frontOf, storageOf } from '../core/storage';
 import { DifficultySyntaxError, formatTargets, parseTargets, type DifficultyTarget } from './difficulty';
 import { validateLevel } from './validateLevel';
@@ -349,7 +349,7 @@ const COLUMN_WORDS: { readonly [S in StorageSkin]: ColumnWords } = {
   // A belt's input and end exit hold one level each (docs/CONVEYOR.md): their legend entry is not a column list.
   beltIn: {
     missing: `la entrada de la cinta no pide nada: es «libre» (${BELT_EXAMPLE})`,
-    tooMany: 'la entrada de una cinta tiene un solo hueco, a ras del suelo',
+    tooMany: 'la entrada de una cinta tiene un solo hueco, sobre su mesa',
     colon: 'la entrada de la cinta no lleva dos puntos: «A = cinta entrada»',
     one: 'la entrada de la cinta',
   },
@@ -790,13 +790,14 @@ class LevelParser {
       );
     });
 
-    // Each belt: its id, its two units and its cells from the input on, each with the piece its character names (every
-    // piece lies on the floor here: validateLevel builds only the floor one so far, docs/CONVEYOR.md).
+    // Each belt: its id, its two units and its cells from the input on, each with the piece its character names, at the
+    // floor belt's level (a table, FLOOR_BELT_LEVEL: validateLevel builds only the floor piece so far,
+    // docs/CONVEYOR.md; its two units take their base level from it there).
     const conveyors = belts.map((belt, i) => ({
       id: belt.id,
       input: beltUnitIds[i].input,
       output: beltUnitIds[i].output,
-      cells: belt.cells.map((c) => ({ x: c.x, z: c.z, piece: c.def.beltCell!.piece, height: 0 })),
+      cells: belt.cells.map((c) => ({ x: c.x, z: c.z, piece: c.def.beltCell!.piece, height: FLOOR_BELT_LEVEL })),
     }));
     const raw = {
       id: idHeader.value,

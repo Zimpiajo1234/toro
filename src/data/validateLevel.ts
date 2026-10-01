@@ -33,7 +33,8 @@ import {
   usesSymbols,
   type Sortable,
 } from '../core/sorting';
-import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
+import { STORAGE_SKINS, STORAGE_SKIN_ORDER, STORAGE_WORDS, baseLevelOf, cellOf, frontOf, slotIdOf, storageSlotsOf } from '../core/storage';
+import { FLOOR_BELT_LEVEL, beltEndLevels } from '../core/conveyors';
 import { dockRailsOf } from '../core/docks';
 import { GAME_CONFIG } from '../config';
 
@@ -176,7 +177,9 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   const units: LevelStorage[] = [];
   /** How messages name each unit, in storage order: `racks[0]`, `trucks[1]`… (wordsOf). */
   const names: string[] = [];
-  /** Storage slot id → how messages name it: `racks[0].columns[1][2]`. */
+  /** Per unit, in storage order: the base level its raw object gives (LevelStorage.baseLevel), if any. */
+  const givenBases: (number | undefined)[] = [];
+  /** Storage slot id → how messages name it: `racks[0].columns[1][2]` (filled once every unit has its base level). */
   const slotNames = new Map<string, string>();
   /** Cell key of a unit column (a front unit's own cell; a door unit's, outside the map) → [unit, column]. */
   const unitCells = new Map<string, [number, number]>();
@@ -250,7 +253,7 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       }
       unitCells.set(cellKey(cell), [u, j]);
     });
-    columns.forEach((levels, j) => levels.forEach((_, k) => slotNames.set(slotIdOf(unit.id, j, k), `${name}.columns[${j}][${k}]`)));
+    givenBases.push(o.baseLevel === undefined ? undefined : int(o.baseLevel, `${name}.baseLevel`));
     units.push(unit);
     names.push(name);
     inSkin[skin]++;
@@ -260,7 +263,8 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   // Conveyor belts (docs/CONVEYOR.md): each a straight run of belt cells from its input (a unit of skin beltIn) to its
   // end exit (one of skin beltOut), the input loaded from the side away from the belt, the end exit fed from the belt's
   // last cell. Every cell a floor piece for now (the ramp and the ceiling pieces come later: the data already carries
-  // them), on cells of its own: nothing else stands on a belt (an obstacle for the body and the load).
+  // them), a table at FLOOR_BELT_LEVEL (its cells' height, by default), on cells of its own: nothing else stands on a
+  // belt (an obstacle for the body and the load).
   const conveyors: LevelConveyor[] = arr(r.conveyors, 'conveyors').map((c, i) => {
     const name = `conveyors[${i}]`;
     const o = obj(c, name);
@@ -273,19 +277,22 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
           : (CONVEYOR_PIECES as readonly string[]).includes(co.piece as string)
             ? (co.piece as ConveyorPiece)
             : fail(`${where}.piece must be ${CONVEYOR_PIECES.join(', ')}`);
-      return { x: int(co.x, `${where}.x`), z: int(co.z, `${where}.z`), piece, height: co.height === undefined ? 0 : num(co.height, `${where}.height`) };
+      return { x: int(co.x, `${where}.x`), z: int(co.z, `${where}.z`), piece, height: co.height === undefined ? FLOOR_BELT_LEVEL : num(co.height, `${where}.height`) };
     });
     return { id: o.id === undefined ? `c${i + 1}` : str(o.id, `${name}.id`), input: str(o.input, `${name}.input`), output: str(o.output, `${name}.output`), cells };
   });
   /** The conveyor of each belt unit (by unit index). */
   const beltOfUnit = new Map<number, number>();
+  /** The base level a belt gives each of its two units (by unit index): its height there. */
+  const beltBases = new Map<number, number>();
   conveyors.forEach((belt, i) => {
     const name = `conveyors[${i}]`;
     if (conveyors.some((other, j) => j < i && other.id === belt.id)) fail(`duplicate conveyor id "${belt.id}"`);
     if (belt.cells.length === 0) fail(`${name} needs at least one belt cell between its input and its end exit`);
     belt.cells.forEach((cell, j) => {
       if (cell.piece !== 'suelo') fail(`${name}.cells[${j}] is a ${cell.piece} piece: only floor belts («suelo») are built so far`);
-      if (cell.height !== 0) fail(`${name}.cells[${j}] has height ${cell.height}: a floor belt («suelo») lies on the floor (height 0)`);
+      if (cell.height !== FLOOR_BELT_LEVEL)
+        fail(`${name}.cells[${j}] has height ${cell.height}: a floor belt («suelo») is a table at level ${FLOOR_BELT_LEVEL} (the floor of a rack's level-1 slot)`);
     });
     const unitOf = (id: string, skin: StorageSkin, role: string): number => {
       const u = units.findIndex((unit) => unit.id === id);
@@ -317,10 +324,29 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
       if (blocked.has(k) || doorCells.has(k)) fail(`${name} overlaps another obstacle at ${k}`);
       blocked.add(k);
     }
+    // Its input and end exit stand on the belt (docs/CONVEYOR.md): their slots at its height next to each.
+    const ends = beltEndLevels(belt);
+    beltBases.set(input, ends.input);
+    beltBases.set(output, ends.output);
   });
   units.forEach((unit, u) => {
     if ((unit.skin === 'beltIn' || unit.skin === 'beltOut') && !beltOfUnit.has(u))
       fail(`${names[u]} belongs to no conveyor: a belt's input and end exit come with their belt`);
+  });
+  // Base levels (docs/STORAGE.md «Nivel base»): a belt's ends at their belt's height (written in the unit, so every
+  // layer reads its slots' levels off the unit itself), every other unit at the floor (0, never written). A raw level
+  // may repeat it (validateLevel gives the level back), never contradict it.
+  units.forEach((unit, u) => {
+    const base = beltBases.get(u) ?? 0;
+    const given = givenBases[u];
+    if (given !== undefined && given !== base)
+      fail(
+        beltBases.has(u)
+          ? `${names[u]}.baseLevel must be ${base}: a belt's input and end exit stand at their belt's height`
+          : `${names[u]}.baseLevel must be 0: only a conveyor belt's input and end exit stand above the floor`,
+      );
+    if (base !== 0) unit.baseLevel = base;
+    unit.columns.forEach((levels, j) => levels.forEach((_, k) => slotNames.set(slotIdOf(unit.id, j, base + k), `${names[u]}.columns[${j}][${k}]`)));
   });
   // Access `front`: every column is loaded from its front cell, floor whatever else stands around (a dock's door cell
   // too).
@@ -509,12 +535,14 @@ export function validateLevel(raw: unknown, source = 'level'): LevelData {
   for (const sb of storedList) {
     const words = wordsOf(units[sb.unit].skin);
     const levels = units[sb.unit].columns[sb.column].length;
-    if (sb.level < 0 || sb.level >= levels)
+    // Its levels count from its unit's base level (0 for every unit a box can start in).
+    const base = baseLevelOf(units[sb.unit]);
+    if (sb.level < base || sb.level >= base + levels)
       fail(`box "${sb.id}" is ${words.at} ${words.level} ${sb.level} of ${names[sb.unit]} column ${sb.column}, which has ${levels} ${words.level}s`);
   }
   for (const sb of storedList) {
     if (STORAGE_SKINS[units[sb.unit].skin].support !== 'stack') continue;
-    if (sb.level > 0 && !storedBoxes.has(`${sb.key}@${sb.level - 1}`))
+    if (sb.level > baseLevelOf(units[sb.unit]) && !storedBoxes.has(`${sb.key}@${sb.level - 1}`))
       fail(`box "${sb.id}" is ${wordsOf(units[sb.unit].skin).at} ${names[sb.unit]} column ${sb.column} at level ${sb.level} with no box below it`);
   }
 

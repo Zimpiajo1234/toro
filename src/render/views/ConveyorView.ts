@@ -3,10 +3,10 @@ import type { Placement } from '../paint';
 import { BELT } from '../builders/conveyor';
 
 /**
- * The faint stripes across a conveyor belt's surface (docs/CONVEYOR.md): thin bands, a touch lighter than the band,
- * that slide along it with its surface, only while it runs (so the box and the stripes move as one), clipped at both
- * ends of the band. One small geometry per belt whose vertices move in place: `sync(travel)` places them for the
- * distance the surface has moved (ConveyorState.travel, which never goes back); nothing is allocated per frame.
+ * The white stripes across a conveyor belt's band (docs/CONVEYOR.md): thin bands that slide along it with its surface,
+ * only while it runs (so the box and the stripes move as one: the motion reads at a glance), clipped at both ends of
+ * the band. One small geometry per belt whose vertices move in place: `sync(travel)` places them for the distance the
+ * surface has moved (ConveyorState.travel, which never goes back); nothing is allocated per frame.
  */
 export class BeltStripes {
   readonly mesh: Mesh;
@@ -21,6 +21,8 @@ export class BeltStripes {
     material: Material,
     /** Belt-local → world (builders/conveyor beltPlacement): its input's centre, the yaw along it, its cells. */
     private readonly placement: Placement & { cells: number },
+    /** World y of the band's surface (the table top: builders/conveyor beltTopY). */
+    private readonly top: number,
   ) {
     const length = placement.cells;
     this.count = Math.ceil(length / BELT.stripe.period) + 1;
@@ -34,7 +36,7 @@ export class BeltStripes {
     this.sin = Math.sin(ry);
     // The stripes always stay on the band: a fixed bound around it, never recomputed.
     const mid = 0.5 + length / 2;
-    const centre = new Vector3((placement.x ?? 0) + this.sin * mid, BELT.top, (placement.z ?? 0) + this.cos * mid);
+    const centre = new Vector3((placement.x ?? 0) + this.sin * mid, top, (placement.z ?? 0) + this.cos * mid);
     this.geometry.boundingSphere = new Sphere(centre, length / 2 + 1);
     this.mesh = new Mesh(this.geometry, material);
     this.mesh.receiveShadow = true;
@@ -50,8 +52,8 @@ export class BeltStripes {
     const z0 = 0.5;
     const z1 = this.placement.cells + 0.5;
     const offset = ((travel % period) + period) % period;
-    const half = BELT.halfW;
-    const y = BELT.top + lift;
+    const half = BELT.band;
+    const y = this.top + lift;
     for (let k = 0; k < this.count; k++) {
       const start = z0 + offset + (k - 1) * period;
       const a = Math.min(z1, Math.max(z0, start));

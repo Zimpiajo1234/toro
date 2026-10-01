@@ -104,9 +104,29 @@ describe('themes', () => {
       expect(Math.min(hue, 360 - hue), c).toBeGreaterThan(30);
     }
     palette.forEach((a, i) => palette.slice(i + 1).forEach((b) => expect(deltaE2000(a, b), `${a} ${b}`).toBeGreaterThan(20)));
-    // The band itself is a quiet graphite, nothing like a box: low chroma, darker than every box face.
-    expect(chroma(t.conveyor.belt)).toBeLessThan(6);
-    for (const f of faces) expect(lab(t.conveyor.belt)[0]).toBeLessThan(lab(f)[0] - 15);
+  });
+
+  it('gives a conveyor belt a quiet light-grey band with white stripes that read as motion, on a neutral table', () => {
+    const t = defaultTheme;
+    const { belt, stripe, top, frame, identity } = t.conveyor;
+    const boxFaces = COLOR_IDS.flatMap((c) => [t.boxes[c].base, t.boxes[c].tape, t.boxes[c].glyph, t.boxes[c].locked]);
+    const faces = [...boxFaces, ...COLOR_IDS.flatMap((c) => Object.values(t.zones[c]))];
+    // The band (H1b: «un gris algo más claro») is a quiet grey, nothing like a box: low chroma, still darker than every
+    // box face and zone tone, and apart from every box face, so a box riding it always reads; apart from the identity
+    // pads beside it too.
+    expect(chroma(belt)).toBeLessThan(6);
+    for (const f of faces) expect(lab(belt)[0], f).toBeLessThan(lab(f)[0]);
+    expect(Math.min(...boxFaces.map((f) => deltaE2000(belt, f)))).toBeGreaterThan(13);
+    expect(Math.min(...identity.map((c) => deltaE2000(belt, c)))).toBeGreaterThan(15);
+    // Its stripes are white («rayas blancas»: low chroma, very light), far lighter than the band: the motion cue.
+    expect(chroma(stripe)).toBeLessThan(6);
+    expect(lab(stripe)[0]).toBeGreaterThan(90);
+    expect(lab(stripe)[0] - lab(belt)[0]).toBeGreaterThan(30);
+    // The table is neutral (never a functional hue): its top light (the end exit's deck, where its cue is painted), its
+    // frame a quiet graphite under the band.
+    for (const c of [top, frame]) expect(chroma(c), c).toBeLessThan(6);
+    expect(lab(top)[0]).toBeGreaterThan(85);
+    expect(lab(frame)[0]).toBeLessThan(lab(belt)[0]);
   });
 
   it('maps the background and every UI token to a CSS custom property', () => {

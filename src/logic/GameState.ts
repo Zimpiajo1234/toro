@@ -104,7 +104,7 @@ export class GameState {
   /** Per storage column (access `front`): the level its slot was opened at for the load (-1 = closed). */
   private openLevels = new Int8Array(0);
   /** The hint's storage object, reused (hint.storage points at it or is null). */
-  private readonly storageHint: StorageHint = { unitId: '', skin: 'rack', column: 0, levels: 1, level: 0, slotId: '', ready: false };
+  private readonly storageHint: StorageHint = { unitId: '', skin: 'rack', column: 0, levels: 1, level: 0, slotId: null, ready: false };
   /**
    * The level has storage (core/storage hasStorage): it follows the target rules of docs/STORAGE.md (destinies, locks,
    * soft buzz) and F / V step the forks at its units (elsewhere they do nothing, as before).
@@ -313,9 +313,9 @@ export class GameState {
     const fromZoneId = box.zoneId;
     const fromLevel = box.level;
     const cell = box.cell;
-    // Out of storage (any skin): the column it rests in and its slot there.
+    // Out of storage (any skin): the column it rests in and its slot there (at its level, counted from the floor).
     const column = box.slotId !== null && cell ? this.grid.columnAt(cell.x, cell.z) : -1;
-    const from = column >= 0 ? this.snapshot.storageSlots[this.grid.columns[column].firstSlot + fromLevel] : null;
+    const from = column >= 0 ? (this.snapshot.storageSlots[this.grid.slotOf(column, fromLevel)] ?? null) : null;
     const fromWas = from !== null && from.satisfied;
     let released: ZoneState | null = null;
     let restored: ZoneState | null = null;
@@ -450,12 +450,13 @@ export class GameState {
     const snap = this.snapshot;
     const index = this.carriedIndex;
     const box = snap.boxes[index];
-    const { cell, firstSlot } = this.grid.columns[column];
+    const { cell } = this.grid.columns[column];
     box.carried = false;
     box.cell = { x: cell.x, z: cell.z };
     box.zoneId = null;
     box.level = this.grid.putBox(column, level, index);
-    const state = snap.storageSlots[firstSlot + box.level];
+    const slot = this.grid.slotOf(column, box.level);
+    const state = snap.storageSlots[slot];
     box.pos.x = state.pos.x;
     box.pos.z = state.pos.z;
     box.slotId = state.id;
@@ -471,7 +472,7 @@ export class GameState {
     const belt = this.belts.atInput(column);
     const waits = belt >= 0 && this.grid.slotBox(this.belts.outputSlotOf(belt)) >= 0;
     if (belt >= 0 && !waits) {
-      this.grid.seal(firstSlot + box.level, true);
+      this.grid.seal(slot, true);
       this.belts.load(belt, index, box.id);
     }
 
@@ -517,11 +518,12 @@ export class GameState {
     const box = snap.boxes[index];
     const input = this.belts.inputOf(belt);
     const output = this.belts.outputOf(belt);
-    this.grid.takeBox(input, 0);
+    // It rode at its input's level (box.level) and rests at its end exit's: each its belt's height there.
+    this.grid.takeBox(input, box.level);
     this.grid.seal(this.belts.inputSlotOf(belt), false);
-    const { cell, firstSlot } = this.grid.columns[output];
-    box.level = this.grid.putBox(output, 0, index);
-    const state = snap.storageSlots[firstSlot + box.level];
+    const { cell, baseLevel } = this.grid.columns[output];
+    box.level = this.grid.putBox(output, baseLevel, index);
+    const state = snap.storageSlots[this.belts.outputSlotOf(belt)];
     box.cell = { x: cell.x, z: cell.z };
     box.pos.x = state.pos.x;
     box.pos.z = state.pos.z;
@@ -561,16 +563,17 @@ export class GameState {
     const boxes = this.snapshot.boxes;
     const stack = column.support === 'stack' ? this.grid.stackAt(column.cell.x, column.cell.z) : null;
     let right = true;
-    for (let level = 0; level < column.levels; level++) {
-      const slot = slots[column.firstSlot + level];
+    // Its slots bottom → top (the k-th from its base level).
+    for (let k = 0; k < column.levels; k++) {
+      const slot = slots[column.firstSlot + k];
       let box: BoxState | null;
       if (stack) {
-        box = level < stack.length ? boxes[stack[level]] : null;
+        box = k < stack.length ? boxes[stack[k]] : null;
         slot.satisfied = right && box !== null && slot.destined !== null && sameKind(slot.destined, box);
-        slot.loadable = right && level === stack.length;
+        slot.loadable = right && k === stack.length;
         right = slot.satisfied;
       } else {
-        const bi = this.grid.slotBox(column.firstSlot + level);
+        const bi = this.grid.slotBox(column.firstSlot + k);
         box = bi >= 0 ? boxes[bi] : null;
         slot.satisfied = box !== null && slot.destined !== null && sameKind(slot.destined, box);
         slot.loadable = box === null;
@@ -587,12 +590,14 @@ export class GameState {
    * Levels with storage: which storage column the rig works at, by its access (STORAGE_ACCESS). Facing one (heading, fork
    * point beside its centre line and near its face; through a door also the body in line with its door cell) engages it;
    * an engaged column holds within looser margins so a small wobble does not flicker the hint or drop the forks (it
-   * keeps its selected level, so the forks stay up); leaving them resets the selection to the bottom level and the forks
-   * go back to automatic, as on the floor. Arriving at another unit starts at its bottom level; sliding along the same
-   * unit keeps it. The accesses are tried in STORAGE_ACCESS order (a rack before a truck), facing a column before holding
-   * the old one. Then StorageAim: the column pick / drop act on (the forks at the selected level, the fork point deep
-   * enough), that level, and whether nothing may be dropped yet (the forks on their way to the selected level; the load
-   * in a doorway short of the reach or with the forks away from that level).
+   * keeps its selected level, so the forks stay up); leaving them resets the selection to level 0 and the forks go back
+   * to automatic, as on the floor. Arriving at another unit starts at level 0, the floor's (nothing automatic: the slot
+   * of a unit standing higher, a belt's input on its table, is raised to with F, docs/STORAGE.md «Nivel base»); sliding
+   * along the same unit keeps it. The levels go up to the column's top slot. The accesses are tried in STORAGE_ACCESS
+   * order (a rack before a truck), facing a column before holding the old one. Then StorageAim: the column pick / drop
+   * act on (the forks at the selected level, the fork point deep enough), that level, and whether nothing may be
+   * dropped yet (the forks on their way to the selected level; the load in a doorway short of the reach or with the
+   * forks away from that level).
    */
   private refreshStorageAim(): void {
     const aim = this.aim;
@@ -641,7 +646,7 @@ export class GameState {
     } else if (engaged < 0) this.forkLevel = 0;
     this.engaged = engaged;
     this.facing = facing;
-    if (engaged >= 0) this.forkLevel = clamp(this.forkLevel, 0, columns[engaged].levels - 1);
+    if (engaged >= 0) this.forkLevel = clamp(this.forkLevel, 0, this.grid.topLevel(engaged));
     const row = engaged >= 0 ? STORAGE_ACCESS[columns[engaged].access] : null;
     const carrying = this.carriedIndex >= 0;
     // The forks act on the column only once they stand at its selected level (the tines / the load fit its opening).
@@ -680,8 +685,9 @@ export class GameState {
 
   /**
    * Levels with storage: which storage columns' openings the carried load may pass (CollisionWorld.setOpen), by access.
-   * `front` (a rack column): the aimed column opens once the forks stand at the selected level and that slot is empty,
-   * and stays open while the load is in its cell at that level (it never turns solid around the load: the level is
+   * `front` (a rack column): the aimed column opens once the forks stand at the selected level and that slot is empty
+   * (below a unit's base level there is no slot: a belt's table face stays shut, like a full slot), and stays open
+   * while the load is in its cell at that level (it never turns solid around the load: the level is
    * locked once the load is in, and a load only just reaching into a column that closes is eased out, see
    * closeOpening); every other column blocks the load like a shelf. Inside, the load meets the slot's back panel and side
    * uprights, so it goes in and out straight. The body never enters. `door` (a truck column): the column the rig faces
@@ -720,7 +726,8 @@ export class GameState {
         continue;
       }
       let level = -1;
-      if (c === aim.column && this.grid.slotBox(this.grid.slotOf(c, aim.level)) < 0) level = aim.level;
+      const slot = c === aim.column ? this.grid.slotOf(c, aim.level) : -1;
+      if (slot >= 0 && this.grid.slotBox(slot) < 0) level = aim.level;
       else if (open[c] >= 0 && Math.abs(forkHeight - open[c]) <= LOAD_PASS_CLEARANCE) {
         const cell = world.opening(c);
         if (pointRectDistance(load.x, load.z, cell.minX, cell.minZ, cell.maxX, cell.maxZ) < r + LOAD_NEAR_MARGIN) level = open[c];
@@ -775,14 +782,15 @@ export class GameState {
 
   /**
    * F / V, wheel, gamepad X / B: one level up or down at the storage column the rig works at, any unit (hint.storage:
-   * not while it lifts a floor box there), never through a board (a load inside a rack slot keeps its level) and never
-   * down into the boxes of a stack (a truck bed) the load is over.
+   * not while it lifts a floor box there), from level 0 up to its top slot (below a unit's base level, its solid face:
+   * a belt's table), never through a board (a load inside a rack slot keeps its level) and never down into the boxes
+   * of a stack (a truck bed) the load is over.
    */
   private stepForkLevel(step: -1 | 1): void {
     const engaged = this.engaged;
     if (engaged < 0 || !this.atColumn()) return;
     if (this.grid.columns[engaged].support === 'shelves' && this.loadInOpening()) return;
-    const level = clamp(this.forkLevel + step, 0, this.grid.columns[engaged].levels - 1);
+    const level = clamp(this.forkLevel + step, 0, this.grid.topLevel(engaged));
     if (level === this.forkLevel || this.sinksIntoStack(engaged, level)) return;
     this.forkLevel = level;
     // A rack slot open for the load at the old level closes now, before the rig moves (a load just reaching in is eased
@@ -805,7 +813,7 @@ export class GameState {
     if (column.support !== 'stack' || this.carriedIndex < 0) return false;
     const { x, z } = column.cell;
     const base = this.grid.baseAt(x, z);
-    if (base < 0 || level >= this.grid.height(x, z)) return false;
+    if (base < 0 || level - column.baseLevel >= this.grid.height(x, z)) return false;
     const { boxes, forklift } = this.snapshot;
     const load = boxes[this.carriedIndex].pos;
     return this.loadNear(load.x, load.z, forklift.heading, boxes[base].pos, true);
@@ -906,20 +914,22 @@ export class GameState {
 
   /**
    * hint.storage while the rig is at a storage column (any unit) and not lifting a floor box there (null otherwise):
-   * the level chosen there; `ready` = the action works on it.
+   * the level chosen there and its slot (none below the unit's base level: a belt's table face); `ready` = the action
+   * works on it.
    */
   private fillStorageHint(ready: boolean): void {
     const engaged = this.engaged;
     if (engaged < 0) return;
     const column = this.grid.columns[engaged];
     const level = this.forkLevel;
+    const slot = this.grid.slotOf(engaged, level);
     const h = this.storageHint;
     h.unitId = column.unitId;
     h.skin = column.skin;
     h.column = column.column;
-    h.levels = column.levels;
+    h.levels = this.grid.topLevel(engaged) + 1;
     h.level = level;
-    h.slotId = this.snapshot.storageSlots[column.firstSlot + level].id;
+    h.slotId = slot >= 0 ? this.snapshot.storageSlots[slot].id : null;
     h.ready = ready;
     this.snapshot.hint.storage = h;
   }

@@ -104,7 +104,9 @@ describe('conveyor belts in the .level format', () => {
       { id: 'e1', skin: 'beltIn', x: 0, z: 2, w: 1, access: { kind: 'front', facing: 'south' }, columns: [[null]] },
       { id: 's1', skin: 'beltOut', x: 0, z: 0, w: 1, access: { kind: 'belt', facing: 'south' }, columns: [[{ color: 'blue' }]] },
     ]);
-    expect(conveyorsOf(level)).toStrictEqual([{ id: 'c1', input: 'e1', output: 's1', cells: [{ x: 0, z: 1, piece: 'suelo', height: 0 }] }]);
+    // A floor belt is a table at level 1 (H1b): the grammar has no heights, its cells get it (and validateLevel gives
+    // its two ends that base level).
+    expect(conveyorsOf(level)).toStrictEqual([{ id: 'c1', input: 'e1', output: 's1', cells: [{ x: 0, z: 1, piece: 'suelo', height: 1 }] }]);
     // The level validates as written, and comes back as it is.
     const valid = parseLevel(text(BASE), 'x.level').level;
     expect(conveyorsOf(valid)).toEqual(conveyorsOf(level));

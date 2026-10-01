@@ -6,6 +6,7 @@ import {
   STORAGE_SKINS,
   STORAGE_SKIN_ORDER,
   STORAGE_WORDS,
+  baseLevelOf,
   cellOf,
   facingOf,
   frontOf,
@@ -53,7 +54,8 @@ describe('STORAGE_SKINS (docs/STORAGE.md «Modelo»)', () => {
     expect(STORAGE_SKINS).toEqual({
       rack: { support: 'shelves', maxLevels: 3, maxColumns: Infinity, access: 'front', idPrefix: 'r', chars: 'RSTUVWXYZKLMNO', fillToMax: false, sound: 'metal' },
       truck: { support: 'stack', maxLevels: 2, maxColumns: 3, access: 'door', idPrefix: 't', chars: 'TCUVWXYZKLMNO', fillToMax: true, sound: 'wood' },
-      // A conveyor belt (docs/CONVEYOR.md): one row per access, one slot each, on shelves of their own at the floor.
+      // A conveyor belt (docs/CONVEYOR.md): one row per access, one slot each, on shelves of their own (on its table:
+      // their units' base level).
       beltIn: { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'front', idPrefix: 'e', chars: 'ADFJ', fillToMax: false, sound: 'belt' },
       beltOut: { support: 'shelves', maxLevels: 1, maxColumns: 1, access: 'belt', idPrefix: 's', chars: 'BEGK', fillToMax: false, sound: 'belt' },
     });
@@ -181,6 +183,27 @@ describe('geometry of every unit (core/storage)', () => {
     for (const col of storageColumnsOf(MANY)) col.cues.forEach((cue, lvl) => expect(slots[col.firstSlot + lvl]).toMatchObject({ unit: col.unit, column: col.column, level: lvl, cue }));
     expect(slotIdOf('t9', 2, 1)).toBe('t9:2:1');
     expect(storageSlotsOf({ storage: [] })).toEqual([]);
+  });
+
+  it('a unit standing above the floor (a belt\'s input on its table) numbers its slots from its base level: ids and levels', () => {
+    // At the floor (every rack and truck): base level 0, written or not.
+    for (const u of [RN, TN]) expect(baseLevelOf(u)).toBe(0);
+    const input = { ...unit('e1', 'beltIn', 4, 3, { kind: 'front', facing: 'south' }, [[null]]), baseLevel: 1 };
+    const exit = { ...unit('s1', 'beltOut', 4, 1, { kind: 'belt', facing: 'south' }, [[{ color: 'coral' }]]), baseLevel: 1 };
+    const level = { storage: [RS, input, exit] };
+    expect(storageColumnsOf(level).map((c) => [c.unit.id, c.baseLevel, c.firstSlot])).toEqual([
+      ['r3', 0, 0],
+      ['e1', 1, 1],
+      ['s1', 1, 2],
+    ]);
+    expect(storageSlotsOf(level).map((s) => [s.id, s.level])).toEqual([
+      ['r3:0:0', 0],
+      ['e1:0:1', 1],
+      ['s1:0:1', 1],
+    ]);
+    // Targets and chimes name its slot by that id too.
+    expect(targetsOf({ zones: [], ...level }).map((t) => t.id)).toEqual(['s1:0:1']);
+    expect(zoneMatchKinds({ zones: [], ...level }).get('s1:0:1')).toBe('color');
   });
 
   it('dockRailsOf: the rails of every door unit (by its unit id), at both ends of each door run', () => {

@@ -124,7 +124,8 @@ describe('Benchmark (especiales/benchmark.level)', () => {
 
   it('has two racks of 3 slots per column, one front toward the default camera and one back to it, a wooden shelf one cell past an end', () => {
     const fronts = storageOf(level).filter(isFrontUnit);
-    // Loaded from the front: the two racks and the conveyor belt's input (docs/CONVEYOR.md: a slot at floor level).
+    // Loaded from the front: the two racks and the conveyor belt's input (docs/CONVEYOR.md: a slot on its table, at
+    // level 1).
     expect(fronts.map((r) => r.skin)).toEqual(['rack', 'rack', 'beltIn']);
     const racks = fronts.filter((r) => r.skin === 'rack');
     for (const rack of racks) for (const column of rack.columns) expect(column).toHaveLength(3);
@@ -166,18 +167,20 @@ describe('Benchmark (especiales/benchmark.level)', () => {
     for (const { side } of dockRailsOf(level)) expect(level.decor.plants.some((pl) => pl.x === side.x && pl.z === side.z), `${side.x},${side.z}`).toBe(true);
   });
 
-  it('has a short conveyor belt (docs/CONVEYOR.md): one floor cell from its «libre» input to an end exit only the belt loads, destined to one box', () => {
+  it('has a short conveyor belt (docs/CONVEYOR.md): one floor cell, a table at level 1, from its «libre» input to an end exit only the belt loads, destined to one box', () => {
     expect(level.conveyors).toHaveLength(1);
     const [belt] = level.conveyors!;
-    expect(belt.cells.map((c) => [c.x, c.z, c.piece, c.height])).toEqual([[8, 1, 'suelo', 0]]);
+    expect(belt.cells.map((c) => [c.x, c.z, c.piece, c.height])).toEqual([[8, 1, 'suelo', 1]]);
     const unitOf = (id: string) => storageOf(level).find((u) => u.id === id)!;
     const [input, output] = [unitOf(belt.input), unitOf(belt.output)];
     expect([input.skin, input.x, input.z, output.skin, output.x, output.z]).toEqual(['beltIn', 8, 2, 'beltOut', 8, 0]);
     expect(input.columns).toEqual([[null]]);
     expect(output.columns).toEqual([[{ color: 'coral', symbol: 'cross' }]]);
+    // Both on the table: their slot at level 1, A's loaded like a rack's level-1 slot (F once).
+    expect([input.baseLevel, output.baseLevel]).toEqual([1, 1]);
     // Its box is the one coral ✚; the end exit's position is fed by the input's: a box set down there rides in.
-    const exit = grid.positionOfSlot(`${output.id}:0:0`);
-    const entry = grid.positionOfSlot(`${input.id}:0:0`);
+    const exit = grid.positionOfSlot(`${output.id}:0:1`);
+    const entry = grid.positionOfSlot(`${input.id}:0:1`);
     expect([grid.feeds[entry], grid.fedBy[exit]]).toEqual([exit, entry]);
     const destinies = levelDestinies(level)!;
     expect(destinies.slots[slots.findIndex((s) => s.unit.id === output.id)]).toMatchObject({ color: 'coral', symbol: 'cross' });

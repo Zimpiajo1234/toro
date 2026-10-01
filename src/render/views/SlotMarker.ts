@@ -10,10 +10,11 @@ const READY_OPACITY = 0.8;
 /**
  * Soft frame around the level the forks are set to while the forklift works at a storage column (hint.storage: a
  * rack's shelf, framed on the front face and around the back panel, builders/rack; a truck level, its cell of the sign
- * over the dock door, builders/truck), so the player sees what F / V (or the wheel) selected, even before the action
- * would work. One per skin, shared by its units: where it goes on a unit is that unit's (render/storage
- * StorageUnitView.markerAt). Glides between levels with the forks; neutral tone, or the carried box's zone tone when the
- * drop there would take it (its cue fits the box; in a stack, also its next level on right levels).
+ * over the dock door, builders/truck; a belt input's slot, flat on its table top round its pad, builders/conveyor; none
+ * where the level has no slot, below a unit's base level), so the player sees what F / V (or the wheel) selected, even
+ * before the action would work. One per skin, shared by its units: where it goes on a unit is that unit's
+ * (render/storage StorageUnitView.markerAt). Glides between levels with the forks; neutral tone, or the carried box's
+ * zone tone when the drop there would take it (its cue fits the box; in a stack, also its next level on right levels).
  */
 export class SlotMarker {
   readonly mesh: Mesh;

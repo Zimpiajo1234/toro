@@ -207,17 +207,20 @@ Hoy solo el Benchmark lleva un camión (los niveles 1–3 no cambian). Reglas co
 
 ## Cinta transportadora (Benchmark, Modo prueba)
 
-Una **cinta** es una banda baja de goma grafito, recta, que lleva sola una caja desde su **entrada** (una almohadilla
-del color de la cinta, a ras del suelo) hasta su **salida final** (una bandeja con ribete de ese color y un cartelito
-con la pista de su hueco), adonde la carretilla no llega. Deja la caja en la entrada **de frente**, como en el hueco de
-abajo de una estantería (Espacio, con la horquilla abajo): se asienta un momento, la cinta arranca suave con un zumbido
-eléctrico, sus franjas se deslizan y la caja viaja hasta la bandeja. Si es **su** caja, la salida brilla y la caja
-queda fija, como en un hueco; si no, suena el zumbido suave y la caja se queda allí (el botón que la devuelve llega más
-adelante: R reinicia). **Una caja a la vez**: mientras viaja, la entrada no admite otra; con la salida ya llena, una
-caja dejada en la entrada se queda en ella (zumbido suave) y se puede volver a coger. Dejarla en la entrada cuenta un
-movimiento; el viaje, ninguno; y la caja sigue contando en «Quedan N» hasta que llega. Sin teclas nuevas. Hoy solo el
-Benchmark lleva una (de (8,2) a (8,0), junto a la estantería de madera del fondo); los niveles 1–3 no cambian. Detalle,
-decisiones e hitos: [docs/CONVEYOR.md](docs/CONVEYOR.md).
+Una **cinta** es una **mesa** recta, con la superficie a la altura del **nivel 1** de una estantería y encima una banda
+de goma gris clara con **rayas blancas**, que lleva sola una caja desde su **entrada** (una almohadilla del color de la
+cinta, sobre la mesa) hasta su **salida final**, el último tramo de la mesa, adonde la carretilla no llega: su pista va
+**pintada encima** y la rodea una **vallita naranja** muy baja por los tres lados que no dan a la cinta. Deja la caja en
+la entrada **de frente**, como en el hueco de nivel 1 de una estantería: sube la horquilla una vez con **F** y Espacio
+(con la horquilla abajo la caja choca con la mesa; nada sube solo). Se asienta un momento, la cinta arranca suave con
+un zumbido eléctrico, sus rayas se deslizan (solo mientras corre) y la caja viaja nivelada hasta el final de la mesa.
+Si es **su** caja, la salida brilla y la caja queda fija, como en un hueco; si no, suena el zumbido suave y la caja se
+queda allí (el botón que la devuelve llega en el próximo hito: R reinicia). **Una caja a la vez**: mientras viaja, la
+entrada no admite otra; con la salida ya llena, una caja dejada en la entrada se queda en ella (zumbido suave) y se
+puede volver a coger, con la horquilla en el nivel 1. Dejarla en la entrada cuenta un movimiento; el viaje, ninguno; y
+la caja sigue contando en «Quedan N» hasta que llega. Sin teclas nuevas. Hoy solo el Benchmark lleva una (de (8,2) a
+(8,0), junto a la estantería de madera del fondo); los niveles 1–3 no cambian. Detalle, decisiones e hitos:
+[docs/CONVEYOR.md](docs/CONVEYOR.md).
 
 ## Sonidos de la carretilla
 
@@ -236,7 +239,7 @@ Todo procedural (Web Audio, sin archivos) y bajo la música (el pitido de marcha
   parar; se ve también con el pitido quitado o el sonido en silencio.
 - **Camión**: dejar una caja en la plataforma suena a madera hueca, distinto del «toc» metálico de las estanterías.
 - **Cinta**: un «tup» de goma al dejar la caja en su entrada, un zumbido eléctrico suave mientras corre (sube y baja
-  con ella) y un golpe suave al llegar a la bandeja, con la campana si es su caja.
+  con ella) y un golpe suave al llegar al final de la mesa, con la campana si es su caja.
 
 Todos los valores están en tablas con nombre al principio de `src/audio/motor.ts`, `src/audio/beeper.ts` y
 `src/audio/sfx.ts`, listos para ajustar a oído.

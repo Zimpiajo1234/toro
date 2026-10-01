@@ -350,8 +350,9 @@ export class CollisionWorld {
     // point alike, on the door's jamb line from the wall's inner face to one cell in, as thick as DOCK_RAIL outward.
     for (const r of dockRailsOf(level)) statics.push(railRect(r, hw, hd));
     // Conveyor belts (docs/CONVEYOR.md; none without them): every belt cell and every end exit's cell is a whole-cell
-    // static obstacle (low furniture the forklift never drives onto); a belt's input is a storage column of the `front`
-    // access below, entered only by the load through its front, like a rack slot at the floor.
+    // static obstacle (a table the forklift never drives into); a belt's input is a storage column of the `front`
+    // access below, entered only by the load through its front, like a rack slot (at its level on the table top: below
+    // it, its cell stays shut, the table's face).
     const cellRect = (x: number, z: number): Rect => ({ minX: x - hw, minZ: z - hd, maxX: x + 1 - hw, maxZ: z + 1 - hd });
     for (const belt of conveyorsOf(level)) for (const c of belt.cells) statics.push(cellRect(c.x, c.z));
     for (const unit of storageOf(level)) if (unit.access.kind === 'belt') statics.push(cellRect(unit.x, unit.z));

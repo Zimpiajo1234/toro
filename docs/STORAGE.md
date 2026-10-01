@@ -7,7 +7,7 @@ documento es la referencia: el modelo, sus reglas, los contratos por capa, cómo
 seguridad. Lo propio de cada aspecto (dibujo, medidas, detalles de su acceso, el Benchmark) está en docs/RACKS.md
 (estanterías almacenables), docs/DOCKS.md (muelles de carga) y docs/CONVEYOR.md (la cinta transportadora: sus dos
 puntas son los aspectos `beltIn` y `beltOut`, con el acceso nuevo `belt`, el primer aspecto añadido sobre el modelo
-común).
+común, y desde H1b las primeras unidades con **nivel base**: sus huecos sobre la mesa de su cinta, a nivel 1).
 
 Ojo con el nombre: `src/storage/` es el progreso guardado (ProgressStore), nada que ver con esto. El almacenaje vive en
 `src/core/storage.ts` (sobre la geometría de sus accesos: `core/racks.ts` y `core/docks.ts`), `src/logic/storageAccess.ts`
@@ -55,6 +55,7 @@ interface LevelStorage {
   w: number;                                        // columnas, una por casilla
   access: StorageAccess;
   columns: (ZoneCriteria | null)[][];               // por columna, de abajo arriba; null = «libre» (nunca `{}`)
+  baseLevel?: number;                               // el nivel de su primer hueco («Nivel base»); sin él, 0: el suelo
 }
 type FrontUnit; type DoorUnit; type BeltUnit;       // una unidad de ese acceso (isFrontUnit / isDoorUnit / isBeltUnit)
 
@@ -80,16 +81,17 @@ const STORAGE_WORDS = {                                   // cómo lo nombran lo
 // fillToMax: cada columna se completa con «libre» hasta min(maxLevels, limit) (validateLevel; la forma canónica no
 // escribe esos «libre» sin caja). chars: las letras que reparte la forma canónica. sound: el de dejar y coger.
 // La geometría, una para todos: facingOf(unit), cellOf(unit, col), frontOf(unit, col), slotIdOf(unitId, col, nivel),
-// sobre la de cada acceso (core/racks: rackCellOf, frontCellOf, inwardHeading, columnFrame; core/docks: truckCellOf,
-// truckFrontOf, dockRailsOf; core/types: TRUCK_FACING); y, aplanadas en el orden de la regla 12:
-interface StorageColumnRef { unit; unitIndex; column; cell; front; facing; cues; firstSlot }   // storageColumnsOf
-interface StorageSlotRef { id; unit; unitIndex; column; level; cell; front; facing; cue }       // storageSlotsOf
+// baseLevelOf(unit), sobre la de cada acceso (core/racks: rackCellOf, frontCellOf, inwardHeading, columnFrame;
+// core/docks: truckCellOf, truckFrontOf, dockRailsOf; core/types: TRUCK_FACING); y, aplanadas en el orden de la regla 12:
+interface StorageColumnRef { unit; unitIndex; column; cell; front; facing; cues; baseLevel; firstSlot }   // storageColumnsOf
+interface StorageSlotRef { id; unit; unitIndex; column; level; cell; front; facing; cue }                  // storageSlotsOf
+// level = baseLevel + su sitio en la columna; id = slotIdOf(unidad, columna, level).
 
 // core/types.ts: snapshot.storageSlots, unidad a unidad, columna a columna, de abajo arriba.
 interface StorageSlotState {
   id: string;                     // `${unitId}:${column}:${level}` (slotIdOf, el mismo para todos los aspectos)
   unitId: string; skin: StorageSkin;
-  column: number; level: number;  // level 0 = la balda de abajo / la plataforma
+  column: number; level: number;  // level 0 = la balda de abajo / la plataforma (desde el nivel base de su unidad)
   cell: CellPos;                  // su celda: la de la estantería (dentro) o la de la caja del camión (fuera del mapa)
   front: CellPos;                 // desde dónde se carga: el frente / la casilla de puerta
   facing: Facing;                 // el lado desde el que se carga (TRUCK_FACING[wall] en el camión)
@@ -105,8 +107,9 @@ interface StorageSlotState {
 // nivel).
 // hint.storage: la columna donde trabaja y el nivel elegido, en toda unidad mientras la encara o la mantiene (y no
 // levanta ahí una caja del suelo); `ready` = la acción funciona en ese nivel (en una pila, dejar solo en el siguiente
-// libre y coger solo la de arriba).
-interface StorageHint { unitId; skin; column; levels; level; slotId; ready }
+// libre y coger solo la de arriba). `levels` = los niveles a los que se puede poner la horquilla allí (del 0 al de su
+// hueco de arriba); `slotId` = el hueco de ese nivel, o null por debajo del nivel base (la cara de la mesa de una cinta).
+interface StorageHint { unitId; skin; column; levels; level; slotId: string | null; ready }
 // core/sorting: LevelTarget { kind: 'zone' | 'slot'; id; index; skin; criteria } (index en level.zones o en
 // storageSlotsOf; skin null en una zona) y LevelDestinies { zones; slots } (slots en el orden de storageSlotsOf).
 ```
@@ -139,6 +142,32 @@ nunca lo encara ni lo mantiene (`refreshStorageAim` lo salta), no tiene abertura
 de `CollisionWorld`; su hueco está sellado (`LevelGrid.seal`): solo lo llena su cinta. Su geometría (`cellOf` /
 `frontOf` / `facingOf`) es la de `front`. La entrada de una cinta (`beltIn`) usa `front` tal cual.
 
+## Nivel base
+
+Desde H1b (docs/CONVEYOR.md, decisión M), una unidad puede tener su primer hueco **por encima del suelo**: su **nivel
+base** (`LevelStorage.baseLevel`, `baseLevelOf(unit)`; sin él, 0). Los niveles se cuentan siempre **desde el suelo**,
+como la horquilla (`forkHeight`): los huecos de una columna son los niveles `baseLevel` … `baseLevel + n − 1`, y por
+debajo la unidad es **maciza** (su cara: la mesa de una cinta). Hoy solo lo tienen las dos puntas de una cinta, a la
+altura de su cinta (nivel 1, la mesa: validateLevel lo rellena desde sus casillas, `beltEndLevels`, y no admite otro;
+toda otra unidad, 0, sin escribir). Así, el hueco de la entrada de una cinta es en todo el de nivel 1 de una
+estantería, y ninguna capa distingue el aspecto:
+- **Ids y niveles**: el id de un hueco nombra su nivel (`e1:0:1`), y también `StorageSlotRef.level`,
+  `StorageSlotState.level`, `BoxState.level`, `boxDropped.level` y `boxPicked.level`. `columns[col][k]` sigue siendo la
+  pista del k-ésimo hueco desde abajo (nivel `baseLevel + k`); `firstSlot + k`, su índice en la lista plana.
+- **Horquilla** (regla 9): F / V eligen de 0 al hueco de arriba (`LevelGrid.topLevel`); al llegar a una unidad, el 0,
+  como siempre (nada automático): a un hueco más alto se sube con F. Por debajo del nivel base no hay hueco
+  (`slotOf` = −1): `hint.storage.slotId` es null, nada se coge ni se deja (`canStore`, `liftableAt`), la celda no se
+  abre para la carga (`refreshStoragePassage`) y la carga choca con su cara, como con un hueco lleno; sin vista previa
+  ni marcador.
+- **Solver**: una posición por hueco, como siempre; la altura no cambia sus jugadas (un hueco de baldas se carga con un
+  paso adelante a cualquier nivel); `levelAt` da el nivel (con su base), `slotAt` el índice, `positionOfSlot` por id.
+- **Dibujo**: las alturas ya salían del nivel (`SUPPORT_LOOK.shelves.levelY` = `rackSlotY(level)`): la caja, la
+  horquilla, la vista previa y el marcador quedan a la altura de su hueco sin más.
+
+Se descartó la otra forma de verlo, una columna con un nivel 0 «macizo» de verdad (dos niveles, el de abajo sin hueco):
+habría puesto en la lista plana, en el solver y en las métricas un hueco que no existe, y cada capa habría tenido que
+saltarlo. Con el nivel base, una unidad solo dice dónde empieza; los huecos siguen siendo los que son.
+
 ## Reglas
 
 1. **Unidad**: una fila recta de 1 a `maxColumns` columnas (una por casilla), cada una de 1 a `maxLevels` niveles; en
@@ -163,7 +192,8 @@ de `CollisionWorld`; su hueco está sellado (`LevelGrid.seal`): solo lo llena su
    cumplido. Solo decide la luz (pistas P, tono de la vista previa), nunca si se puede dejar: en una pila se deja encima
    mientras quepa, aunque lo de debajo esté mal o fijo.
 9. **Horquilla por teclas** en toda unidad: F / V / rueda (mando X / B) eligen el nivel (`forkLevel`) de la columna
-   encarada; coger y dejar, solo con la horquilla en ese nivel. Baldas: cualquier hueco. Pila: solo el siguiente nivel
+   encarada, del 0 a su hueco de arriba (por debajo del nivel base, ninguno: «Nivel base»); coger y dejar, solo con la
+   horquilla en ese nivel. Baldas: cualquier hueco. Pila: solo el siguiente nivel
    libre (dejar) y la caja de arriba (coger); con la horquilla en otro nivel no hay vista previa ni se suelta y, si va
    baja, la carga choca con la caja de la plataforma, como con la cara de una estantería (F ahí la sube por encima); con
    la carga sobre las cajas de la pila, V no baja. El marcador del nivel elegido, en su hueco o en su casilla del
@@ -172,9 +202,9 @@ de `CollisionWorld`; su hueco está sellado (`LevelGrid.seal`): solo lo llena su
     (`cueFits`), y si ninguno libre la toma, muy suave los ocupados que encajan sin brillar. Apagadas, nada. Nunca un
     «libre».
 11. **Ids** (estables: el modelo común no cambió ninguno): unidad = `idPrefix` + nº dentro de su aspecto, en orden de
-    leyenda (un carácter en varias casillas, en orden de lectura); nivel = `unidad:columna:nivel` desde 0; dos unidades
-    nunca comparten id. Cajas `b1…`: las del suelo, luego las de las unidades, unidad a unidad, columna a columna, de
-    abajo arriba.
+    leyenda (un carácter en varias casillas, en orden de lectura); nivel = `unidad:columna:nivel`, el nivel desde el
+    suelo (desde 0; en una unidad con nivel base, desde ese: `e1:0:1`); dos unidades nunca comparten id. Cajas
+    `b1…`: las del suelo, luego las de las unidades, unidad a unidad, columna a columna, de abajo arriba.
 12. **Orden de las unidades**: estanterías, camiones, entradas y salidas de cinta (aspecto a aspecto, en el orden de
     `STORAGE_SKINS`; dentro de cada aspecto, el de la leyenda). Es el orden de los ids de caja, `targetsOf`,
     `snapshot` y las posiciones del solver: cambiarlo cambia el plan del Benchmark.
@@ -217,7 +247,8 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
 
 - **core**: `core/types.ts` (los tipos de «Modelo», `FrontUnit` / `DoorUnit` con `isFrontUnit` / `isDoorUnit`,
   `TRUCK_FACING`). `core/storage.ts`: `STORAGE_SKINS`, `STORAGE_SKIN_ORDER`, `STORAGE_WORDS`, `storageOf`,
-  `hasStorage`, `slotIdOf`, `facingOf`, `cellOf`, `frontOf`, `storageColumnsOf`, `storageSlotsOf`. Debajo, sin ciclos, la
+  `hasStorage`, `slotIdOf`, `baseLevelOf`, `facingOf`, `cellOf`, `frontOf`, `storageColumnsOf` (con el nivel base de
+  cada columna), `storageSlotsOf` (sus niveles desde ahí). Debajo, sin ciclos, la
   geometría de cada acceso: `core/racks.ts` (`front`: `rackCellOf`, `frontCellOf`, `runsAlongX`, `FACING_X` /
   `FACING_Z`, `inwardHeading`, `columnFrame`) y `core/docks.ts` (`door`: `truckCellOf`, `truckFrontOf`, las barandillas
   `dockRailsOf` por `unitId`, `DOOR_JAMB`, `DOCK_RAIL`). `core/sorting` saca objetivos, destinos, `zoneMatchKinds`,
@@ -233,13 +264,15 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   columnas, id por defecto, ids únicos entre aspectos, pila ≤ `limit`, cajas una sobre otra, «libre» solo encima en una
   pila, el relleno `fillToMax`, reparto único) y aparte va lo de cada acceso (`front`: sus casillas y el frente es
   suelo; `door`: la fila 0 / columna 0, las casillas laterales con obstáculo, nada de ventana en la puerta, nada empieza
-  en una casilla de puerta). Los mensajes, en inglés y fijos (asciiLevel los traduce y los coloca): cada unidad se
-  nombra por su aspecto, `racks[i]` / `trucks[i]` = la i-ésima de ese aspecto, también desde `storage`
-  (`STORAGE_WORDS[skin].en`).
+  en una casilla de puerta). El nivel base lo pone validateLevel (las puntas de una cinta, a su altura: docs/CONVEYOR.md;
+  toda otra unidad, 0, sin escribir) y no admite otro. Los mensajes, en inglés y fijos (asciiLevel los traduce y los
+  coloca): cada unidad se nombra por su aspecto, `racks[i]` / `trucks[i]` = la i-ésima de ese aspecto, también desde
+  `storage` (`STORAGE_WORDS[skin].en`).
 - **logic**: `LevelGrid.columns` (`StorageColumn`: unidad, aspecto, soporte, acceso, celda dentro o fuera del mapa,
-  `levels`, `firstSlot`), las cajas por soporte (en baldas una por nivel, `slotBox`; en pila, la pila de su columna, que
-  responden las consultas de pila por celda: `height`, `boxAt`, `baseAt`, `stackAt`, `pushBox`, `popBox`, `capacity`,
-  `isStackColumn`) y `columnAt`, `slotOf`, `canStore`, `liftableAt`, `putBox`, `takeBox`. Un enganche
+  `levels`, `baseLevel`, `firstSlot`), las cajas por soporte (en baldas una por nivel, `slotBox`; en pila, la pila de su
+  columna, que responden las consultas de pila por celda: `height`, `boxAt`, `baseAt`, `stackAt`, `pushBox`, `popBox`,
+  `capacity`, `isStackColumn`) y `columnAt`, `slotOf`, `topLevel`, `canStore`, `liftableAt`, `putBox`, `takeBox`, todas
+  con los niveles desde el suelo (por debajo del nivel base, ningún hueco). Un enganche
   (`GameState.refreshStorageAim` sobre `STORAGE_ACCESS`), un paso de la carga (`refreshStoragePassage` sobre las
   aberturas de `CollisionWorld`: `StorageOpening` `front` = su celda con panel y montantes, `door` = su tramo de puerta;
   `setOpen`, `isOpen`, `opening`, `soften`, `openingInset`), una medida de «la carga está dentro» (`loadInOpening`), un
@@ -255,7 +288,8 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   columna, capacidad sus niveles, nunca el `limit`). Por posición, `kind` (`POS_FLOOR` / `POS_SHELF` / `POS_STACK`),
   `capacity`, `front`, `inward` y `steps` (el tipo destinado de cada nivel, leído por su índice en `storageSlotsOf`; en
   una pila, solo sus niveles con pista: un «libre» es aparcamiento); por pose, `columnAtPose`. Consultas: `isStorage`,
-  `columnOfPos`, `posOf`, `positionOfSlot` (por id de nivel), `levelAt` / `slotAt`, `cellOfPos`, `accessOf`, `inMap`.
+  `columnOfPos`, `posOf`, `positionOfSlot` (por id de nivel), `levelAt` (el nivel, con el nivel base) / `slotAt` (su
+  índice en `storageSlotsOf`), `cellOfPos`, `accessOf`, `inMap`.
   `lockedAt`, `validDrop`, `carrySearch`, `chainTo`, `carryBackTo`, `pickupStarts` y `deadEnds`, por soporte y acceso:
   una columna se carga solo con un paso adelante desde la casilla de detrás de su frente, mirando hacia dentro, y una
   caja sacada de ella solo sale marcha atrás. La cota de ciclos de destinos (`MoveSearch.destTerm`,
@@ -264,8 +298,9 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   `huecos` y `camion` son sus dos vistas publicadas; `trampas` y `ambiguas`, por tipo de pista `[aspecto, color,
   símbolo]` (en una pila, también su altura). El informe nombra cada unidad por sus palabras (`STORAGE_WORDS`) y su
   letra, según su soporte: una balda es un sitio («hueco 2 de R»), una pila nombra la unidad y la altura («camión T
-  (1,0), nivel 2»). El piloto pone las cajas por `positionOfSlot`, elige el nivel con F / V en toda unidad (`selectLevel`)
-  y cuenta las pulsaciones por aspecto (`Outcome.controls.forkStepsAt`).
+  (1,0), nivel 2»). El piloto pone las cajas por `positionOfSlot`, elige el nivel con F / V en toda unidad (`selectLevel`
+  del `level` de su hueco: la entrada de una cinta, el 1) y cuenta las pulsaciones por aspecto
+  (`Outcome.controls.forkStepsAt`).
 - **render** (`src/render/storage/`): `STORAGE_RENDER` (`index.ts`), una entrada por fila de `STORAGE_SKINS` (el tipo
   lo obliga): `StorageSkinRender` = `builder(ctx)` y, opcionales, `paintFloor` y `markerGeometry`. Cada unidad en
   pantalla es un `StorageUnitView` (`types.ts`): `group` (su id en `userData`), `bounds`, `fitBox` estático,
@@ -282,10 +317,10 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   `matchKind` (`matchOf`, por `slotId`); el audio elige el sonido por `STORAGE_SKINS[skin].sound` (`metal`: `slotDrop`
   / `slotLift`; `wood`: `truckDrop` / `pickup`; `belt`: `beltDrop` / `pickup`).
 - **Cintas** (docs/CONVEYOR.md), encima de lo de arriba: `core/conveyors.ts` (`conveyorsOf`, `beltPathOf`,
-  `conveyorOfUnit`…); `LevelData.conveyors` (asciiLevel y validateLevel); `logic/conveyor.ts` (`ConveyorSystem`, desde
-  `GameState.update`; `snapshot.conveyors`; eventos `beltStarted` / `beltDelivered` / `beltBlocked`) y
-  `LevelGrid.seal`; en el solver, `feeds` / `fedBy` y `validDrop`; en el render, `animate` y `landDelay` (opcionales
-  de `StorageUnitView`).
+  `conveyorOfUnit`, `FLOOR_BELT_LEVEL`, `beltEndLevels`…); `LevelData.conveyors` (asciiLevel y validateLevel, que da a
+  sus puntas su nivel base); `logic/conveyor.ts` (`ConveyorSystem`, desde `GameState.update`; `snapshot.conveyors`;
+  eventos `beltStarted` / `beltDelivered` / `beltBlocked`) y `LevelGrid.seal`; en el solver, `feeds` / `fedBy` y
+  `validDrop`; en el render, `animate` y `landDelay` (opcionales de `StorageUnitView`).
 
 ## Cómo añadir un aspecto nuevo
 
@@ -297,8 +332,9 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
    …`) y las plantillas de una de sus columnas en `COLUMN_WORDS`; columnas `|`, niveles `/`, `pista [+ caja]` y `libre`
    ya son comunes (en una pila, solo encima; con `fillToMax`, implícito y fuera de la forma canónica). Forma canónica,
    un ejemplo en su doc y sus errores en español.
-3. **Validación**: solo lo propio de su sitio en el mapa; lo común sale de la fila. Si trae mensajes nuevos, su sitio
-   en `explainValidation`.
+3. **Validación**: solo lo propio de su sitio en el mapa; lo común sale de la fila. Si sus huecos no empiezan en el
+   suelo, su nivel base («Nivel base»: lo pone validateLevel, como a las puntas de una cinta). Si trae mensajes nuevos,
+   su sitio en `explainValidation`.
 4. **Acceso**: si es nuevo, una fila en `STORAGE_ACCESS` (encarar, mantener, alcance, paso de la carga), su abertura en
    `CollisionWorld` (`StorageOpening`) y su geometría (`cellOf` / `frontOf` / `facingOf`); si no, comparte la del suyo
    (core/racks para `front`, core/docks para `door`) y nada cambia en la lógica.
@@ -351,6 +387,20 @@ Un nivel sin almacenaje juega exactamente como antes: sin destinos, cajas fijas 
   (exacto), bloqueos 5, trampas 13, ambiguas 12, libre 75 %; el plan aparca ahora junto a la cinta (9,0) / (9,1) en vez
   de en (10,8) (otro plan de 15 igual de corto); piloto 14960 / 5466 frames, la entrega de la cinta en el registro
   («b9 e1:0:0 → s1:0:0 ok 8/13 (cinta)»). El nivel de prueba de los camiones no cambió.
+- **Regenerada con la mesa** (H1b de docs/CONVEYOR.md, 2026-10-01: la cinta, una mesa a nivel 1; el nivel base en el
+  modelo común). Todas las diferencias son del Benchmark (el nivel de prueba de los camiones no cambió, byte a byte):
+  - `storage`: `e1` y `s1` llevan `"baseLevel": 1` (la vista de la unidad lo escribe solo si lo tiene); sus huecos pasan
+    de `e1:0:0` / `s1:0:0` a **`e1:0:1` / `s1:0:1`** (el id nombra el nivel, ahora el de la mesa); la cinta,
+    `suelo@0` → **`suelo@1`**.
+  - `targets`: el objetivo de la salida, `s1:0:1` (mismo destino coral ✚, mismo timbre).
+  - `metrics`: sin cambios (15 movimientos exacto, bloqueos 5, trampas 13, ambiguas 12, libre 75 %, repartos 1).
+  - `solver`: el mismo plan de 15, jugada a jugada; solo cambia el id de la salida en la jugada de la cinta («coral/cross
+    7,7@0 → s1:0:1»).
+  - `start`: los dos huecos, con sus ids nuevos (vacíos al empezar).
+  - `autopilot60` / `autopilot20`: **14984 / 5474** frames (antes 14960 / 5466: la pulsación de F en A y la espera a que
+    la horquilla suba al nivel 1), **9 pulsaciones** de F / V (antes 8; la vista escribe ya `forkStepsAt.beltIn`: 1, solo
+    en un nivel con cintas), los frames marcha atrás iguales (2242 / 736); en el registro, «b9 7,7@0 → e1:0:1» y «b9
+    e1:0:1 → s1:0:1 ok 8/13 (cinta)».
 - **Verificación** de un cambio en el almacenaje: `npx tsc --noEmit`; `npx vitest run` dos veces; `npx vite build` a
   una carpeta fuera del repo; `npm run levels:fmt -- --check`; `npm run levels` (Benchmark OK 9/9, 15 movimientos,
   repartos 1, callejones 0; los niveles de prueba no salen); `npm run levels -- --minimos --check`; la caracterización
@@ -466,3 +516,8 @@ huecos y plataformas aparte en el solver, `buildRacks` / `buildTrucks`, constant
    `frontCellOf` y la de `door` `truckCellOf` / `truckFrontOf` / `TRUCK_FACING`; `RACK_WALL` (collision) es de toda
    abertura `front`, y `RACK_*_LAMBDA` / `RACK_PITCH_SHARE` (`ForkliftView`) del soporte `shelves`. Ya pasa: la
    entrada de una cinta (`beltIn`, acceso `front`) y su salida (`belt`) usan esa geometría con esos nombres.
+10. **El nivel base en una pila**: hoy solo lo tienen las puntas de una cinta (baldas). Las consultas de hueco de
+    `LevelGrid` (`slotOf`, `canStore`, `liftableAt`, `putBox`, `topLevel`) ya cuentan con él en todo soporte, pero las de
+    pila por celda (`height`, `capacity`, el paso de la carga sobre una pila, `clearLevel`) cuentan cajas desde la
+    plataforma: un aspecto de pila elevado tendría que sumar su base ahí (y en `SUPPORT_LOOK.stack`). validateLevel no
+    lo permite (solo las puntas de una cinta llevan nivel base).

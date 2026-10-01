@@ -355,7 +355,8 @@ del suelo). Medidas y constructores en `builders/truck.ts`, `dims.ts` `DOCK`:
   `DOOR.proud` del muro) y otro al final de las casillas de puerta, cada uno con su tapa crema, y dos barras entre ellos.
   Bajas (0,53, muy por debajo de la carga, ≈ 0,98) y abiertas: no tapan cajas, zonas ni el cartel. Estáticas: ni se
   hunden con el muro ni se vuelven fantasma; dan y reciben sombra. Una malla por camión, en su grupo
-  (`userData.dockRails`).
+  (`userData.dockRails`). Su naranja y sus tapas son también los de la vallita, mucho más baja, de la salida final de
+  una cinta (docs/CONVEYOR.md).
 - **Cartel** (`DOCK_SIGN`, `SIGN_CUE`, `SIGN_GLOW`; `buildSignFrame`, `buildSignPanel`, `buildSignCue`): en la cara de
   dentro del muro, sobre la puerta; una casilla por columna (justo encima de su casilla de puerta, `dockColumnX`) y por
   nivel (abajo, el nivel 0, `signRowY`); con 2 niveles asoma ≈ 0,3 sobre el remate. Pegatina de estantería

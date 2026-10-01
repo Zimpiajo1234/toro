@@ -18,12 +18,13 @@
  * straight out. The forks go by the keys at every unit (rule 9): it first picks the level with the fork keys
  * (InputFrame.forkStep, one press per level, like F / V: hint.storage) and waits for the forks there (a rack's shelf
  * or a stack's level: logic counts both in levels), then drives in and drops, or lifts the box there.
- * Conveyor belts (docs/CONVEYOR.md): a box the plan sends to a belt's end exit is set down on the belt's input, and the
- * belt brings it there; while it is on its way the planner already sees it in the end exit (liveStacks), and the next
- * move at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
+ * Conveyor belts (docs/CONVEYOR.md): a box the plan sends to a belt's end exit is set down on the belt's input (on its
+ * table: its slot's level is the belt's height, so F raises the forks to it, as at a rack's level-1 slot), and the belt
+ * brings it there; while it is on its way the planner already sees it in the end exit (liveStacks), and the next move
+ * at that belt (or the end of the level) waits for the belt to deliver it, as a player would.
  */
 import { angleDelta } from '../core/math';
-import { slotIdOf, storageSlotsOf, type StorageSlotRef } from '../core/storage';
+import { storageSlotsOf, type StorageSlotRef } from '../core/storage';
 import { worldToCell, type GameEvent, type GameSnapshot, type LevelData, type StorageSkin, type Vec2 } from '../core/types';
 import {
   DIR_X,
@@ -48,18 +49,18 @@ const dirHeading = (d: number) => Math.atan2(DIR_X[d], DIR_Z[d]);
 /**
  * Live stacks from the snapshot (resting boxes by position — floor cell or storage position — ordered by level). A
  * stored box names its storage level (`slotId`, any skin): the position it rests on (a shelf; a stack column, whatever
- * the level). A box on its way down a conveyor belt (settling on its input, riding it) is where the model puts it: in
- * its belt's end exit.
+ * the level). A box on its way down a conveyor belt (settling on its input, riding it: still in the input's slot) is
+ * where the model puts it: in its belt's end exit (`feeds`).
  */
 export function liveStacks(grid: LevelGrid, snap: GameSnapshot): Stacks {
   const stacks: Stacks = new Array<string>(grid.posCount).fill('');
-  const onItsWay = new Map<string, number>();
-  snap.conveyors.forEach((belt, i) => {
-    const conveyor = snap.level.conveyors?.[i];
-    if (belt.boxId !== null && conveyor) onItsWay.set(belt.boxId, grid.positionOfSlot(slotIdOf(conveyor.output, 0, 0)));
-  });
+  const onItsWay = new Set<string>();
+  for (const belt of snap.conveyors) if (belt.boxId !== null) onItsWay.add(belt.boxId);
   const resting = snap.boxes.filter((b) => b.cell).sort((a, b) => a.level - b.level);
-  for (const b of resting) stacks[onItsWay.get(b.id) ?? (b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z))] += boxCode(b);
+  for (const b of resting) {
+    const pos = b.slotId !== null ? grid.positionOfSlot(b.slotId) : grid.index(b.cell!.x, b.cell!.z);
+    stacks[onItsWay.has(b.id) && grid.feeds[pos] >= 0 ? grid.feeds[pos] : pos] += boxCode(b);
+  }
   return stacks;
 }
 

@@ -24,11 +24,12 @@ import fixtureText from './pruebas/cinta.level?raw';
 
 /*
  * The grid model with conveyor belts (docs/CONVEYOR.md «Solver»): a belt's cells, its input and its end exit are solid;
- * the input is a storage position (one level-0 slot) loaded by one step on from behind its front cell, like a rack
- * slot; the end exit is a storage position no pose ever works, fed by its input (`feeds` / `fedBy`): a box set down on
- * an empty input while the end exit has room lands in the end exit in that one move. H1 leaves one move out: only the
- * end exit's destined box is sent down a belt (a wrong one could only come back with H3's button). With the end exit
- * full, a box set down on the input stays there, and can be lifted again; a box is never lifted from an end exit.
+ * the input is a storage position (one slot on the belt's table, at level 1: its id names it, the model needs no
+ * height) loaded by one step on from behind its front cell, like a rack slot; the end exit is a storage position no
+ * pose ever works, fed by its input (`feeds` / `fedBy`): a box set down on an empty input while the end exit has room
+ * lands in the end exit in that one move. H1 leaves one move out: only the end exit's destined box is sent down a belt
+ * (a wrong one could only come back with H2's button). With the end exit full, a box set down on the input stays
+ * there, and can be lifted again; a box is never lifted from an end exit.
  */
 
 const FIXTURE = parseLevel(fixtureText, 'src/data/levels/pruebas/cinta.level').level;
@@ -36,8 +37,8 @@ const DIR = { E: 0, S: 1, W: 2, N: 3 } as const;
 
 describe('grid model with conveyor belts', () => {
   const grid = new LevelGrid(FIXTURE);
-  const input = grid.positionOfSlot('e1:0:0');
-  const exit = grid.positionOfSlot('s1:0:0');
+  const input = grid.positionOfSlot('e1:0:1');
+  const exit = grid.positionOfSlot('s1:0:1');
   const blue = boxCode({ color: 'blue', symbol: 'circle' });
   const blueSquare = boxCode({ color: 'blue', symbol: 'square' });
 
@@ -45,6 +46,9 @@ describe('grid model with conveyor belts', () => {
     expect([grid.kind[input], grid.kind[exit]]).toEqual([POS_SHELF, POS_SHELF]);
     expect([grid.capacity[input], grid.capacity[exit]]).toEqual([1, 1]);
     expect(input).toBeGreaterThanOrEqual(grid.cellCount);
+    // Their one slot each, on the belt's table: level 1 (the forks' level the autopilot selects there).
+    expect([grid.levelAt(input), grid.levelAt(exit)]).toEqual([1, 1]);
+    expect(grid.positionOfSlot('e1:0:0')).toBe(-1);
     expect([grid.feeds[input], grid.fedBy[exit], grid.feeds[exit], grid.fedBy[input]]).toEqual([exit, input, -1, -1]);
     // The input asks for nothing; the end exit for its destined box (blue ●, the only blue the zones leave it).
     expect(grid.steps[input]).toBeNull();

@@ -171,10 +171,11 @@ almacenable que no dé a la puerta). Si la tirada llega a un rincón del almacé
 puertas pegadas no valen: entre ellas va al menos una casilla con un obstáculo. Así al camión solo se llega de frente,
 desde la fila (o columna) de detrás de la puerta. Ejemplo: `0 .pTTp...` (la puerta en 2–3, plantas en 1 y 4).
 
-Las **cintas transportadoras** (`docs/CONVEYOR.md`, gramática completa allí; hoy la cinta recta del suelo) son una
-tirada recta: su entrada (`cinta entrada`), al menos una casilla de cinta (`cinta`, `~` en la forma canónica) y su
-salida final (`cinta final: pista`), seguidas en una fila o una columna. La entrada es «libre» y se carga de frente
-desde el lado contrario a la cinta, como un hueco a ras del suelo; la carretilla nunca trabaja en la salida final: una
+Las **cintas transportadoras** (`docs/CONVEYOR.md`, gramática completa allí; hoy la cinta recta del suelo, una mesa a
+la altura del nivel 1 de una estantería: la altura no se escribe) son una tirada recta: su entrada (`cinta entrada`),
+al menos una casilla de cinta (`cinta`, `~` en la forma canónica) y su salida final (`cinta final: pista`), seguidas en
+una fila o una columna. La entrada es «libre» y se carga de frente desde el lado contrario a la cinta, como el hueco
+de nivel 1 de una estantería (con F); la carretilla nunca trabaja en la salida final, el último tramo de la mesa: una
 caja dejada en la entrada viaja sola hasta ella (si está libre; si no, se queda en la entrada). La salida final con
 pista es un objetivo más del reparto único. Cinta, entrada y salida son obstáculos, y la cinta empieza vacía. Ids:
 cintas `c1, c2…` (o `(id)` en una de sus puntas), entradas `e1…`, salidas `s1…`.

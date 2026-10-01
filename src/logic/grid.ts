@@ -24,9 +24,18 @@ export interface StorageColumn {
   /** Where it is loaded from (the floor cell in front, the door cell) and that side. */
   front: CellPos;
   facing: Facing;
-  /** Levels of the column: its slots bottom → top (a rack's 1–3, a truck's 1–2). */
+  /** Levels of the column: its slots bottom → top (a rack's 1–3, a truck's 1–2, a belt's end 1). */
   levels: number;
-  /** Index of its bottom level in the flat slot list (GameSnapshot.storageSlots); level n is firstSlot + n. */
+  /**
+   * The level of its bottom slot (its unit's base level, docs/STORAGE.md «Nivel base»: 0 at the floor; a belt's input
+   * and end exit, their belt's height): its slots are levels baseLevel ‥ baseLevel + levels − 1, and below it the
+   * column is solid (a belt's table). Every level-taking query of the grid counts levels from the floor.
+   */
+  baseLevel: number;
+  /**
+   * Index of its bottom level in the flat slot list (GameSnapshot.storageSlots): the slot of level baseLevel + n is
+   * firstSlot + n.
+   */
   firstSlot: number;
   /** Its cell is inside the map (a solid cell) rather than beyond a wall. */
   inside: boolean;
@@ -41,7 +50,9 @@ export interface StorageColumn {
  * outside every stack; in a stack a stack of its own, bottom → top, which the stack queries (height, boxAt, baseAt,
  * stackAt, pushBox, popBox, capacity) answer on its cell like a floor stack, with its levels as capacity — also beyond a
  * wall, where nothing else answers. A sealed slot (`seal`) holds its box out of reach: a belt's end exit always, a belt's
- * input while its box settles or rides (docs/CONVEYOR.md).
+ * input while its box settles or rides (docs/CONVEYOR.md). Levels always count from the floor: a column's slots start
+ * at its base level (StorageColumn.baseLevel: a belt's ends, on its table), and below it there is no slot to store in
+ * or lift from.
  */
 export class LevelGrid {
   readonly width: number;
@@ -105,6 +116,7 @@ export class LevelGrid {
         front: ref.front,
         facing: ref.facing,
         levels: ref.cues.length,
+        baseLevel: ref.baseLevel,
         firstSlot: ref.firstSlot,
         inside,
       });
@@ -127,8 +139,8 @@ export class LevelGrid {
       const c = this.columnAt(box.x, box.z);
       if (c >= 0 && box.level !== undefined) {
         const column = columns[c];
-        if (column.support === 'shelves') this.slotBoxes[column.firstSlot + box.level] = i;
-        else this.columnStacks[c][box.level] = i;
+        if (column.support === 'shelves') this.slotBoxes[this.slotOf(c, box.level)] = i;
+        else this.columnStacks[c][box.level - column.baseLevel] = i;
       } else this.stacks[this.index(box.x, box.z)].push(i);
     });
   }
@@ -225,10 +237,21 @@ export class LevelGrid {
     return this.inBounds(x, z) ? this.zones[this.index(x, z)] : -1;
   }
 
-  /** Flat slot index of `level` in storage column `column`, or -1 when out of range. */
+  /**
+   * Flat slot index of `level` in storage column `column`, or -1 when out of range: above its top, or below its base
+   * level (a belt's table face: no slot there).
+   */
   slotOf(column: number, level: number): number {
     const c = this.columns[column];
-    return c && level >= 0 && level < c.levels ? c.firstSlot + level : -1;
+    if (!c) return -1;
+    const k = level - c.baseLevel;
+    return k >= 0 && k < c.levels ? c.firstSlot + k : -1;
+  }
+
+  /** The highest level the forks can be set to at storage column `column`: its top slot's (-1 for no column). */
+  topLevel(column: number): number {
+    const c = this.columns[column];
+    return c ? c.baseLevel + c.levels - 1 : -1;
   }
 
   /** Box resting at a storage slot (on its shelf, or at its height of its column's stack), or -1. */
@@ -241,42 +264,45 @@ export class LevelGrid {
 
   /**
    * A box may be stored at `level` of `column` now: a shelf is free; in a stack it is the next level up (on what is
-   * there) and the column has room.
+   * there) and the column has room. Never below its base level (a belt's table face).
    */
   canStore(column: number, level: number): boolean {
     const slot = this.slotOf(column, level);
     if (slot < 0) return false;
-    return this.columns[column].support === 'shelves' ? this.slotBoxes[slot] < 0 : level === this.columnStacks[column].length;
+    const c = this.columns[column];
+    return c.support === 'shelves' ? this.slotBoxes[slot] < 0 : level - c.baseLevel === this.columnStacks[column].length;
   }
 
   /**
    * The box a pick at `level` of `column` would lift, or -1: on shelves the box on that shelf; in a stack only its top
-   * box, at its own level (docs/STORAGE.md rule 9: never one from under another); never a sealed slot's.
+   * box, at its own level (docs/STORAGE.md rule 9: never one from under another); never a sealed slot's, and nothing
+   * below its base level.
    */
   liftableAt(column: number, level: number): number {
     const slot = this.slotOf(column, level);
     if (slot < 0 || this.sealed[slot] === 1) return -1;
     if (this.columns[column].support === 'shelves') return this.slotBoxes[slot];
     const stack = this.columnStacks[column];
-    return level === stack.length - 1 ? stack[level] : -1;
+    const k = slot - this.columns[column].firstSlot;
+    return k === stack.length - 1 ? stack[k] : -1;
   }
 
   /** Store a box at `level` of `column` (shelves: that shelf; a stack: on top, which is that level). Returns its level. */
   putBox(column: number, level: number, boxIndex: number): number {
     const c = this.columns[column];
     if (c.support === 'shelves') {
-      this.slotBoxes[c.firstSlot + level] = boxIndex;
+      this.slotBoxes[this.slotOf(column, level)] = boxIndex;
       return level;
     }
     const stack = this.columnStacks[column];
     stack.push(boxIndex);
-    return stack.length - 1;
+    return c.baseLevel + stack.length - 1;
   }
 
   /** Take the box out of `level` of `column` (in a stack: the top one, which is that level). */
   takeBox(column: number, level: number): void {
     const c = this.columns[column];
-    if (c.support === 'shelves') this.slotBoxes[c.firstSlot + level] = -1;
+    if (c.support === 'shelves') this.slotBoxes[this.slotOf(column, level)] = -1;
     else this.columnStacks[column].pop();
   }
 

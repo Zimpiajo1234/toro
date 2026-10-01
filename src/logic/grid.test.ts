@@ -3,6 +3,7 @@ import { storageSlotsOf } from '../core/storage';
 import { parseLevel } from '../data/asciiLevel';
 import { LevelGrid } from './grid';
 import text from '../data/levels/pruebas/tres-camiones.level?raw';
+import beltText from '../data/levels/pruebas/cinta.level?raw';
 
 /*
  * The storage of a level in LevelGrid (docs/STORAGE.md «Contratos por capa», logic): one list of storage columns for every unit,
@@ -82,5 +83,24 @@ describe('LevelGrid: one list of storage columns', () => {
     // A storage column never takes a floor drop.
     expect(grid.canTakeBox(rCell.x, rCell.z)).toBe(false);
     expect(grid.canTakeBox(t.x, t.z)).toBe(false);
+  });
+
+  it('a column standing on a belt\'s table (base level 1) has its slot at level 1, nothing below: levels count from the floor', () => {
+    const belt = new LevelGrid(parseLevel(beltText, 'src/data/levels/pruebas/cinta.level').level);
+    expect(belt.columns.map((c) => [c.unitId, c.skin, c.levels, c.baseLevel, c.firstSlot])).toEqual([
+      ['e1', 'beltIn', 1, 1, 0],
+      ['s1', 'beltOut', 1, 1, 1],
+    ]);
+    const input = 0;
+    // The forks reach level 0 (the table's face) and 1 (its top): only 1 is a slot.
+    expect([belt.topLevel(input), belt.slotOf(input, 0), belt.slotOf(input, 1), belt.slotOf(input, 2)]).toEqual([1, -1, 0, -1]);
+    expect([belt.canStore(input, 0), belt.canStore(input, 1)]).toEqual([false, true]);
+    expect(belt.putBox(input, 1, 0)).toBe(1);
+    expect([belt.slotBox(0), belt.liftableAt(input, 1), belt.liftableAt(input, 0), belt.canStore(input, 1)]).toEqual([0, 0, -1, false]);
+    belt.takeBox(input, 1);
+    expect([belt.slotBox(0), belt.canStore(input, 1)]).toEqual([-1, true]);
+    // A rack stands at the floor: its levels from 0, as always.
+    expect(new LevelGrid(level).columns.every((c) => c.baseLevel === 0)).toBe(true);
+    expect(new LevelGrid(level).topLevel(1)).toBe(2);
   });
 });

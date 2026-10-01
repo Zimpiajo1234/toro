@@ -59,17 +59,20 @@ export const defaultTheme: Theme = {
     railCap: '#f7f0e4',
   },
   /**
-   * A soft graphite rubber band (darker than the racks' slate, cooler than the wood) between fine warm-white rails, faint
-   * stripes a touch lighter. Identity colours, deeper than the pastel boxes so they never read as one: teal (hue ≈ 184°,
-   * between mint and blue and far from both), plum (≈ 320°, far from red), moss and indigo. ΔE2000 ≥ 18 from every box
-   * face and zone tone (≥ 11.8 from the deep lid inks), ≥ 26 from the rails and the beacon, ≥ 15.9 from the leaves, ≥ 25
-   * from each other (themes.test.ts).
+   * A table (H1b): a light warm top on quiet graphite legs (deeper than the racks' slate, cooler than the wood); on it
+   * a soft light-grey rubber band («un gris algo más claro», L ≈ 57.5 where the old graphite was 43: still darker than
+   * every box face and ≥ 14.9 ΔE2000 from each, so a box on it always reads) between fine warm-white rails, with white
+   * stripes (ΔL ≈ 39 over the band: the motion reads). Identity colours, deeper than the pastel boxes so they never
+   * read as one: teal (hue ≈ 184°, between mint and blue and far from both), plum (≈ 320°, far from red), moss and
+   * indigo. ΔE2000 ≥ 18 from every box face and zone tone (≥ 11.8 from the deep lid inks), ≥ 26 from the rails and the
+   * beacon, ≥ 15.9 from the leaves, ≥ 25 from each other, ≥ 18 from the band (themes.test.ts).
    */
   conveyor: {
-    belt: '#5f676e',
-    stripe: '#6e777f',
+    belt: '#848b92',
+    stripe: '#f8f6f1',
     edge: '#ebe6dc',
-    board: '#f1ece3',
+    top: '#e8e3da',
+    frame: '#6d757b',
     identity: ['#369aa1', '#a8508a', '#8f9a2c', '#4f62c4'],
   },
   plant: { pot: '#e4d8c6', soil: '#b9a488', leaves: ['#9db592', '#8aa981', '#a9c09c'] },

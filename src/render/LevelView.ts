@@ -401,9 +401,12 @@ export class LevelView {
     this.glassMaterial.color.setScalar(1 + 0.06 * warmth);
   }
 
-  /** The storage slot `id` of this frame's snapshot (index kept from load: the list never changes during a level). */
-  private slotAt(snapshot: GameSnapshot, id: string): StorageSlotState | null {
-    const i = this.slotIndex.get(id);
+  /**
+   * The storage slot `id` of this frame's snapshot (index kept from load: the list never changes during a level); null
+   * for none (hint.storage below a unit's base level: a belt's table face).
+   */
+  private slotAt(snapshot: GameSnapshot, id: string | null): StorageSlotState | null {
+    const i = id !== null ? this.slotIndex.get(id) : undefined;
     return i !== undefined ? (snapshot.storageSlots[i] ?? null) : null;
   }
 

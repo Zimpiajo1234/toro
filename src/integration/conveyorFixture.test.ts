@@ -1,16 +1,19 @@
 /**
  * The conveyor belt fixture (src/data/levels/pruebas/cinta.level, docs/CONVEYOR.md «Nivel de prueba»): a test-only
- * level that neither the registry nor `npm run levels` reads. A belt of two floor cells runs north from its input A to
- * its end exit B, between two potted plants: the forklift can only send a box there along the belt. It must stay
- * canonical and valid, with one complete assignment and no dead ends, exactly solvable (3 moves: the ride counts none)
- * and played to the end by the autopilot (./autopilot.ts) with the real controls at 60 fps and at Game's worst dt
- * (1/20); and the render builds the belt, whose stripes slide only while it runs.
+ * level that neither the registry nor `npm run levels` reads. A belt of two floor cells, a table at level 1 (H1b), runs
+ * north from its input A to its end exit B, between two potted plants: the forklift can only send a box there along
+ * the belt. It must stay canonical and valid, with one complete assignment and no dead ends, exactly solvable (3 moves:
+ * the ride counts none) and played to the end by the autopilot (./autopilot.ts) with the real controls at 60 fps and at
+ * Game's worst dt (1/20), raising the forks with F at A as at a rack's level-1 slot; and the render builds the belt's
+ * table, its band (whose white stripes slide only while it runs), A's pad and B's deck with its cue painted flat and
+ * its very low orange fence.
  */
+import { Box3, Color, Mesh, Vector3, type BufferGeometry, type MeshStandardMaterial, type Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../config';
 import { beltPathOf, conveyorsOf } from '../core/conveyors';
 import { assignmentsOf, sortableOf, targetsOf } from '../core/sorting';
-import { storageOf } from '../core/storage';
+import { storageOf, storageSlotsOf } from '../core/storage';
 import type { GameEvent } from '../core/types';
 import { formatLevel, parseLevel, renderLevel } from '../data/asciiLevel';
 import { formatRange, formatTarget } from '../data/difficulty';
@@ -20,7 +23,10 @@ import { LevelGrid, deadEnds, minMoves, replayMoves } from '../data/levels/solve
 import { validateLevel } from '../data/validateLevel';
 import { CONVEYOR } from '../logic/conveyor';
 import { GameState } from '../logic/GameState';
+import { BELT, BELT_CUE } from '../render/builders/conveyor';
+import { boxDims, rackSlotY } from '../render/dims';
 import { LevelView } from '../render/LevelView';
+import { STORAGE_RENDER } from '../render/storage';
 import { defaultTheme } from '../themes/default';
 import { autopilot } from './autopilot';
 import text from '../data/levels/pruebas/cinta.level?raw';
@@ -43,7 +49,7 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     expect(parsed.notes.join('\n')).toMatch(/conveyorFixture\.test\.ts/);
   });
 
-  it('one belt: input A (3,3), two floor cells north, end exit B (3,0) between two plants; A loaded from its front, free floor', () => {
+  it('one belt: input A (3,3), two floor cells north, end exit B (3,0) between two plants, all on a table at level 1; A loaded from its front, free floor', () => {
     const [belt, ...more] = conveyorsOf(level);
     expect(more).toEqual([]);
     expect(belt).toEqual({
@@ -51,13 +57,18 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
       input: 'e1',
       output: 's1',
       cells: [
-        { x: 3, z: 2, piece: 'suelo', height: 0 },
-        { x: 3, z: 1, piece: 'suelo', height: 0 },
+        { x: 3, z: 2, piece: 'suelo', height: 1 },
+        { x: 3, z: 1, piece: 'suelo', height: 1 },
       ],
     });
+    // Both ends on the table: their one slot at level 1.
     expect(storageOf(level)).toEqual([
-      { id: 'e1', skin: 'beltIn', x: 3, z: 3, w: 1, access: { kind: 'front', facing: 'south' }, columns: [[null]] },
-      { id: 's1', skin: 'beltOut', x: 3, z: 0, w: 1, access: { kind: 'belt', facing: 'south' }, columns: [[{ color: 'blue' }]] },
+      { id: 'e1', skin: 'beltIn', x: 3, z: 3, w: 1, access: { kind: 'front', facing: 'south' }, columns: [[null]], baseLevel: 1 },
+      { id: 's1', skin: 'beltOut', x: 3, z: 0, w: 1, access: { kind: 'belt', facing: 'south' }, columns: [[{ color: 'blue' }]], baseLevel: 1 },
+    ]);
+    expect(storageSlotsOf(level).map((s) => [s.id, s.level])).toEqual([
+      ['e1:0:1', 1],
+      ['s1:0:1', 1],
     ]);
     expect(beltPathOf(level, belt).map((c) => [c.x, c.z])).toEqual([
       [3, 3],
@@ -101,8 +112,9 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
     const result = minMoves(level);
     expect(result).toMatchObject({ lower: 3, upper: 3, exact: true, unsolvable: false });
     expect(replayMoves(level, result.plan!)).toBe(true);
-    const exit = grid.positionOfSlot('s1:0:0');
-    const input = grid.positionOfSlot('e1:0:0');
+    const exit = grid.positionOfSlot('s1:0:1');
+    const input = grid.positionOfSlot('e1:0:1');
+    expect([grid.levelAt(input), grid.levelAt(exit)]).toEqual([1, 1]);
     const blue = level.boxes.find((b) => b.color === 'blue' && b.symbol === 'circle')!;
     expect(result.plan!.filter((m) => m.drop === exit)).toEqual([expect.objectContaining({ from: grid.index(blue.x, blue.z) })]);
     expect(result.plan!.some((m) => m.from === exit || m.drop === input || m.from === input)).toBe(false);
@@ -116,45 +128,143 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
   it.each([
     ['60 fps', 1 / 60],
     ['20 fps (Game dt clamp)', 1 / 20],
-  ] as const)('%s: the autopilot finishes it, the belt carrying blue ● into B; the ride is no move', (_, dt) => {
+  ] as const)('%s: the autopilot finishes it, F at A, the belt carrying blue ● into B; the ride is no move', (_, dt) => {
     const out = autopilot(level, dt);
     expect(out.note).toBe('');
     expect(out.solved).toBe(true);
     expect(out.moves).toBe(3);
     expect(out.snapshot.moves).toBe(3);
+    // The forks go up to A's slot on the table with one press of F, as to a rack's level-1 slot (nothing else stores).
+    expect(out.controls.forkStepsAt).toEqual({ rack: 0, truck: 0, beltIn: 1, beltOut: 0 });
+    expect(out.controls.forkSteps).toBe(1);
     const types = out.events.map((e) => e.type);
     expect(types.filter((t) => t === 'levelComplete')).toHaveLength(1);
     const onInput = drops(out.events).filter((d) => d.skin === 'beltIn');
-    expect(onInput).toEqual([expect.objectContaining({ boxId: 'b1', slotId: 'e1:0:0', correct: false, recipeLength: 0 })]);
+    expect(onInput).toEqual([expect.objectContaining({ boxId: 'b1', slotId: 'e1:0:1', level: 1, correct: false, recipeLength: 0 })]);
     const at = (type: GameEvent['type']) => types.indexOf(type);
     expect(at('beltStarted')).toBeGreaterThan(out.events.indexOf(onInput[0]));
     expect(out.events.find((e) => e.type === 'beltStarted')).toMatchObject({ conveyorId: 'c1', boxId: 'b1', runSec: expect.closeTo(3 / CONVEYOR.speed + CONVEYOR.rampSec, 9) });
     expect(at('beltDelivered')).toBeGreaterThan(at('beltStarted'));
-    expect(out.events.find((e) => e.type === 'beltDelivered')).toMatchObject({ boxId: 'b1', slotId: 's1:0:0', skin: 'beltOut', correct: true });
+    expect(out.events.find((e) => e.type === 'beltDelivered')).toMatchObject({ boxId: 'b1', slotId: 's1:0:1', skin: 'beltOut', correct: true });
     expect(types).not.toContain('beltBlocked');
     // Every drop or delivery lit its target, except the drop on the input («libre»: never a target, never a buzz).
     expect(drops(out.events).every((d) => !('wrongTarget' in d) && (d.correct || d.skin === 'beltIn'))).toBe(true);
-    expect(out.snapshot.boxes.find((b) => b.id === 'b1')).toMatchObject({ slotId: 's1:0:0', correct: true, locked: true });
+    expect(out.snapshot.boxes.find((b) => b.id === 'b1')).toMatchObject({ slotId: 's1:0:1', level: 1, correct: true, locked: true });
   });
 
-  it('the render builds the belt: A\'s pad and the band with its stripes, B\'s tray and its cue board; the stripes slide only as the belt moves', () => {
-    const state = new GameState(level);
-    const snap = state.getSnapshot();
+  it('the render builds the belt as a table at level 1: its band, A\'s pad on the table top, B\'s deck with its cue painted flat and a very low orange fence', () => {
+    const snap = new GameState(level).getSnapshot();
     const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
     view.update(snap, 1 / 60, 0, Math.PI / 4, 0);
     const input = view.root.children.find((c) => c.userData.beltInId === 'e1')!;
     const exit = view.root.children.find((c) => c.userData.beltOutId === 's1')!;
-    expect(input).toBeDefined();
-    expect(exit).toBeDefined();
-    const tagged = (group: typeof input, tag: string) => group.children.filter((c) => c.userData[tag] !== undefined);
-    expect(tagged(input, 'beltPad')).toHaveLength(1);
-    expect(tagged(input, 'beltBand').map((c) => c.userData.beltBand)).toEqual(['c1']);
-    expect(tagged(exit, 'beltTray')).toHaveLength(1);
-    expect(tagged(exit, 'beltBoard')).toHaveLength(1);
-    expect(tagged(exit, 'beltCue').map((c) => c.userData.beltCue)).toEqual(['s1:0:0']);
-    expect(tagged(exit, 'beltGlow')).toHaveLength(1);
-    const stripes = tagged(input, 'beltStripes')[0] as unknown as { geometry: { getAttribute(name: string): { array: Float32Array } } };
+    const tagged = (group: Object3D, tag: string) => group.children.filter((c) => c.userData[tag] !== undefined) as Mesh[];
+    const one = (group: Object3D, tag: string) => {
+      const found = tagged(group, tag);
+      expect(found, tag).toHaveLength(1);
+      return found[0];
+    };
+    const boxOf = (mesh: Mesh) => new Box3().setFromObject(mesh);
+    const top = rackSlotY(1);
+    const height = boxDims(GAME_CONFIG).height;
+    const centre = (x: number, z: number) => ({ x: x + 0.5 - level.size.width / 2, z: z + 0.5 - level.size.depth / 2 });
+    // The table: from A's front to B's back, its top (under the band, the pad and the deck) at a rack's level-1 slot.
+    const table = boxOf(one(input, 'beltTable'));
+    expect(one(input, 'beltTable').userData.beltTable).toBe('c1');
+    expect(table.max.y).toBeCloseTo(top - BELT.skin, 6);
+    expect(table.min.y).toBeCloseTo(0, 6);
+    expect(table.min.z).toBeCloseTo(centre(3, 0).z - 0.5 + BELT.endGap, 6);
+    expect(table.max.z).toBeCloseTo(centre(3, 3).z + 0.5 - BELT.endGap, 6);
+    // On it, flush with the table top: the band over the belt's cells (its rails a touch higher) and A's pad.
+    const band = boxOf(one(input, 'beltBand'));
+    expect([band.min.z, band.max.z]).toEqual([expect.closeTo(centre(3, 0).z + 0.5, 6), expect.closeTo(centre(3, 3).z - 0.5, 6)]);
+    expect(band.max.y).toBeCloseTo(top + BELT.edge.height, 6);
+    const pad = one(input, 'beltPad');
+    expect(boxOf(pad).max.y).toBeCloseTo(top, 6);
+    // A keeps the belt's identity colour (its pad); nothing of B wears it (its fence is the docks' orange instead).
+    const identity = defaultTheme.conveyor.identity[0];
+    expect(paints(pad, identity)).toBe(true);
+    exit.traverse((o) => {
+      if (o instanceof Mesh) expect(paints(o, identity), String(o.userData.beltDeck ?? o.userData.beltFence ?? o.userData.beltCue)).toBe(false);
+    });
+    // B: its deck at the same level, its cue sticker painted flat on it (face up, well inside the fence), its glow.
+    const deck = boxOf(one(exit, 'beltDeck'));
+    expect(deck.max.y).toBeCloseTo(top, 6);
+    const cue = one(exit, 'beltCue');
+    expect(cue.userData.beltCue).toBe('s1:0:1');
+    const sticker = boxOf(cue);
+    expect(sticker.min.y).toBeGreaterThanOrEqual(top);
+    expect(sticker.max.y - sticker.min.y).toBeLessThan(0.02);
+    expect(sticker.getSize(new Vector3()).x).toBeCloseTo(2 * BELT_CUE.halfW, 6);
+    const normals = (cue.geometry as BufferGeometry).getAttribute('normal');
+    for (let i = 0; i < normals.count; i++) expect(normals.getY(i)).toBeCloseTo(1, 6);
+    expect(one(exit, 'beltGlow').userData.beltGlow).toBe('s1:0:1');
+    // Its very low fence: the docks' guard-rail orange with cream caps, a fifth of a box high, round B's back and sides
+    // only (open toward the belt, where the box slides in).
+    const fenceMesh = one(exit, 'beltFence');
+    expect(paints(fenceMesh, defaultTheme.truck.rail)).toBe(true);
+    expect(paints(fenceMesh, defaultTheme.truck.railCap)).toBe(true);
+    const fence = boxOf(fenceMesh);
+    expect(fence.min.y).toBeCloseTo(top, 6);
+    expect(fence.max.y - top).toBeLessThan(0.25 * height);
+    const b = centre(3, 0);
+    expect(fence.min.x).toBeGreaterThan(b.x - 0.5);
+    expect(fence.max.x).toBeLessThan(b.x + 0.5);
+    expect(fence.min.z).toBeGreaterThan(b.z - 0.5);
+    expect(fence.max.z).toBeLessThanOrEqual(b.z + 0.5 + 1e-6);
+    const pos = (fenceMesh.geometry as BufferGeometry).getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      const [x, z] = [pos.getX(i) + fenceMesh.position.x - b.x, pos.getZ(i) + fenceMesh.position.z - b.z];
+      // Never across the box's way in: nothing of it in the middle of B's near edge (toward the belt, +z here).
+      if (z > 0) expect(Math.abs(x), `${x},${z}`).toBeGreaterThan(0.4);
+      // Never over the box resting on B (0.39 across each side): only round it.
+      expect(Math.max(Math.abs(x), Math.abs(z)), `${x},${z}`).toBeGreaterThan(0.4);
+    }
+    // The input shows the chosen-level marker (it is worked like a rack slot); the end exit, never.
+    expect(STORAGE_RENDER.beltIn.markerGeometry).toBeDefined();
+    expect(STORAGE_RENDER.beltOut.markerGeometry).toBeUndefined();
+    view.dispose();
+  });
+
+  it('the target hints (P) light B for a box its cue fits, never A («libre»); off, nothing invites', () => {
+    const snap = new GameState(level).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    const exit = view.root.children.find((c) => c.userData.beltOutId === 's1')!;
+    const glow = exit.children.find((c) => c.userData.beltGlow === 's1:0:1') as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const deck = exit.children.find((c) => c.userData.beltDeck === 's1') as Mesh<BufferGeometry, MeshStandardMaterial>;
+    const run = () => {
+      for (let i = 0; i < 90; i++) view.update(snap, 1 / 60, i / 60, Math.PI / 4, 0);
+    };
+    // Carrying blue ● (it fits «azul»), the hints on: B pulses (its band and its deck); A has no light at all.
+    const blue = snap.boxes.find((b) => b.color === 'blue' && b.symbol === 'circle')!;
+    blue.carried = true;
+    blue.cell = null;
+    snap.forklift.carrying = blue.id;
+    view.setTargetHints(true);
+    run();
+    expect(glow.visible).toBe(true);
+    expect(deck.material.emissiveIntensity).toBeGreaterThan(0.1);
+    const input = view.root.children.find((c) => c.userData.beltInId === 'e1')!;
+    expect(input.children.some((c) => c.userData.beltGlow !== undefined)).toBe(false);
+    // The hints off (the default): nothing invites.
+    view.setTargetHints(false);
+    run();
+    expect(glow.visible).toBe(false);
+    expect(deck.material.emissiveIntensity).toBeLessThan(0.02);
+    view.dispose();
+  });
+
+  it('the band\'s white stripes slide only as the belt moves, along it and on it', () => {
+    const snap = new GameState(level).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, Math.PI / 4);
+    view.update(snap, 1 / 60, 0, Math.PI / 4, 0);
+    const input = view.root.children.find((c) => c.userData.beltInId === 'e1')!;
+    const stripes = input.children.find((c) => c.userData.beltStripes) as Mesh<BufferGeometry, MeshStandardMaterial>;
+    expect(stripes.material.color.getHex()).toBe(new Color(defaultTheme.conveyor.stripe).getHex());
     const positions = () => Array.from(stripes.geometry.getAttribute('position').array);
+    // On the band's surface, the table top at level 1.
+    const ys = positions().filter((_, i) => i % 3 === 1);
+    for (const y of ys) expect(y).toBeCloseTo(rackSlotY(1) + BELT.stripe.lift, 5);
     const still = positions();
     // Idle: nothing moves, frame after frame.
     for (let i = 0; i < 5; i++) view.update(snap, 1 / 60, (i + 1) / 60, Math.PI / 4, 0);
@@ -172,8 +282,19 @@ describe('the conveyor belt fixture (pruebas/cinta.level)', () => {
       expect(z).toBeGreaterThanOrEqual(bandZ[0] - 1e-5);
       expect(z).toBeLessThanOrEqual(bandZ[1] + 1e-5);
     }
-    for (const x of xs(moved)) expect(Math.abs(x - (3 + 0.5 - level.size.width / 2))).toBeLessThanOrEqual(0.4 + 1e-5);
+    for (const x of xs(moved)) expect(Math.abs(x - (3 + 0.5 - level.size.width / 2))).toBeLessThanOrEqual(BELT.band + 1e-5);
     expect(Math.min(...zs(moved).filter((z) => z < bandZ[1] - 1e-5 && z > bandZ[0] + 1e-5))).toBeLessThan(Math.min(...zs(still).filter((z) => z < bandZ[1] - 1e-5 && z > bandZ[0] + 1e-5)));
     view.dispose();
   });
 });
+
+/** The mesh's vertex colours include `hex` (as painted: three.js keeps them linear). */
+function paints(mesh: Mesh, hex: string): boolean {
+  const colors = (mesh.geometry as BufferGeometry).getAttribute('color');
+  if (!colors) return false;
+  const want = new Color(hex);
+  for (let i = 0; i < colors.count; i++) {
+    if (Math.abs(colors.getX(i) - want.r) + Math.abs(colors.getY(i) - want.g) + Math.abs(colors.getZ(i) - want.b) < 1e-4) return true;
+  }
+  return false;
+}

@@ -1024,7 +1024,8 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       const land = vi.spyOn(SfxPlayer.prototype, 'beltLand');
       const buzz = vi.spyOn(SfxPlayer.prototype, 'wrongBuzz');
       const drop = vi.spyOn(SfxPlayer.prototype, 'drop');
-      const onInput = { type: 'boxDropped', boxId: 'b1', cell: { x: 3, z: 2 }, zoneId: null, level: 0, correct: false, recipeLength: 0, satisfiedCount: 0, total: 2, slotId: 'e1:0:0', skin: 'beltIn' } as const;
+      // On its table, at level 1 (docs/CONVEYOR.md, H1b).
+      const onInput = { type: 'boxDropped', boxId: 'b1', cell: { x: 3, z: 2 }, zoneId: null, level: 1, correct: false, recipeLength: 0, satisfiedCount: 0, total: 2, slotId: 'e1:0:1', skin: 'beltIn' } as const;
       engine.handleEvent(onInput);
       expect(beltDrop.mock.calls).toEqual([[expect.closeTo(ctx.currentTime + DROP_LAND_SEC, 9), null, false, 'color']]);
       expect(drop).not.toHaveBeenCalled();
@@ -1032,7 +1033,7 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       engine.handleEvent({ type: 'beltStarted', conveyorId: 'c1', boxId: 'b1', runSec: 2.8, rampSec: 0.6 });
       expect(hum.mock.calls).toEqual([[ctx.currentTime, 2.8, 0.6]]);
       // Its destined box: the knock at once (it slid in), with the chime; the last target, the final one.
-      const delivered = { type: 'beltDelivered', conveyorId: 'c1', boxId: 'b1', slotId: 's1:0:0', skin: 'beltOut', correct: true, recipeLength: 1, satisfiedCount: 2, total: 2 } as const;
+      const delivered = { type: 'beltDelivered', conveyorId: 'c1', boxId: 'b1', slotId: 's1:0:1', skin: 'beltOut', correct: true, recipeLength: 1, satisfiedCount: 2, total: 2 } as const;
       engine.handleEvent(delivered, 'exact');
       expect(land.mock.calls).toEqual([[ctx.currentTime, expect.any(Number), true, 'exact']]);
       // Any other box: the knock alone, then the soft «no».
@@ -1042,10 +1043,10 @@ describe('AudioEngine lifecycle (fake Web Audio)', () => {
       // Its end exit full: the box stays on the input, the soft «no» after its tup.
       engine.handleEvent({ type: 'beltBlocked', conveyorId: 'c1', boxId: 'b2' });
       expect(buzz.mock.calls[1]).toEqual([expect.closeTo(ctx.currentTime + DROP_LAND_SEC + WRONG_AFTER_LAND_SEC, 9)]);
-      // Picking a box off the input: the classic knock.
+      // Picking a box off the input: the classic knock (from its level, the table's top).
       const pickup = vi.spyOn(SfxPlayer.prototype, 'pickup');
-      engine.handleEvent({ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 0, fromSlotId: 'e1:0:0', skin: 'beltIn' });
-      expect(pickup.mock.calls).toEqual([[ctx.currentTime, 0]]);
+      engine.handleEvent({ type: 'boxPicked', boxId: 'b2', fromZoneId: null, level: 1, fromSlotId: 'e1:0:1', skin: 'beltIn' });
+      expect(pickup.mock.calls).toEqual([[ctx.currentTime, 1]]);
       expect(warn).not.toHaveBeenCalled();
       engine.dispose();
     });

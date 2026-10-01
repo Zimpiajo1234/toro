@@ -237,9 +237,10 @@ export class SfxPlayer {
   }
 
   /**
-   * Conveyor belts: the box comes to rest in the belt's end exit, at `t`: a soft landing knock (the box easing into the
-   * tray against its back stop: a light muffled "tok", no sub), softer than a drop. Pass `chimeMidi` only when the end
-   * exit now holds its destined box: the chime in the timbre of its cue's `match` follows, as in a rack slot.
+   * Conveyor belts: the box comes to rest in the belt's end exit, at `t`: a soft landing knock (the box easing to a
+   * stop at the end of the table, inside its low fence: a light muffled "tok", no sub), softer than a drop. Pass
+   * `chimeMidi` only when the end exit now holds its destined box: the chime in the timbre of its cue's `match`
+   * follows, as in a rack slot.
    */
   beltLand(t: number, chimeMidi: number | null, final = false, match: MatchKind = 'color'): void {
     const r = this.rng;

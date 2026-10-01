@@ -6,6 +6,7 @@ import { COLOR_IDS, type ForkliftState, type GameSnapshot, type LevelData, type 
 import { parseLevel } from '../../data/asciiLevel';
 import { GameState } from '../../logic/GameState';
 import { defaultTheme } from '../../themes/default';
+import { BELT, BELT_FENCE, BELT_MARKER } from '../builders/conveyor';
 import { buildForkliftGeometry } from '../builders/forklift';
 import { PANEL_HEIGHT, outwardYaw } from '../builders/rack';
 import { DOCK_SIGN, SIGN_MARKER, dockColumnX, dockToWorld, signMidZ, signRowY } from '../builders/truck';
@@ -111,10 +112,20 @@ describe('render/storage: the registry', () => {
   it('has one entry per skin of STORAGE_SKINS, each with its chosen-level marker (the forks go by the keys at every unit)', () => {
     expect(Object.keys(STORAGE_RENDER)).toEqual([...STORAGE_SKIN_ORDER]);
     for (const skin of STORAGE_SKIN_ORDER) expect(typeof STORAGE_RENDER[skin].builder).toBe('function');
-    // A rack's marker frames the chosen shelf; a truck's, the chosen level's cell on its sign (docs/STORAGE.md rule 9).
-    for (const skin of ['rack', 'truck'] as const) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeDefined();
-    // A conveyor belt (docs/CONVEYOR.md): its input has one level only, its end exit is never worked at: no marker.
-    for (const skin of ['beltIn', 'beltOut'] as const) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeUndefined();
+    // A rack's marker frames the chosen shelf; a truck's, the chosen level's cell on its sign (docs/STORAGE.md rule 9);
+    // a belt's input's, its slot on the table top (docs/CONVEYOR.md, H1b: raised to with F). Its end exit is never
+    // worked at: no marker.
+    for (const skin of ['rack', 'truck', 'beltIn'] as const) expect(STORAGE_RENDER[skin].markerGeometry, skin).toBeDefined();
+    expect(STORAGE_RENDER.beltOut.markerGeometry).toBeUndefined();
+    // The belt input's is a frame flat on the table top, one cell across at most.
+    const flat = STORAGE_RENDER.beltIn.markerGeometry!();
+    flat.computeBoundingBox();
+    const extent = flat.boundingBox!.getSize(new Vector3());
+    expect(extent.y).toBeLessThan(1e-6);
+    expect(extent.x).toBeCloseTo(2 * BELT_MARKER.halfW, 5);
+    expect(extent.z).toBeCloseTo(2 * BELT_MARKER.halfW, 5);
+    expect(extent.x).toBeLessThan(1);
+    flat.dispose();
     // The truck's is the size of a sign cell: a door cell wide, one row high, on both faces of the sign.
     const sign = STORAGE_RENDER.truck.markerGeometry!();
     sign.computeBoundingBox();
@@ -336,6 +347,105 @@ describe('render/storage: a synthetic warehouse, four trucks on both walls and r
     snap.hint.storage = null;
     run();
     expect([marker.visible, sign.visible]).toEqual([false, false]);
+    view.dispose();
+  });
+});
+
+/**
+ * Two conveyor belts (docs/CONVEYOR.md, H1b), one running north along the west wall, one running east across the room:
+ * every belt a table at its height (level 1), whichever way it runs.
+ */
+const BELTS = level(`
+# 1 · Dos cintas
+id: dos-cintas-render
+limit: 1
+
+  01234567
+0 B.......
+1 ~.......
+2 A..a....
+3 ........
+4 .D~~E.c.
+5 ...^....
+
+a = caja azul ●     c = caja menta ▲
+A = cinta entrada   B = cinta final: azul   D = cinta entrada   E = cinta final: menta   ~ = cinta
+`);
+
+describe('render/storage: conveyor belts, a table at level 1 whichever way they run', () => {
+  it('stands every belt on its table, its two ends at level 1: A\'s marker and burst there, B fenced on its open sides only', () => {
+    const { snap, units, bag } = buildAll(BELTS);
+    expect(units.map((u) => u.id)).toEqual(['e1', 'e2', 's1', 's2']);
+    const slot = (id: string) => snap.storageSlots.find((s) => s.id === id)!;
+    const top = rackSlotY(1);
+    const place: MarkerPlace = { x: 0, y: 0, z: 0, yaw: 0 };
+    const burst: BurstPlace = { x: 0, y: 0, z: 0, yaw: 0, halfW: 0, halfH: 0 };
+    const meshOf = (unit: StorageUnitView, tag: string) => unit.group.children.find((c) => c.userData[tag] !== undefined) as Mesh<BufferGeometry> | undefined;
+    for (const [input, exit, along] of [
+      ['e1', 's1', 'z'],
+      ['e2', 's2', 'x'],
+    ] as const) {
+      const a = units.find((u) => u.id === input)!;
+      const b = units.find((u) => u.id === exit)!;
+      // The table under the whole belt, its top under the band at the slot floor of level 1.
+      const table = new Box3().setFromObject(meshOf(a, 'beltTable')!);
+      expect(table.max.y, input).toBeCloseTo(top - BELT.skin, 6);
+      expect(new Box3().setFromObject(meshOf(a, 'beltBand')!).max.y, input).toBeCloseTo(top + BELT.edge.height, 6);
+      // A: the marker flat on its table top round its slot, turned to its front; its burst at that level too.
+      const at = slot(`${input}:0:1`);
+      expect(a.markerAt(at, place), input).toEqual({ x: at.pos.x, y: top, z: at.pos.z, yaw: outwardYaw(at.facing) });
+      expect(b.markerAt(slot(`${exit}:0:1`), place)).toBeNull();
+      expect(b.burstAt(slot(`${exit}:0:1`), YAW, burst).y).toBeCloseTo(top, 9);
+      // B: its fence low on the table top, round its back and sides; open toward its belt (where its box comes from).
+      const exitSlot = slot(`${exit}:0:1`);
+      const fence = meshOf(b, 'beltFence')!;
+      fence.updateMatrixWorld(true);
+      const pos = fence.geometry.getAttribute('position');
+      const v = new Vector3();
+      // Toward the belt from B's centre: its facing (the side its belt comes in from).
+      const toBelt = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] }[exitSlot.facing];
+      let maxY = -Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(fence.matrixWorld);
+        const dx = v.x - exitSlot.pos.x;
+        const dz = v.z - exitSlot.pos.z;
+        const ahead = dx * toBelt[0] + dz * toBelt[1];
+        const across = Math.abs(dx * toBelt[1] - dz * toBelt[0]);
+        if (ahead > 0) expect(across, `${exit} ${dx.toFixed(3)},${dz.toFixed(3)}`).toBeGreaterThan(0.4);
+        expect(Math.max(Math.abs(dx), Math.abs(dz))).toBeLessThanOrEqual(0.5 + 1e-6);
+        maxY = Math.max(maxY, v.y);
+      }
+      expect(maxY - top).toBeCloseTo(BELT_FENCE.top + BELT_FENCE.cap, 6);
+      expect(maxY - top).toBeLessThan(0.25 * height);
+      // The two belts' tables run their own way.
+      const size = table.getSize(new Vector3());
+      expect(along === 'z' ? size.z > size.x : size.x > size.z, input).toBe(true);
+    }
+    bag.dispose();
+  });
+
+  it('frames A\'s slot on its table top at level 1 only: none at its face, below (the hint has no slot there)', () => {
+    const snap = new GameState(BELTS).getSnapshot();
+    const view = new LevelView(snap, defaultTheme, GAME_CONFIG, YAW);
+    const markers = view.root.children.filter((c) => c.userData.slotMarker) as Mesh<BufferGeometry, MeshBasicMaterial>[];
+    expect(markers.map((m) => m.userData.markerSkin)).toEqual(['beltIn']);
+    const [marker] = markers;
+    const run = () => {
+      for (let i = 0; i < 60; i++) view.update(snap, 1 / 60, i / 60, YAW, 0);
+    };
+    const input = snap.storageSlots.find((s) => s.id === 'e2:0:1')!;
+    snap.hint.storage = { unitId: 'e2', skin: 'beltIn', column: 0, levels: 2, level: 0, slotId: null, ready: false };
+    run();
+    expect(marker.visible).toBe(false);
+    snap.hint.storage = { unitId: 'e2', skin: 'beltIn', column: 0, levels: 2, level: 1, slotId: input.id, ready: true };
+    run();
+    expect(marker.visible).toBe(true);
+    expect(marker.material.opacity).toBeGreaterThan(0.7);
+    expect([marker.position.x, marker.position.y, marker.position.z]).toEqual([
+      expect.closeTo(input.pos.x, 3),
+      expect.closeTo(rackSlotY(1), 3),
+      expect.closeTo(input.pos.z, 3),
+    ]);
     view.dispose();
   });
 });

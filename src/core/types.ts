@@ -77,8 +77,8 @@ export interface LevelBox {
   z: number;
   /**
    * Storage rack slot the box starts in (0 = bottom slot), or its truck level on a truck bed cell (0 = on the bed;
-   * the levels below it hold boxes too). Only on rack cells and truck bed cells (outside the map); never on floor
-   * boxes.
+   * the levels below it hold boxes too): its level there, counted like the unit's slots (LevelStorage.baseLevel). Only
+   * on rack cells and truck bed cells (outside the map); never on floor boxes (nor on a belt: it starts empty).
    */
   level?: number;
   kind?: BoxKind;
@@ -202,10 +202,18 @@ export interface LevelStorage {
   w: number;
   access: StorageAccess;
   /**
-   * Per column (first cell first), the cue of each level bottom → top: a colour, a symbol or both, like a zone; null =
-   * «libre» (asks for nothing, never a target). An empty cue is always null here.
+   * Per column (first cell first), the cue of each level bottom → top (from `baseLevel` up): a colour, a symbol or
+   * both, like a zone; null = «libre» (asks for nothing, never a target). An empty cue is always null here.
    */
   columns: (ZoneCriteria | null)[][];
+  /**
+   * The level of its bottom slot (docs/STORAGE.md «Nivel base»): its columns' levels are baseLevel, baseLevel + 1, …
+   * (a slot's id and level, a stored box's `level`, the forks' level that reaches it). Omitted = 0, at the floor: every
+   * rack and truck. A conveyor belt's input and end exit stand on its table (docs/CONVEYOR.md): at their belt's height
+   * (validateLevel fills it from the belt's cells; a `.level` never writes it). Below it the unit is solid (the table
+   * under its top): the forks can still be set there with the keys, and nothing is picked or dropped there.
+   */
+  baseLevel?: number;
 }
 
 /**
@@ -223,14 +231,19 @@ export type BeltUnit = LevelStorage & { readonly access: Extract<StorageAccess, 
 /* ------------------------------------------------------------------ */
 
 /**
- * The pieces a belt is built from (docs/CONVEYOR.md «Las tres piezas»): `suelo` = a flat band on the floor, `rampa` =
- * a ramp that climbs to the ceiling, `techo` = a band hung under the ceiling. The data carries them all from the first
- * milestone; only `suelo` is built so far (validateLevel refuses the others for now).
+ * The pieces a belt is built from (docs/CONVEYOR.md «Las tres piezas»): `suelo` = a flat band on a table standing on
+ * the floor (its top at level 1: core/conveyors FLOOR_BELT_LEVEL), `rampa` = a ramp that climbs to the ceiling, `techo`
+ * = a band hung under the ceiling. The data carries them all from the first milestone; only `suelo` is built so far
+ * (validateLevel refuses the others for now).
  */
 export const CONVEYOR_PIECES = ['suelo', 'rampa', 'techo'] as const;
 export type ConveyorPiece = (typeof CONVEYOR_PIECES)[number];
 
-/** One cell of a belt: its map cell, its piece and the height of its surface there (levels: 0 = on the floor). */
+/**
+ * One cell of a belt: its map cell, its piece and the height of its surface there, in levels like a storage slot's
+ * (0 = the floor; a floor belt's table, 1: the floor of a rack's level-1 slot). The belt's input and end exit stand at
+ * the height of the cell next to each (their units' `baseLevel`).
+ */
 export interface ConveyorCell {
   x: number;
   z: number;
@@ -240,9 +253,9 @@ export interface ConveyorCell {
 
 /**
  * A conveyor belt (docs/CONVEYOR.md): a straight run of belt cells from its input, a storage unit of skin `beltIn`
- * (a 1×1 «libre» unit loaded from its front, the side away from the belt), to its end exit, a unit of skin `beltOut`
- * (a 1×1 unit with a cue or «libre», access `belt`: only the belt fills it). A box set down on the input rides the
- * belt into the end exit.
+ * (a 1×1 «libre» unit loaded from its front, the side away from the belt, at the belt's height: a rack's level-1 slot
+ * for a floor belt), to its end exit, a unit of skin `beltOut` (a 1×1 unit with a cue or «libre», access `belt`: only
+ * the belt fills it), at the belt's height too. A box set down on the input rides the belt into the end exit.
  */
 export interface LevelConveyor {
   /** c1, c2… in the order of the inputs (generated), or the belt's own. */
@@ -421,8 +434,9 @@ export interface StorageSlotState {
   /** Column along the unit (0 = its first cell, see LevelStorage). */
   column: number;
   /**
-   * Height: 0 = the bottom level (a rack's bottom slot, a truck's bed). The fork level that reaches it and the box's
-   * `level` in it.
+   * Height: its unit's base level (LevelStorage.baseLevel) + its place in the column; 0 = the floor level (a rack's
+   * bottom slot, a truck's bed), a floor belt's input and end exit 1 (on its table). The fork level that reaches it and
+   * the box's `level` in it.
    */
   level: number;
   /**
@@ -472,12 +486,18 @@ export interface StorageHint {
   unitId: string;
   skin: StorageSkin;
   column: number;
-  /** Levels in this column (a rack's 1–3 slots, a truck's 1–2 levels). */
+  /**
+   * Levels the forks can be set to there: from 0 up to its top slot (a rack's 1–3 slots, a truck's 1–2 levels; a
+   * floor belt's input 2: its table's face below its base level, then its one slot on the table top).
+   */
   levels: number;
   /** The level chosen (0 = bottom): the one selected with F / V (the forks go there and pick / drop act on it). */
   level: number;
-  /** The slot at that level. */
-  slotId: string;
+  /**
+   * The slot at that level, or null below its unit's base level (LevelStorage.baseLevel: a belt's table face, solid;
+   * nothing to pick or drop there, the load meets it like a full rack slot).
+   */
+  slotId: string | null;
   /**
    * Empty forks: the action lifts the box at that level (also `targetBoxId`; in a stack only its top box). Carrying:
    * the action drops the box into it (`dropCell` = the column's cell, `dropLevel` = the level; in a stack only its next

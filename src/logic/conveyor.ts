@@ -49,12 +49,13 @@ interface Belt {
 }
 
 /**
- * Conveyor belts (docs/CONVEYOR.md), the logic: one per level.conveyors entry. A box set down on a belt's input rests
- * there a moment (`settleSec`, the belt `settling`), then the belt runs and carries it along its cells (`running`), and
- * it comes to rest in the end exit's slot, where GameState places it (ConveyorHost.arrived). One box at a time: while
- * a box settles or rides, the input holds it in its slot, sealed (no other box goes in, and it is never picked up; the
- * end exit stays free for it, since only its belt ever fills it). GameState asks before loading: with the end exit
- * full the box simply stays on the input (pickable again) and the belt never starts.
+ * Conveyor belts (docs/CONVEYOR.md), the logic: one per level.conveyors entry. A box set down on a belt's input (its
+ * slot on the belt's table, at the belt's height) rests there a moment (`settleSec`, the belt `settling`), then the
+ * belt runs and carries it along its cells (`running`, level all the way: `box.pos` only), and it comes to rest in the
+ * end exit's slot, at the belt's height there, where GameState places it (ConveyorHost.arrived). One box at a time:
+ * while a box settles or rides, the input holds it in its slot, sealed (no other box goes in, and it is never picked
+ * up; the end exit stays free for it, since only its belt ever fills it). GameState asks before loading: with the end
+ * exit full the box simply stays on the input (pickable again) and the belt never starts.
  * Deterministic: a run's position is a closed-form function of the time since it started (sine-eased ramps, a cruise),
  * so 60 and 20 fps go through the same states, the arrival differing by less than a frame. Allocates nothing per frame.
  */

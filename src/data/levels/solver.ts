@@ -37,8 +37,9 @@
  * column still takes its next level on top (`validDrop`). A move that locks a box can no longer be undone, so the
  * dead-end check fully checks it.
  *
- * Conveyor belts (docs/CONVEYOR.md): a belt's input is a shelf of its own (one level, «libre»), loaded like any shelves
- * column; its end exit is a shelf too, never lifted and never reached by the forklift: it is filled through its input.
+ * Conveyor belts (docs/CONVEYOR.md): a belt's input is a shelf of its own (one level, «libre», on its belt's table,
+ * like a rack's level-1 slot: its height only names its slot here), loaded like any shelves column; its end exit is a
+ * shelf too, never lifted and never reached by the forklift: it is filled through its input.
  * One move puts a box on the input and the belt carries it on, so in the model it lands straight in the end exit, which
  * is loaded from the input's front cell (`feeds` / `fedBy`, `front`); while the end exit is full the box stays on the
  * input (parking). The belt's cells are solid. Until the button of the next milestones a wrong box in an end exit could
@@ -218,7 +219,8 @@ export class LevelGrid {
         this.inward[pos] = inward;
         this.columnIndex[pos] = c;
       }
-      const slotId = (lvl: number) => slotIdOf(ref.unit.id, ref.column, lvl);
+      // A slot's id names its level, from its unit's base level up (a belt's ends: on its table).
+      const slotId = (k: number) => slotIdOf(ref.unit.id, ref.column, ref.baseLevel + k);
       if (support === 'shelves') {
         // One box per level, each a target of its own (a «libre» one, none).
         positions.forEach((pos, lvl) => {
@@ -301,14 +303,14 @@ export class LevelGrid {
 
   /**
    * Position of a box resting on (x, z) at `level` (LevelBox.level): on a storage column's cell (inside the map or
-   * beyond a wall), its level's position on shelves (when `level` names one) or its column's on a stack (whatever the
-   * level); else the cell (-1 outside the map anywhere else).
+   * beyond a wall), its level's position on shelves (when `level` names one of its slots, from its base level up) or
+   * its column's on a stack (whatever the level); else the cell (-1 outside the map anywhere else).
    */
   posOf(x: number, z: number, level?: number): number {
     const c = this.columnAtCell.get(`${x},${z}`);
     if (c !== undefined) {
-      const { support, positions } = this.columns[c];
-      const pos = support === 'stack' ? positions[0] : level === undefined ? undefined : positions[level];
+      const { ref, support, positions } = this.columns[c];
+      const pos = support === 'stack' ? positions[0] : level === undefined ? undefined : positions[level - ref.baseLevel];
       if (pos !== undefined) return pos;
     }
     return this.inMap(x, z) ? this.index(x, z) : -1;
@@ -319,15 +321,23 @@ export class LevelGrid {
     return this.slotPos.get(slotId) ?? -1;
   }
 
-  /** The level (0 = bottom) of the box `height` boxes up on storage position `pos`: a shelf's own, a stack's `height`. */
-  levelAt(pos: number, height = 0): number {
+  /** Place in its column (0 = its bottom slot) of the box `height` boxes up on storage position `pos`. */
+  private placeAt(pos: number, height: number): number {
     const { support, positions } = this.columns[this.columnIndex[pos]];
     return support === 'stack' ? height : pos - positions[0];
   }
 
+  /**
+   * The level of the box `height` boxes up on storage position `pos` (the forks' level that reaches it: 0 = the floor):
+   * a shelf's own, a stack's `height`, both from the column's base level up (a belt's ends: on its table).
+   */
+  levelAt(pos: number, height = 0): number {
+    return this.columns[this.columnIndex[pos]].ref.baseLevel + this.placeAt(pos, height);
+  }
+
   /** The storage slot (index in core/storage storageSlotsOf) of the box `height` boxes up on storage position `pos`. */
   slotAt(pos: number, height = 0): number {
-    return this.columns[this.columnIndex[pos]].ref.firstSlot + this.levelAt(pos, height);
+    return this.columns[this.columnIndex[pos]].ref.firstSlot + this.placeAt(pos, height);
   }
 
   /** The cell of a position: a floor cell itself; a storage position its column's (a rack's own, a truck's bed cell). */

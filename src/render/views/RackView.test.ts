@@ -759,7 +759,7 @@ describe('rack slots: boxes, forks, preview and marker at slot heights', () => {
 
     // Ready: the outline floats on the slot floor, hugging the box, in the box's tone (the cue fits it).
     const hint = atRack(snap, 'r1:0:1', true);
-    snap.hint.dropCell = { ...slotOf(snap, hint.slotId).cell };
+    snap.hint.dropCell = { ...slotOf(snap, hint.slotId!).cell };
     snap.hint.dropLevel = 1;
     step(view, snap, 1);
     expect(preview.visible).toBe(true);
